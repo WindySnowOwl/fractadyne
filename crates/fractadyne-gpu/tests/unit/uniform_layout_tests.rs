@@ -157,6 +157,10 @@ fn the_palette_fade_fields_line_up() {
         ("relief_highlight", std::mem::offset_of!(ColorUniforms, relief_highlight)),
         ("relief_shininess", std::mem::offset_of!(ColorUniforms, relief_shininess)),
         ("relief_hl_col", std::mem::offset_of!(ColorUniforms, relief_hl_col)),
+        // Histogram equalization (C6): swapped, the dissolve's table would draw the frame.
+        ("eq", std::mem::offset_of!(ColorUniforms, eq)),
+        ("eq_knots", std::mem::offset_of!(ColorUniforms, eq_knots)),
+        ("fade_eq_knots", std::mem::offset_of!(ColorUniforms, fade_eq_knots)),
     ] {
         assert_eq!(wgsl_field_offset(&fields, wgsl), rust, "`{wgsl}` is at another offset in ColorU than in ColorUniforms");
     }
@@ -278,4 +282,25 @@ fn the_assembly_module_validates_and_its_uniform_lines_up() {
     }
     // The assembly module carries no iterate code: it is a module of its own.
     assert!(!src.contains("fn iterate_at") && !src.contains("fn fs_color"));
+}
+
+/// The remap tables go into the uniform four knots a row, knot j at row j / 4, word j % 4, the last
+/// knot (1) left to the shader; a map without an equalization, or with a share of 0, writes none.
+#[test]
+fn the_remap_knots_pack_four_a_row() {
+    let mut knots = [0.0f32; fractadyne_core::coloring::EQ_KNOTS + 1];
+    for (j, k) in knots.iter_mut().enumerate() {
+        *k = j as f32 / 256.0;
+    }
+    let cur = crate::Equalize { share: 0.75, sweeps: 2.12, knots };
+    let fade = crate::Equalize { share: 0.5, sweeps: 3.0, knots: knots.map(|k| k * k) };
+    let w = crate::eq_words(Some(&cur), Some(&fade));
+    assert_eq!(w.row, [0.75, 2.12, 0.5, 3.0]);
+    for j in [0usize, 1, 5, 127, 255] {
+        assert_eq!(w.knots[j / 4][j % 4], knots[j], "knot {j}");
+        assert_eq!(w.fade_knots[j / 4][j % 4], knots[j] * knots[j], "fade knot {j}");
+    }
+    let off = crate::eq_words(Some(&crate::Equalize { share: 0.0, ..cur }), None);
+    assert_eq!(off.row, [0.0; 4]);
+    assert!(off.knots.iter().all(|r| *r == [0.0; 4]));
 }

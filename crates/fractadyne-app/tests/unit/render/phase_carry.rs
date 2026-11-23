@@ -7,7 +7,7 @@ const SWEEPS: f32 = 0.5 + 0.52 * 6.0;
 /// The normalized linear map of window `w` (`norm_map_for`), offset 0.0286 as the user had it.
 fn map_of(w: (f32, f32)) -> NormMap {
     let c = SWEEPS / (w.1 - w.0);
-    NormMap { cycle: c, offset: 0.0286 - w.0 * c, mode: 0, lo: 0.0 }
+    NormMap { cycle: c, offset: 0.0286 - w.0 * c, mode: 0, lo: 0.0, eq: None }
 }
 
 /// The palette coordinate of escape value `v` under `m` with `phase` added, as the shader takes it.
@@ -97,7 +97,7 @@ fn classic_colours_a_change_of_kind_or_of_the_users_colouring_carry_nothing() {
     let (_, p) = phase_carry_step(moved, map_of(w), Some(w), 8, false, FRAME);
     assert_eq!(p, 0.0);
     // Linear to log: another kind of map, dissolved elsewhere; nothing carried across it.
-    let log = NormMap { cycle: 0.4, offset: 0.0286, mode: 1, lo: 1000.0 };
+    let log = NormMap { cycle: 0.4, offset: 0.0286, mode: 1, lo: 1000.0, eq: None };
     let (_, p) = phase_carry_step(moved, log, Some(w), 7, false, FRAME);
     assert_eq!(p, 0.0);
 }
@@ -125,9 +125,9 @@ fn a_widening_deep_window_keeps_its_middles_color_under_every_curve() {
             let span = t.apply((w.1 - w.0) as f64) as f32;
             let m = if t == fractadyne_core::coloring::Transfer::Linear {
                 let c = SWEEPS / (w.1 - w.0);
-                NormMap { cycle: c, offset: 0.0286 - w.0 * c, mode: 0, lo: 0.0 }
+                NormMap { cycle: c, offset: 0.0286 - w.0 * c, mode: 0, lo: 0.0, eq: None }
             } else {
-                NormMap { cycle: SWEEPS / span, offset: 0.0286, mode: t.gpu_id(), lo: w.0 }
+                NormMap { cycle: SWEEPS / span, offset: 0.0286, mode: t.gpu_id(), lo: w.0, eq: None }
             };
             let (s, phase) = phase_carry_step(st, m, Some(w), 7, false, FRAME);
             st = s;

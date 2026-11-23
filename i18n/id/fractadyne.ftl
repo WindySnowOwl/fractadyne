@@ -2804,6 +2804,12 @@ panel-scale-hover =
 
     Rentang yang sangat miring tetap memakai logaritma walau dengan Linear.
 panel-scale-off-hover = Berlaku setelah palet disesuaikan dengan rentang tampilan: nyalakan "Normalkan warna dalam" atau "Selalu sesuaikan rentang".
+panel-equalize = Ratakan
+panel-equalize-hover =
+    Menyebarkan palet agar setiap warna menutupi bagian gambar yang kurang lebih sama, menurut seberapa banyak gambar yang diisi tiap rentang hitungan lolos (pewarnaan histogram). Gunakan saat satu warna membanjiri tampilan dan detailnya terjepit di pita sempit warna lain.
+
+    Pada 0% kurva Skala sendiri yang menempatkan warna. Pada 100% filamen halus di dekat himpunan, yang hanya menutupi sedikit piksel, bisa menjadi satu warna; sedikit di bawahnya mempertahankannya.
+panel-equalize-method-hover = Ratakan menyebarkan hitungan lolos, jadi berlaku dengan Iterasi halus.
 # The curves the Scale list offers.
 transfer-linear = Linear
 transfer-sqrt = Akar kuadrat

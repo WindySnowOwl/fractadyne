@@ -260,6 +260,31 @@ impl FractadyneApp {
         });
     }
 
+    /// Equalize (coloring plan C6): how much histogram coloring is mixed into the fitted palette, a
+    /// slider indented under the Scale, drawn the same in the panel and the Color menu. Grayed where
+    /// it would change no pixel, with the reason: no normalization (the Scale's), or a method other
+    /// than Smooth (it spreads the escape count).
+    pub(crate) fn equalize_row(&mut self, ui: &mut egui::Ui) {
+        let smooth = self.coloring.color_method == ColorMethod::Smooth;
+        let live = self.scale_applies() && smooth;
+        ui.add_enabled_ui(live, |ui| {
+            ui.horizontal(|ui| {
+                ui.add_space(ui.spacing().indent * 0.5);
+                ui.label(tr!(panel_equalize));
+                let r = ui.add(
+                    egui::Slider::new(&mut self.coloring.equalize, crate::slider_range::EQUALIZE)
+                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
+                        .custom_parser(|t| t.trim().trim_end_matches('%').trim().parse::<f64>().ok().map(|v| v / 100.0)),
+                );
+                if slider_double_clicked(&r) {
+                    self.coloring.equalize = fractadyne_state::ColoringSpec::default().equalize;
+                }
+                r.on_hover_text(format!("{}\n\n{}", tr!(panel_equalize_hover), tr!(panel_double_click_reset)))
+                    .on_disabled_hover_text(if smooth { tr!(panel_scale_off_hover) } else { tr!(panel_equalize_method_hover) });
+            });
+        });
+    }
+
     /// Scale in the Color menu: a submenu of choices (a list inside a menu would close it).
     pub(crate) fn scale_menu(&mut self, ui: &mut egui::Ui) {
         let live = self.scale_applies();
@@ -702,6 +727,7 @@ impl FractadyneApp {
                     .on_hover_text(tr!(panel_normalize_hover));
                 self.fit_range_checkbox(ui);
                 self.scale_row(ui);
+                self.equalize_row(ui);
                 // C11: the Julia pane on the set's map. Only where there is a Julia pane, and grayed
                 // where it would change no pixel (another method: each plane colors its own values).
                 if self.dual {

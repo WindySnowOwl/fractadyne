@@ -50,6 +50,18 @@ detail is in the git history.
   command-line flags (`--transfer`, `--wrap`, `--steps`); a view or session saved with the log scale
   on opens with Scale on Log. Reset coloring settings puts the Scale back with the normalization
   switches and keeps Wrap and Steps, as it keeps the palette.
+- **Equalize: each color its share of the picture.** A new slider under Scale, from 0% to 100%,
+  mixes histogram coloring into the fitted palette: the colors spread by how much of the picture
+  each range of escape counts fills, so a view where one color floods the background and the detail
+  crowds into a thin band of the others comes out with every color in its share. At 100% the fine
+  filaments next to the set, which few pixels cover, can turn to one color; around 75% keeps them.
+  It works wherever the palette is fitted to the view (Normalize deep colors, Always fit range, or
+  `--normalize` on an export), with Smooth iteration. The live view measures the picture once it
+  settles and holds that, so the colors stay put while supersampling refines it, and while you zoom
+  they ease from one picture's spread to the next. Moving the slider recolors the view at once,
+  with no recalculation. Views, bookmarks, Share text and render-farm jobs carry it, and it has a
+  command-line flag (`--equalize`); Reset coloring settings puts it back to 0%. Tours and zoom
+  videos don't equalize their frames yet.
 - **Relief lighting with a highlight, steeper near the set.** Relief lighting in Effects has new
   rows. "Slope from the distance" makes the lit surface steeper near the set and flat far from it, as
   the distance to the set says, instead of one slope everywhere: the shading gathers at the set's

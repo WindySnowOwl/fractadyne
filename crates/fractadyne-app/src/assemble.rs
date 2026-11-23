@@ -703,7 +703,7 @@ impl crate::FractadyneApp {
         req.norm_mode = main.mode;
         req.norm_lo = main.lo;
         req.palette_fade = if w > 0.0 && w < 1.0 {
-            fractadyne_gpu::PaletteFade { weight: w, cycle: log.cycle, offset: log.offset, mode: log.mode, lo: log.lo }
+            fractadyne_gpu::PaletteFade { weight: w, cycle: log.cycle, offset: log.offset, mode: log.mode, lo: log.lo, equalize: None }
         } else {
             fractadyne_gpu::PaletteFade::default()
         };

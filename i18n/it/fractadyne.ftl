@@ -2884,6 +2884,12 @@ panel-scale-hover =
 
     Un intervallo molto sbilanciato prende il logaritmo anche con Lineare.
 panel-scale-off-hover = Si applica una volta che la tavolozza è adattata all’intervallo della vista: attiva «Normalizza colori profondi» o «Adatta sempre l’intervallo».
+panel-equalize = Equalizza
+panel-equalize-hover =
+    Distribuisce la tavolozza perché ogni colore copra all'incirca la stessa parte dell'immagine, secondo quanta parte dell'immagine riempie ciascun intervallo di conteggi di fuga (colorazione a istogramma). Utile quando un colore invade la vista e il dettaglio è stretto in una sottile fascia degli altri.
+
+    Allo 0% la curva della Scala colloca da sola i colori. Al 100% i filamenti sottili vicino all'insieme, che coprono pochi pixel, possono diventare di un solo colore; un po' meno li conserva.
+panel-equalize-method-hover = Equalizza distribuisce il conteggio di fuga, quindi vale con Iterazione continua.
 # The curves the Scale list offers.
 transfer-linear = Lineare
 transfer-sqrt = Radice quadrata

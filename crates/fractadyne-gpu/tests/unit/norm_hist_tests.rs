@@ -99,3 +99,26 @@ fn an_empty_histogram_or_a_q_out_of_range_has_no_quantile() {
     assert_eq!(h.quantile(1.5), None);
     assert!(h.quantile(1.0).is_some());
 }
+
+/// The quantile function Equalize colors holds (coloring plan C6): from the lowest value to the
+/// top, never falling, and each knot where that share of the samples had escaped.
+#[test]
+fn the_quantiles_track_the_samples_shares() {
+    use fractadyne_core::coloring::EQ_QUANTILES;
+    // A deep band: most samples just above the floor, a tail far above.
+    let values: Vec<f32> = (0..4000).map(|i| 181_573.0 + (i as f32 / 40.0).powi(3)).collect();
+    let (lo, hi) = (values[0], values[values.len() - 1]);
+    let h = hist_of(&values, lo);
+    let q = h.quantiles(lo, hi).unwrap();
+    assert_eq!(q[0], lo);
+    assert!(q.windows(2).all(|w| w[0] <= w[1]), "never decreasing");
+    assert!(q[EQ_QUANTILES] <= hi);
+    for i in [32usize, 64, 128, 192, 240] {
+        let exact = values[(values.len() - 1) * i / EQ_QUANTILES];
+        // A bucket is 4.4% of the height above the floor: within it.
+        let tol = 0.05 * (exact - lo) + 1.0;
+        assert!((q[i] - exact).abs() <= tol, "knot {i}: {} against {exact}", q[i]);
+    }
+    // Too few samples to be a distribution.
+    assert!(hist_of(&values[..10], lo).quantiles(lo, hi).is_none());
+}

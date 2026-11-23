@@ -3961,6 +3961,12 @@ struct ColorU {
     relief_shininess: f32,
     _pad_relief: u32,
     relief_hl_col: vec4<f32>,
+    // Histogram equalization (coloring plan C6, `equalized`): the frame's share and sweeps, the
+    // dissolve's share and sweeps; then each map's remap knots 0..255 (knot 256 is 1), four a row.
+    // Mirrors `ColorUniforms.eq`, `.eq_knots`, `.fade_eq_knots`.
+    eq: vec4<f32>,
+    eq_knots: array<vec4<f32>, 64>,
+    fade_eq_knots: array<vec4<f32>, 64>,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -4073,17 +4079,18 @@ const INTERIOR_COORD: f32 = 1.0e30;
 // diffing the pre-`fract` value is what keeps that footprint free of wrap discontinuities.
 // `m` = (smooth iter, normal.x, normal.y, DE log2); `a` = (stripe, TIA, trap, decomp).
 fn coord_of(m: vec4<f32>, a: vec4<f32>) -> f32 {
-    return coord_under(m, a, cu.cycle, cu.offset, cu.norm_mode, cu.norm_lo);
+    return coord_under(m, a, cu.cycle, cu.offset, cu.norm_mode, cu.norm_lo, 0u);
 }
 
 // The palette coordinate under the map a dissolve fades from (`cu.fade_*`).
 fn coord_fade(m: vec4<f32>, a: vec4<f32>) -> f32 {
-    return coord_under(m, a, cu.fade_cycle, cu.fade_offset, cu.fade_mode, cu.fade_lo);
+    return coord_under(m, a, cu.fade_cycle, cu.fade_offset, cu.fade_mode, cu.fade_lo, 1u);
 }
 
 // The palette coordinate of a texel under a palette map (`cycle`, `offset`, and the range mapping
-// `mode` about `lo`); `INTERIOR_COORD` for an interior texel, whatever the map.
-fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, lo: f32) -> f32 {
+// `mode` about `lo`, and the equalization of map `which`: 0 the frame's, 1 the dissolve's);
+// `INTERIOR_COORD` for an interior texel, whatever the map.
+fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, lo: f32, which: u32) -> f32 {
     var pv: f32;
     var interior: bool = (m.r < 0.0);
     if (cu.color_method == METHOD_STRIPE) {
@@ -4107,6 +4114,11 @@ fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, l
         pv = m.r;                                  // smooth iteration count
     }
     if (interior) { return INTERIOR_COORD; }
+    // An equalized map (C6) first, apart: the plain map's expression below is the one the hook's
+    // `palette_map` writes too, and the two must stay the same bits (B10's Smooth-hook check).
+    if (eq_share(which) > 0.0) {
+        return map_equalized(pv, cycle, offset, mode, lo, which);
+    }
     // Log range mapping. Escape values crowd towards the high end at depth — most of a deep
     // frame's pixels sit in the last few percent of the range — so a linear map spends nearly the
     // whole palette on a thin shell and flattens everything else. Compressing with log spreads
@@ -4118,6 +4130,66 @@ fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, l
         pv_mapped = transfer_of(max(pv - lo, 0.0), mode);
     }
     return pv_mapped * cycle + offset;
+}
+
+// A value under an equalized palette map (C6): from its floor in every mode, a linear one too, the
+// curve (C2), the remap of map `which` mixed in, then the offset.
+fn map_equalized(pv: f32, cycle: f32, offset: f32, mode: u32, lo: f32, which: u32) -> f32 {
+    let d = pv - lo;
+    var x = d * cycle;
+    if (mode != 0u) {
+        x = transfer_of(max(d, 0.0), mode) * cycle;
+    }
+    return equalized(x, which) + offset;
+}
+
+// ---- Histogram equalization (coloring plan C6; the CPU twins are in fractadyne_core::coloring) ----
+
+// Map `which`'s share of the remap (0: none) and its sweeps across the window.
+fn eq_share(which: u32) -> f32 {
+    return select(cu.eq.x, cu.eq.z, which == 1u);
+}
+fn eq_sweeps(which: u32) -> f32 {
+    return select(cu.eq.y, cu.eq.w, which == 1u);
+}
+
+// Knot `j` (0..=256) of map `which`'s remap; the last is 1 and not stored.
+fn eq_knot(which: u32, j: u32) -> f32 {
+    if (j >= 256u) { return 1.0; }
+    var r: vec4<f32>;
+    if (which == 1u) { r = cu.fade_eq_knots[j >> 2u]; } else { r = cu.eq_knots[j >> 2u]; }
+    return r[j & 3u];
+}
+
+// R(u) (`eq_remap`): linear between the knots, on at slope 1 past the window's two ends.
+fn eq_remap(which: u32, u: f32) -> f32 {
+    if (u <= 0.0) { return eq_knot(which, 0u) + u; }
+    if (u >= 1.0) { return u; }
+    let x = u * 256.0;
+    let i = min(u32(floor(x)), 255u);
+    let a = eq_knot(which, i);
+    return a + (eq_knot(which, i + 1u) - a) * (x - f32(i));
+}
+
+// dR/du (`eq_slope`): the interval's, 1 outside [0, 1].
+fn eq_slope_at(which: u32, u: f32) -> f32 {
+    if (u < 0.0 || u >= 1.0) { return 1.0; }
+    let i = min(u32(floor(u * 256.0)), 255u);
+    return (eq_knot(which, i + 1u) - eq_knot(which, i)) * 256.0;
+}
+
+// The equalized coordinate (`equalized`): x = sweeps·u before the offset, mixed with sweeps·R(u).
+fn equalized(x: f32, which: u32) -> f32 {
+    let share = eq_share(which);
+    let sweeps = eq_sweeps(which);
+    return (1.0 - share) * x + share * sweeps * eq_remap(which, x / sweeps);
+}
+
+// d(equalized)/dx: how much faster the palette runs at `x` than under the fitted map alone.
+fn equalized_rate(x: f32, which: u32) -> f32 {
+    let share = eq_share(which);
+    if (share <= 0.0) { return 1.0; }
+    return (1.0 - share) + share * eq_slope_at(which, x / eq_sweeps(which));
 }
 
 // A palette map's curve (coloring plan C2) at a height `d` ≥ 0 above its floor: `mode` is
@@ -4276,6 +4348,14 @@ fn de_footprint(m: vec4<f32>, cycle: f32, mode: u32, lo: f32, s: f32) -> f32 {
         dtdmu = dtdmu / (max(m.r - lo, 0.0) + 1.0);
     } else if (mode != 0u) {
         dtdmu = dtdmu * transfer_slope(max(m.r - lo, 0.0), mode);
+    }
+    // An equalized map (C6) runs the palette faster where the pixels crowd: its footprint too.
+    if (eq_share(0u) > 0.0) {
+        var x = (m.r - lo) * cycle;
+        if (mode != 0u) {
+            x = transfer_of(max(m.r - lo, 0.0), mode) * cycle;
+        }
+        dtdmu = dtdmu * equalized_rate(x, 0u);
     }
     return dtdmu * s / max(d_px * cu.aa_ln_p, 1.0e-12);
 }

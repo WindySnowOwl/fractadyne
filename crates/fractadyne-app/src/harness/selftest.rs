@@ -73,7 +73,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels", "de-dip",
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe",
-    "lanes", "hook", "transfer", "edges", "equipotentials", "relief",
+    "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -768,6 +768,8 @@ impl FractadyneApp {
         self.coloring.use_custom_palette = false;
         self.coloring.use_binary = false;
         self.coloring.use_duotone = false;
+        // Equalize colors (C6) changes every normalized check's colors: off unless a check asks.
+        self.coloring.equalize = 0.0;
         self.effects.de = false;
         self.effects.light = false;
         // D2.2: echo the effective config so any residual leak is visible in the report
@@ -3712,7 +3714,7 @@ impl FractadyneApp {
             b_req.cycle = 0.41;
             b_req.offset = 0.27;
             let mut c_req = base.clone();
-            c_req.palette_fade = fractadyne_gpu::PaletteFade { weight: 0.25, cycle: b_req.cycle, offset: b_req.offset, mode: 1, lo: b_req.norm_lo };
+            c_req.palette_fade = fractadyne_gpu::PaletteFade { equalize: None, weight: 0.25, cycle: b_req.cycle, offset: b_req.offset, mode: 1, lo: b_req.norm_lo };
             let (err, apart) = match render(&base) {
                 Some(iter) => match (coloured(&a_req, &iter), coloured(&b_req, &iter), coloured(&c_req, &iter)) {
                     (Some(a), Some(b), Some(c)) => {
@@ -10834,6 +10836,7 @@ zoom = \"1e94\"
                 palette_contrast: -0.4,
                 palette_saturation: 1.5,
                 julia_linked: true,
+                equalize: 0.6,
             };
             // (coloring, lines its view must hold)
             let colorings = [
@@ -11056,6 +11059,7 @@ zoom = \"1e94\"
                 palette_contrast: 0.6,
                 palette_saturation: 0.5,
                 julia_linked: true,
+                equalize: 0.75,
                 // As the app keeps a hook's text: Unix line ends (`color_hook::build`), which a
                 // Windows checkout's example does not have.
                 coloring_hook: fractadyne_gpu::color_hook::EXAMPLES[1].1.replace("\r\n", "\n"),
@@ -11466,7 +11470,7 @@ zoom = \"1e94\"
                 self.coloring.palette_adjust,
                 self.coloring.normalize_live,
                 self.coloring.normalize_fit,
-                (self.coloring.transfer, self.coloring.wrap, self.coloring.steps),
+                (self.coloring.transfer, self.coloring.wrap, self.coloring.steps, self.coloring.equalize),
                 self.coloring.palette_aa,
             );
             let k0 = (
@@ -11491,6 +11495,7 @@ zoom = \"1e94\"
             self.coloring.transfer = fractadyne_core::coloring::Transfer::Sqrt;
             self.coloring.wrap = fractadyne_core::coloring::Wrap::Mirror;
             self.coloring.steps = 8;
+            self.coloring.equalize = 0.6;
             self.coloring.palette_aa = !d.palette_aa;
             self.anim.palette_anim = crate::PaletteAnim::ALL[1];
             self.anim.palette_anim_speed = 1.5;
@@ -11515,6 +11520,7 @@ zoom = \"1e94\"
                 && c.normalize_live == d.normalize_live
                 && c.normalize_fit == d.normalize_fit
                 && c.transfer == crate::transfer_of_spec(&d)
+                && c.equalize == d.equalize
                 && c.palette_aa == d.palette_aa
                 && self.anim.palette_anim == crate::PaletteAnim::Off
                 && self.anim.palette_anim_speed == speed0;
@@ -11529,7 +11535,7 @@ zoom = \"1e94\"
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "consistency",
                 name: "Reset coloring settings puts the tuned values back and keeps the choices".into(),
-                params: "Cycle, Divide iterations, Offset, the palette's adjustment, the normalization switches and the Scale (square root), anti-aliasing and animation set away from their defaults; method stripe, palette ice, the inside by the trap in ember, trap cross, the Julia link on, Wrap mirror, 8 Steps".into(),
+                params: "Cycle, Divide iterations, Offset, the palette's adjustment, the normalization switches, the Scale (square root) and Equalize (60%), anti-aliasing and animation set away from their defaults; method stripe, palette ice, the inside by the trap in ember, trap cross, the Julia link on, Wrap mirror, 8 Steps".into(),
                 result: format!("tuned values back to a new session's: {reset}; choices kept: {kept}"),
                 threshold: "both",
                 pass: reset && kept,
@@ -11541,7 +11547,7 @@ zoom = \"1e94\"
                 self.coloring.palette_adjust,
                 self.coloring.normalize_live,
                 self.coloring.normalize_fit,
-                (self.coloring.transfer, self.coloring.wrap, self.coloring.steps),
+                (self.coloring.transfer, self.coloring.wrap, self.coloring.steps, self.coloring.equalize),
                 self.coloring.palette_aa,
             ) = c0;
             (
@@ -12251,6 +12257,169 @@ zoom = \"1e94\"
                 result: wraps.1.join("; "),
                 threshold: "at most 0.5% of the escaped pixels more than 1 level apart; the control 5% or more",
                 pass: wraps.0,
+            });
+        }
+
+        // ---- Equalize colors (coloring plan C6) ----
+        // The GPU's equalized map against its CPU definition (`fractadyne_core::coloring::equalized`
+        // over the count lane), at the transfer check's point: linear, square root and log windows,
+        // shares 0.5 and 1, the table from the frame's own distribution; the same map with no share
+        // as the CONTROL. Then what it is for: at share 1 and whole sweeps each of 16 palette bins
+        // holds about the same share of the escaped pixels, where the fitted map alone does not.
+        if want("equalize") {
+            use fractadyne_core::coloring::{eq_knots, equalized, quantiles_of_sorted, Transfer};
+            let saved_spec = self.coloring_spec();
+            let saved = (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.effects.light, self.effects.de);
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 8_000;
+            self.effects.light = false;
+            self.effects.de = false;
+            self.coloring.hook.turn_off();
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
+            self.coloring.use_duotone = false;
+            self.coloring.use_binary = false;
+            self.coloring.palette_idx = fractadyne_color::preset_by_id("unity").unwrap_or(0);
+            self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+            self.coloring.normalize_live = false;
+            self.coloring.normalize_fit = false;
+            self.coloring.transfer = Transfer::Linear;
+            self.coloring.wrap = fractadyne_core::coloring::Wrap::Repeat;
+            self.coloring.steps = 0;
+            self.coloring.equalize = 0.0;
+            let (w, h) = (160u32, 90u32);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 256).expect("the tour point's coordinate");
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.set_center_mag(
+                at("-1.178853950372678747911373866849720956148855"),
+                at("0.1853420232408490265512092752061929308714979"),
+                1e10,
+            );
+            let mut req = self.lanes_request_for(&vp, false, None);
+            req.width = w;
+            req.height = h;
+            req.aa_palette = fractadyne_gpu::PaletteAa::Off;
+            (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.effects.light, self.effects.de) = saved;
+            self.apply_coloring_spec(&saved_spec);
+            let counts: Vec<f32> = fractadyne_gpu::render_lanes(device, queue, &req, crate::tunables::CORRECT_WORK_BUDGET)
+                .ok()
+                .map(|r| r.pixels.chunks_exact(4).map(|t| t[0]).collect())
+                .unwrap_or_default();
+            let mut sorted: Vec<f32> = counts.iter().copied().filter(|c| *c >= 0.0).collect();
+            sorted.sort_unstable_by(f32::total_cmp);
+            let (lo, hi) = (sorted.first().copied().unwrap_or(0.0), sorted.last().copied().unwrap_or(0.0));
+            let q = quantiles_of_sorted(&sorted);
+            let user_offset = 0.125_f32;
+            // The equalized map of [lo, hi] under curve t with `share` of the remap: the request's
+            // floor, rate and offset, and its equalization, as the app writes them (`apply_norm_eq`).
+            let map = |t: Transfer, share: f32, sweeps: f32| -> (u32, f32, f32, f32, Option<fractadyne_gpu::Equalize>) {
+                let rate = match t {
+                    Transfer::Linear => sweeps / (hi - lo).max(1.0e-6),
+                    t => sweeps / crate::render::curve_span(hi - lo, t),
+                };
+                let eq = q.as_ref().map(|q| fractadyne_gpu::Equalize { share, sweeps, knots: eq_knots(q, lo as f64, hi as f64, t) });
+                (t.gpu_id(), lo, rate, user_offset, eq.filter(|_| share > 0.0))
+            };
+            // The palette position of a count under that map, on the CPU.
+            let coord = |t: Transfer, share: f32, sweeps: f32, c: f32| -> f64 {
+                let (_, floor, rate, off, eq) = map(t, share, sweeps);
+                let d = (c - floor) as f64;
+                let x = if t == Transfer::Linear { d } else { t.apply(d) } * rate as f64;
+                match eq {
+                    Some(e) => equalized(x, e.share as f64, e.sweeps as f64, &e.knots) + off as f64,
+                    None => x + off as f64,
+                }
+            };
+            let lut = req.lut.clone();
+            let smooth = req.lut_smooth;
+            let read = |t: f64| -> [f64; 3] {
+                let n = lut.len();
+                if n == 0 {
+                    return [0.0; 3];
+                }
+                let rgb = |e: [f32; 4]| [e[0] as f64, e[1] as f64, e[2] as f64];
+                let tt = t - t.floor();
+                if !smooth {
+                    return rgb(lut[((tt * n as f64) as usize).min(n - 1)]);
+                }
+                let x = tt * n as f64 - 0.5;
+                let i0 = x.floor() as i64;
+                let (a, b) = (rgb(lut[i0.rem_euclid(n as i64) as usize]), rgb(lut[(i0 + 1).rem_euclid(n as i64) as usize]));
+                let f = x - x.floor();
+                [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]
+            };
+            let gpu = |t: Transfer, share: f32, sweeps: f32| -> Option<Vec<f32>> {
+                let (mode, floor, rate, off, eq) = map(t, share, sweeps);
+                let mut r = req.clone();
+                (r.norm_mode, r.norm_lo, r.cycle, r.offset, r.equalize) = (mode, floor, rate, off, eq);
+                let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel).ok().map(|x| x.pixels)
+            };
+            // The share of escaped pixels more than one 8-bit level from the CPU's colors, and the
+            // largest gap.
+            let apart = |g: &[f32], t: Transfer, share: f32, sweeps: f32| -> (f64, f64) {
+                let (mut n, mut bad, mut worst) = (0usize, 0usize, 0.0f64);
+                for (px, &c) in g.chunks_exact(4).zip(&counts) {
+                    if c < 0.0 {
+                        continue;
+                    }
+                    let want = read(coord(t, share, sweeps, c));
+                    let d = (0..3).map(|k| (px[k] as f64 - want[k]).abs() * 255.0).fold(0.0, f64::max);
+                    n += 1;
+                    worst = worst.max(d);
+                    bad += (d > 1.0) as usize;
+                }
+                (bad as f64 / n.max(1) as f64, worst)
+            };
+            let mut def = (q.is_some() && sorted.len() > 1000, Vec::new());
+            for t in [Transfer::Linear, Transfer::Sqrt, Transfer::Log] {
+                for share in [0.5_f32, 1.0] {
+                    let (ok, line) = match gpu(t, share, 2.5) {
+                        Some(g) => {
+                            let (bad, worst) = apart(&g, t, share, 2.5);
+                            let (control, _) = apart(&g, t, 0.0, 2.5);
+                            (bad <= 0.005 && control >= 0.05, format!("{} {share}: {:.2}% apart (max {worst:.2} levels), control {:.0}%", t.key(), bad * 100.0, control * 100.0))
+                        }
+                        None => (false, format!("{} {share}: no render", t.key())),
+                    };
+                    def.0 &= ok;
+                    def.1.push(line);
+                }
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "Equalize colors is its definition".into(),
+                params: format!("the coloring-method tour's point at 1e10x, {w}x{h}, ss 1, point sampled, unity; the frame's escape range [{lo:.1}, {hi:.1}] at 2.5 sweeps, its own distribution; each against `equalized` over the count lane, the same map with no share as the control"),
+                result: def.1.join("; "),
+                threshold: "at most 0.5% of the escaped pixels more than 1 level apart; the control 5% or more",
+                pass: def.0,
+            });
+            // Equal areas: the fullest of 16 palette bins over a whole number of sweeps.
+            let fullest = |share: f32, t: Transfer| -> f64 {
+                let mut bins = [0usize; 16];
+                for &c in &sorted {
+                    let p = coord(t, share, 2.0, c) - user_offset as f64;
+                    bins[((p - p.floor()) * 16.0).floor().clamp(0.0, 15.0) as usize] += 1;
+                }
+                bins.iter().copied().max().unwrap_or(0) as f64 / sorted.len().max(1) as f64
+            };
+            let areas: Vec<(Transfer, f64, f64)> = [Transfer::Linear, Transfer::Log].iter().map(|&t| (t, fullest(1.0, t), fullest(0.0, t))).collect();
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "Equalize colors gives each color about the same area".into(),
+                params: "as above, 2 whole sweeps, share 1, linear and log; the fitted map alone as the control".into(),
+                result: areas
+                    .iter()
+                    .map(|(t, eq, fit)| format!("{}: the fullest of 16 colors holds {:.1}% equalized, {:.1}% fitted", t.key(), eq * 100.0, fit * 100.0))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                threshold: "equalized at most 1.25/16 (7.8%) under each; fitted above 1.5/16 (9.4%) under linear (else the check sees nothing)",
+                pass: q.is_some()
+                    && areas.iter().all(|(_, eq, _)| *eq <= 1.25 / 16.0)
+                    && areas.iter().any(|(t, _, fit)| *t == Transfer::Linear && *fit > 1.5 / 16.0),
             });
         }
 

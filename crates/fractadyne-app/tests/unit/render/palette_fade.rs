@@ -1,8 +1,8 @@
 use super::*;
 
-const CLASSIC: NormMap = NormMap { cycle: 0.0352, offset: 0.8, mode: 0, lo: 0.0 };
-const LOG: NormMap = NormMap { cycle: 0.48, offset: 0.8, mode: 1, lo: 302.5 };
-const LINEAR: NormMap = NormMap { cycle: 0.0022, offset: 0.13, mode: 0, lo: 0.0 };
+const CLASSIC: NormMap = NormMap { cycle: 0.0352, offset: 0.8, mode: 0, lo: 0.0, eq: None };
+const LOG: NormMap = NormMap { cycle: 0.48, offset: 0.8, mode: 1, lo: 302.5, eq: None };
+const LINEAR: NormMap = NormMap { cycle: 0.0022, offset: 0.13, mode: 0, lo: 0.0, eq: None };
 const FRAME: f32 = 1.0 / 60.0;
 /// The window the normalized maps above are drawn over.
 const WIN: Option<(f32, f32)> = Some((300.0, 1900.0));
@@ -129,7 +129,7 @@ fn a_jump_under_a_curve_dissolves_and_a_glide_under_it_does_not() {
     // not. Read as linear maps (v · cycle + offset, the floor ignored) the cut moved nothing.
     let w = (150_000.0_f32, 170_000.0_f32);
     let span = (w.1 - w.0).sqrt();
-    let a = NormMap { cycle: 2.12 / span, offset: 0.8, mode: 2, lo: w.0 };
+    let a = NormMap { cycle: 2.12 / span, offset: 0.8, mode: 2, lo: w.0, eq: None };
     let cut = NormMap { lo: w.0 + 5_000.0, ..a };
     let glide = NormMap { lo: w.0 + 0.5, ..a };
     assert!(map_change(&a, &cut, w) > PALETTE_JUMP, "{}", map_change(&a, &cut, w));

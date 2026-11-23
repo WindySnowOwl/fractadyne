@@ -411,6 +411,9 @@ enum Screen {
     PaletteScale,
     /// ...then Mirror and 6 steps: another picture again, still no pass.
     PaletteWrapSteps,
+    /// Equalize colors (coloring plan C6): the PaletteScaleLinear view with Equalize at 75%, against
+    /// it: another picture, and no pass (a recolor from the distribution already held).
+    Equalize,
     /// Edge shading (coloring plan C3): the Julia-link point in Smooth, point sampled, the shading
     /// off (the base)...
     EdgeShadeOff,
@@ -1403,6 +1406,7 @@ fn build_steps() -> Vec<Step> {
         screen("palette-scale-linear", Screen::PaletteScaleLinear),
         screen("palette-scale", Screen::PaletteScale),
         screen("palette-wrap-steps", Screen::PaletteWrapSteps),
+        screen("equalize", Screen::Equalize),
         screen("edge-shade-off", Screen::EdgeShadeOff),
         screen("edge-shade", Screen::EdgeShade),
         screen("edge-shade-inside", Screen::EdgeShadeInside),
@@ -1840,6 +1844,26 @@ impl FractadyneApp {
             name: name.into(),
             verdict: if ok { Verdict::Pass } else { Verdict::Fail },
             detail: format!("against {before} (mean difference in levels, passes caused): {r:?}; curve {:?}, wrap {:?}, steps {}", self.coloring.transfer, self.coloring.wrap, self.coloring.steps),
+        });
+    }
+
+    /// The Equalize step (C6) against palette-scale-linear, the same view and map without it: another
+    /// picture (mean difference 4 levels or more, the control that it ran), no pass (a recolor: the
+    /// distribution was fed while the view settled, whatever the share), and a table on the map.
+    fn uitest_equalize_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
+        let before = "palette-scale-linear";
+        let b = ut.results.iter().rev().find(|r| r.name == before);
+        let r = view.zip(b).and_then(|((px, _), b)| {
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            let s: f64 = px.chunks_exact(4).zip(prev.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            Some((s / (3 * (px.len() / 4)).max(1) as f64, (ran_why[0] - b.ran_why[0]) + (ran_why[1] - b.ran_why[1])))
+        });
+        let table = self.perf.view_map[0].is_some_and(|(m, _)| m.eq.is_some());
+        let ok = r.is_some_and(|(d, ran)| d >= 4.0 && ran == 0) && table;
+        checks.push(Check {
+            name: "equalize-recolors".into(),
+            verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+            detail: format!("against {before} (mean difference in levels, passes caused): {r:?}; the drawn map has a table: {table}; share {}", self.coloring.equalize),
         });
     }
 
@@ -2489,6 +2513,8 @@ impl FractadyneApp {
         self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
         self.coloring.wrap = fractadyne_core::coloring::Wrap::Repeat;
         self.coloring.steps = 0;
+        // ...or Equalize colors (the `equalize` step sets its own, C6)...
+        self.coloring.equalize = 0.0;
         // ...or a Julia link (each `julia-linked*` step sets its own)...
         self.coloring.julia_linked = false;
         // ...or the edge shading (each `edge-shade*` step sets its own, C3)...
@@ -3176,7 +3202,7 @@ impl FractadyneApp {
             // lands in a step's time, so "Always fit range" never engages: `[fd-palette]` drawn=None),
             // its range always fitted so the curve applies; then the curve, then the wrap and steps,
             // each step one change from the one before.
-            Screen::PaletteScaleLinear | Screen::PaletteScale | Screen::PaletteWrapSteps => {
+            Screen::PaletteScaleLinear | Screen::PaletteScale | Screen::PaletteWrapSteps | Screen::Equalize => {
                 if matches!(s, Screen::PaletteScaleLinear) {
                     let (cx, cy) = UITEST_JULIA_LINK_C;
                     self.set_show_mode(crate::ShowMode::Set);
@@ -3196,7 +3222,9 @@ impl FractadyneApp {
                 self.coloring.normalize_fit = true;
                 self.coloring.palette_aa = false;
                 self.dialogs.right_panel_open = true;
-                self.coloring.transfer = if matches!(s, Screen::PaletteScaleLinear) { fractadyne_core::coloring::Transfer::Linear } else { fractadyne_core::coloring::Transfer::Sqrt };
+                self.coloring.transfer = if matches!(s, Screen::PaletteScaleLinear | Screen::Equalize) { fractadyne_core::coloring::Transfer::Linear } else { fractadyne_core::coloring::Transfer::Sqrt };
+                // C6: the PaletteScaleLinear view with Equalize colors at 75%.
+                self.coloring.equalize = if matches!(s, Screen::Equalize) { 0.75 } else { 0.0 };
                 if matches!(s, Screen::PaletteWrapSteps) {
                     self.coloring.wrap = fractadyne_core::coloring::Wrap::Mirror;
                     self.coloring.steps = 6;
@@ -3941,6 +3969,7 @@ impl FractadyneApp {
                     | Screen::PaletteScaleLinear
                     | Screen::PaletteScale
                     | Screen::PaletteWrapSteps
+                    | Screen::Equalize
                     | Screen::EdgeShadeOff
                     | Screen::EdgeShade
                     | Screen::EdgeShadeInside
@@ -4869,6 +4898,10 @@ impl FractadyneApp {
         // ---- the palette map's curve, wrap and steps (coloring plan C2) ----
         if let StepKind::Screen(sc @ (Screen::PaletteScale | Screen::PaletteWrapSteps)) = step.kind {
             self.uitest_palette_scale_checks(sc, ut, inside_view.as_ref(), ran_why, &mut checks);
+        }
+        // ---- Equalize colors (coloring plan C6) ----
+        if let StepKind::Screen(Screen::Equalize) = step.kind {
+            self.uitest_equalize_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
         }
 
         // ---- edge shading (coloring plan C3) ----

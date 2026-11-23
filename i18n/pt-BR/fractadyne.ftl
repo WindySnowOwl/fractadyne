@@ -2884,6 +2884,12 @@ panel-scale-hover =
 
     Uma faixa muito assimétrica usa o logaritmo mesmo em Linear.
 panel-scale-off-hover = Vale depois que a paleta é ajustada à faixa da vista: ative "Normalizar cores profundas" ou "Sempre ajustar a faixa".
+panel-equalize = Equalizar
+panel-equalize-hover =
+    Distribui a paleta para que cada cor cubra mais ou menos a mesma parte da imagem, conforme quanto da imagem cada faixa de contagens de escape preenche (coloração por histograma). Use quando uma cor inunda a vista e o detalhe fica espremido numa faixa estreita das outras.
+
+    Em 0% a curva da Escala posiciona as cores sozinha. Em 100% os filamentos finos junto ao conjunto, que cobrem poucos pixels, podem ficar de uma só cor; um pouco menos os mantém.
+panel-equalize-method-hover = Equalizar distribui a contagem de escape, então vale com Iteração suave.
 # The curves the Scale list offers.
 transfer-linear = Linear
 transfer-sqrt = Raiz quadrada

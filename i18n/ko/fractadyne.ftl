@@ -2804,6 +2804,12 @@ panel-scale-hover =
 
     크게 치우친 범위는 선형이어도 로그를 씁니다.
 panel-scale-off-hover = 팔레트를 화면의 범위에 맞추면 적용됩니다: '깊은 색상 정규화'나 '항상 범위에 맞춤'을 켜세요.
+panel-equalize = 균등화
+panel-equalize-hover =
+    탈출 횟수의 각 구간이 그림을 얼마나 채우는지에 따라 팔레트를 펼쳐, 모든 색이 그림의 거의 같은 몫을 덮게 합니다(히스토그램 색칠). 한 색이 화면을 뒤덮고 세부가 다른 색들의 좁은 띠에 몰려 있을 때 쓰세요.
+
+    0%에서는 척도의 곡선만으로 색이 정해집니다. 100%에서는 집합 옆의 가는 필라멘트(픽셀이 적은 부분)가 한 색이 될 수 있습니다. 조금 낮추면 남습니다.
+panel-equalize-method-hover = 균등화는 탈출 횟수를 펼치므로 부드러운 반복에서 적용됩니다.
 # The curves the Scale list offers.
 transfer-linear = 선형
 transfer-sqrt = 제곱근

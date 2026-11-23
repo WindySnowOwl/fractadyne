@@ -35,13 +35,16 @@ fn p3() -> f32 { return cu.hook_p.z; }
 fn p4() -> f32 { return cu.hook_p.w; }
 
 // The view's palette map applied to any value: the range map (the Scale's curve when the view's
-// range is fitted, coloring plan C2), then
+// range is fitted, coloring plan C2, and its equalization, C6), then
 // the rate and Offset, exactly as the view's METHOD maps its own value. `palette(palette_map(l.count))`
 // is Smooth. The same arithmetic as `coord_under`, so it gives the same bits. ⚠The rate is the
 // method's: under Smooth it is palettes per ITERATION (a few hundredths), so a value from 0 to 1
 // (a statistic, a direction in turns) hardly moves through the palette under it. Map such a value
 // with a rate of your own instead: `palette(v * rate + palette_offset())`.
 fn palette_map(v: f32) -> f32 {
+    if (eq_share(0u) > 0.0) {
+        return map_equalized(v, cu.cycle, cu.offset, cu.norm_mode, cu.norm_lo, 0u);
+    }
     var x = v;
     if (cu.norm_mode != 0u) {
         x = transfer_of(max(v - cu.norm_lo, 0.0), cu.norm_mode);

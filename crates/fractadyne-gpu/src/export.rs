@@ -281,6 +281,8 @@ pub struct ExportRequest {
     pub norm_lo: f32,
     /// A dissolve from another palette map ([`crate::PaletteFade`]); none for an export.
     pub palette_fade: crate::PaletteFade,
+    /// The map's histogram equalization ([`crate::Equalize`], coloring plan C6); none by default.
+    pub equalize: Option<crate::Equalize>,
     /// Analytic palette anti-aliasing ([`crate::PaletteAa`]; `palette_box` in the shader). `Off` =
     /// point sample. Set identically to the live path so an export matches the view.
     pub aa_palette: crate::PaletteAa,
@@ -1891,6 +1893,7 @@ impl<'a> TileRenderer<'a> {
         let lut_buf = crate::make_lut_buffer(device);
         let (lut_len, lut_smooth) = crate::write_lut(queue, &lut_buf, &req.lut, req.lut_smooth);
         let iw = req.interior.upload(queue, &lut_buf);
+        let eqw = crate::eq_words(req.equalize.as_ref(), req.palette_fade.equalize.as_ref());
         let cu = ColorUniforms {
             lut_len,
             cycle: req.cycle,
@@ -1954,6 +1957,9 @@ impl<'a> TileRenderer<'a> {
             relief_shininess: req.relief.shininess,
             _pad_relief: 0,
             relief_hl_col: req.relief.gpu_color(),
+            eq: eqw.row,
+            eq_knots: eqw.knots,
+            fade_eq_knots: eqw.fade_knots,
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4299,6 +4305,7 @@ fn render_iter_passes(
 /// one-tap filter. [`color_iter_buffer_ss`]'s, and the zoom-video assembler's, so a frame
 /// assembled from strips is colored exactly as a buffer handed to it would be.
 pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, lut_len: u32, lut_smooth: u32, iw: crate::InteriorWords) -> ColorUniforms {
+    let eqw = crate::eq_words(req.equalize.as_ref(), req.palette_fade.equalize.as_ref());
     ColorUniforms {
         lut_len,
         cycle: req.cycle,
@@ -4362,6 +4369,9 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         relief_shininess: req.relief.shininess,
         _pad_relief: 0,
         relief_hl_col: req.relief.gpu_color(),
+        eq: eqw.row,
+        eq_knots: eqw.knots,
+        fade_eq_knots: eqw.fade_knots,
     }
 }
 

@@ -478,6 +478,12 @@ pub(crate) struct ColorUniforms {
     pub(crate) relief_shininess: f32,
     pub(crate) _pad_relief: u32,
     pub(crate) relief_hl_col: [f32; 4],
+    /// Histogram equalization ([`Equalize`], coloring plan C6): a row of the frame's share and
+    /// sweeps and the dissolve's, then each one's remap knots, 64 rows of four ([`EQ_ROWS`]).
+    /// `ColorU.eq`, `.eq_knots`, `.fade_eq_knots` mirror them.
+    pub(crate) eq: [f32; 4],
+    pub(crate) eq_knots: [[f32; 4]; EQ_ROWS],
+    pub(crate) fade_eq_knots: [[f32; 4]; EQ_ROWS],
 }
 
 /// [`ColorUniforms::tap_stride`] for a palette-browser thumbnail colored from a texture built at
@@ -542,6 +548,61 @@ pub struct PaletteFade {
     pub offset: f32,
     pub mode: u32,
     pub lo: f32,
+    /// That map's equalization (coloring plan C6), if it had one.
+    pub equalize: Option<Equalize>,
+}
+
+/// Histogram equalization of a fitted palette map (coloring plan C6, Equalize colors): the color
+/// pass mixes the map's coordinate before its offset, x = `sweeps`·u (u from 0 at the window's floor
+/// to 1 at its top), with `sweeps`·R(u), R the remap ([`fractadyne_core::coloring::eq_knots`]):
+/// (1 − `share`)·x + `share`·`sweeps`·R(u). A map with one measures from its floor `lo` in every mode,
+/// a linear one too (`v − lo`, its offset the user's alone), so the shader can find u.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Equalize {
+    /// The remap's share, 0 to 1 (0: the fitted map itself).
+    pub share: f32,
+    /// Palette sweeps across the window: the map's rate times its curve's span.
+    pub sweeps: f32,
+    /// R at u = j / `EQ_KNOTS`; the last is 1.
+    pub knots: [f32; fractadyne_core::coloring::EQ_KNOTS + 1],
+}
+
+/// Rows of four the color uniform holds a remap's knots 0..`EQ_KNOTS` in (`ColorU.eq_knots`); the
+/// last knot is 1 by construction and is not stored (the shader's `eq_knot`).
+pub(crate) const EQ_ROWS: usize = fractadyne_core::coloring::EQ_KNOTS / 4;
+
+/// The color uniform's words for the frame's equalization and the dissolve's (C6):
+/// `[share, sweeps, fade share, fade sweeps]` and each one's knots.
+pub(crate) struct EqWords {
+    pub(crate) row: [f32; 4],
+    pub(crate) knots: [[f32; 4]; EQ_ROWS],
+    pub(crate) fade_knots: [[f32; 4]; EQ_ROWS],
+}
+
+pub(crate) fn eq_words(cur: Option<&Equalize>, fade: Option<&Equalize>) -> EqWords {
+    let rows = |e: Option<&Equalize>| {
+        let mut r = [[0.0f32; 4]; EQ_ROWS];
+        if let Some(e) = e {
+            for (j, k) in e.knots.iter().take(EQ_ROWS * 4).enumerate() {
+                r[j / 4][j % 4] = *k;
+            }
+        }
+        r
+    };
+    fn live(e: Option<&Equalize>) -> Option<&Equalize> {
+        e.filter(|e| e.share > 0.0 && e.sweeps > 0.0)
+    }
+    let (cur, fade) = (live(cur), live(fade));
+    EqWords {
+        row: [
+            cur.map_or(0.0, |e| e.share),
+            cur.map_or(0.0, |e| e.sweeps),
+            fade.map_or(0.0, |e| e.share),
+            fade.map_or(0.0, |e| e.sweeps),
+        ],
+        knots: rows(cur),
+        fade_knots: rows(fade),
+    }
 }
 
 /// Edge shading (coloring plan C3): an escaped texel near the set takes a color by its distance from
@@ -2030,6 +2091,25 @@ impl NormHist {
             cum = next;
         }
         Some(self.base as f64 + (self.counts.len() as f64 / per).exp2() - 1.0)
+    }
+
+    /// The sampled escapes as a quantile function (coloring plan C6, Equalize colors): knot i the
+    /// value by which share i / `EQ_QUANTILES` had escaped ([`Self::quantile`], log-linear inside a
+    /// bucket), kept inside the reading `[lo, hi]` and never decreasing; the first knot is `lo`.
+    /// `None` with fewer than 64 samples, too few to be a distribution.
+    pub fn quantiles(&self, lo: f32, hi: f32) -> Option<fractadyne_core::coloring::Quantiles> {
+        use fractadyne_core::coloring::EQ_QUANTILES;
+        if self.total() < 64 || !(hi >= lo) {
+            return None;
+        }
+        let mut q = [lo; EQ_QUANTILES + 1];
+        let mut last = lo;
+        for (i, k) in q.iter_mut().enumerate().skip(1) {
+            let v = self.quantile(i as f64 / EQ_QUANTILES as f64)? as f32;
+            last = v.clamp(last, hi);
+            *k = last;
+        }
+        Some(q)
     }
 }
 
@@ -3677,6 +3757,8 @@ pub struct MandelbrotParams {
     pub norm_lo: f32,
     /// A dissolve from the map this frame's replaces ([`PaletteFade`]); none by default.
     pub palette_fade: PaletteFade,
+    /// The map's histogram equalization ([`Equalize`], coloring plan C6); none by default.
+    pub equalize: Option<Equalize>,
     /// Analytic palette anti-aliasing ([`PaletteAa`]): box-filter the palette over each pixel's
     /// phase footprint (`palette_box` in the shader) so a steep escape field stops aliasing into
     /// speckle. `Off` = point sample (the classic behavior).
@@ -3976,6 +4058,7 @@ impl Default for MandelbrotParams {
             norm_mode: 0,
             norm_lo: 0.0,
             palette_fade: PaletteFade::default(),
+            equalize: None,
             aa_palette: PaletteAa::Off,
             aa_sample: 0,
             lut: Arc::new(Vec::new()),
@@ -4373,6 +4456,7 @@ impl CallbackTrait for MandelbrotParams {
         // bounds its reads with can never disagree with the buffer's contents.
         let (lut_len, lut_smooth) = write_lut(queue, &view.lut_buf, &self.lut, self.lut_smooth);
         let iw = self.interior.upload(queue, &view.lut_buf);
+        let eqw = eq_words(self.equalize.as_ref(), self.palette_fade.equalize.as_ref());
         let cu = ColorUniforms {
             lut_len,
             cycle: self.cycle,
@@ -4463,6 +4547,9 @@ impl CallbackTrait for MandelbrotParams {
             relief_shininess: self.relief.shininess,
             _pad_relief: 0,
             relief_hl_col: self.relief.gpu_color(),
+            eq: eqw.row,
+            eq_knots: eqw.knots,
+            fade_eq_knots: eqw.fade_knots,
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);

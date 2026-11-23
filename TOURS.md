@@ -93,6 +93,7 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `normalize_fit` | bool | false | Live view only: always fit the palette to the escape range (method "smooth" or "trap"). |
 | `log_scale` | bool | false | Log color scale wherever the palette is normalized (method "smooth" or "trap"). |
 | `transfer` | string: linear \| sqrt \| cbrt \| root4 \| log \| loglog \| square | "linear" | The curve the palette is spread through wherever it is normalized (method "smooth" or "trap"): linear, sqrt, cbrt, root4, loglog or square; log is written `log_scale = true`, as older files have it (and `transfer = "log"` reads as log). |
+| `equalize` | float, 0 to 1 | 0 | Equalize colors, 0 to 1: the share of histogram coloring mixed into the palette map wherever it is normalized, so each color takes about the same area of the picture (method "smooth"; 0: the fitted map alone). |
 | `wrap` | string: repeat \| mirror \| clamp | "repeat" | How the palette continues past its end: repeat, mirror (run back the other way) or clamp (the last color held). |
 | `steps` | int, 0 to 64 | 0 | Flat bands each palette cycle is cut into, each the color at its start (0: smooth; at most 64). |
 | `palette_aa` | bool | true | Anti-alias the palette: where its bands are finer than a pixel, the pixel shows their average color, over a footprint sized by the distance to the set (where the formula has none, by the next pixels' colors). |
