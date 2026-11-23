@@ -100,7 +100,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 46] = [
+pub(crate) const FIELDS: [Field; 47] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -569,6 +569,14 @@ pub(crate) const FIELDS: [Field; 46] = [
             *slider_range::PALETTE_SATURATION.start(),
             *slider_range::PALETTE_SATURATION.end(),
         ),
+        parents: &[],
+        shows: always,
+    },
+    Field {
+        key: "palette_oklab",
+        name: "palette blended in OKLab",
+        doc: "Blend in OKLab: the palette's colors blended in OKLab, a perceptual space, rather than between their display (sRGB) values, so each blend steps evenly in lightness and one between two distant colors does not darken or gray in the middle (HSV segments and flat bands as they are).",
+        access: Access::Flag(|s| s.palette_oklab, |s, v| s.palette_oklab = v),
         parents: &[],
         shows: always,
     },

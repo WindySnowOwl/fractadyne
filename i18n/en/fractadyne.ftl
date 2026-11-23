@@ -274,7 +274,7 @@ menu-color-more = Cycle, offset, animation and effects: Controls panel ▸ Color
 menu-color-browse = Browse palettes…
 menu-color-browse-hover = Every palette over the current view, side by side: filter them by tag, and tag your own.
 menu-color-reset-settings = Reset coloring settings
-menu-color-reset-settings-hover = Cycle, Divide iterations, Offset, Brightness, Contrast, Saturation, the normalization switches, the palette's anti-aliasing and its animation, back to their defaults. The method, the palettes and the inside stay as they are.
+menu-color-reset-settings-hover = Cycle, Divide iterations, Offset, Brightness, Contrast, Saturation, Blend in OKLab, Equalize, the normalization switches, the palette's anti-aliasing and its animation, back to their defaults. The method, the palettes and the inside stay as they are.
 
 # The palette browser window.
 palette-browser-title = Palettes
@@ -3052,6 +3052,8 @@ panel-inside-fit = Fit to the inside's range
 panel-inside-fit-hover = Spread the inside palette over the trap values measured inside the set on screen, so its structure shows. Exports of this view use the same fit.
 panel-palette-aa = Anti-alias the palette
 panel-palette-aa-hover = Where the palette's bands are finer than a pixel, show their average color instead of speckle. The footprint comes from the distance to the set, so the bands near it stay as sharp as the pixels allow. Exports of this view use it too.
+panel-palette-oklab = Blend in OKLab
+panel-palette-oklab-hover = Blend between the palette's colors in OKLab, a color space built on how the eye sees, rather than between their screen values: each blend brightens or darkens evenly, and one between two distant colors keeps a clean middle instead of passing through a dark or muddy one. Most palettes change a little, a few a lot. Exports of this view use it too.
 panel-palette = Palette
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = In-set

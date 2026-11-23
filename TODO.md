@@ -1988,7 +1988,10 @@ Mockups: [design/mockups/](design/mockups/).
   error-shrinks-with-size evidence was taken on LINEAR gradients — re-measure on a curve-heavy one.
 
   ⛔**Deferred with reasons**: OkLab (needs a real sRGB decode/encode round trip — the first place
-  the display-referred choice costs something; its own decision) · per-channel curves (3× the
+  the display-referred choice costs something; its own decision) ✅**decided and done 2026-11-23
+  as coloring plan C7**: a palette-wide "Blend in OKLab" switch at bake time
+  (`Gradient::bake_oklab`), not a per-segment space, so the segment model and `.ggr` stay GIMP's ·
+  per-channel curves (3× the
   parameters for a gain `cycle` erases) · alpha (renderer has no alpha channel).
 - [ ] ▶⭐⭐**PALETTE IMPORT — THE PLANNED ORDER IS COMPLETE**: LUT + segment model (beta.23), `.map` (beta.24), `.ugr` (beta.25), `.ggr` (beta.26), `.ase` (beta.27). ⚠Two things remain OPEN, below: the §7 verification bar (no Fractint/UF render to compare against) and `.cs`, which is NOT implemented on purpose.** Design, format
   details and the fidelity traps are all in **`design/palette-import.md`**; read it first, it was

@@ -96,8 +96,8 @@ impl PaletteAdjust {
 }
 
 /// The display color for OKLab `(l, a, b)`, giving up chroma (lightness and hue kept) until it is
-/// inside the sRGB gamut.
-fn in_gamut(l: f64, a: f64, b: f64) -> [f64; 3] {
+/// inside the sRGB gamut. Also the fit of a palette blended in OKLab (`Gradient::bake_oklab`).
+pub(crate) fn in_gamut(l: f64, a: f64, b: f64) -> [f64; 3] {
     const EPS: f64 = 1e-7;
     let fits = |lin: [f64; 3]| lin.iter().all(|v| (-EPS..=1.0 + EPS).contains(v));
     let full = oklab_to_linear([l, a, b]);

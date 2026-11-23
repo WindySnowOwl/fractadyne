@@ -73,7 +73,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels", "de-dip",
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe",
-    "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize",
+    "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize", "palette-oklab",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -770,6 +770,8 @@ impl FractadyneApp {
         self.coloring.use_duotone = false;
         // Equalize colors (C6) changes every normalized check's colors: off unless a check asks.
         self.coloring.equalize = 0.0;
+        // Blend in OKLab (C7) changes every palette's colors: off unless a check asks.
+        self.coloring.palette_oklab = false;
         self.effects.de = false;
         self.effects.light = false;
         // D2.2: echo the effective config so any residual leak is visible in the report
@@ -10837,6 +10839,7 @@ zoom = \"1e94\"
                 palette_saturation: 1.5,
                 julia_linked: true,
                 equalize: 0.6,
+                palette_oklab: true,
             };
             // (coloring, lines its view must hold)
             let colorings = [
@@ -11060,6 +11063,7 @@ zoom = \"1e94\"
                 palette_saturation: 0.5,
                 julia_linked: true,
                 equalize: 0.75,
+                palette_oklab: true,
                 // As the app keeps a hook's text: Unix line ends (`color_hook::build`), which a
                 // Windows checkout's example does not have.
                 coloring_hook: fractadyne_gpu::color_hook::EXAMPLES[1].1.replace("\r\n", "\n"),
@@ -11432,12 +11436,19 @@ zoom = \"1e94\"
             self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust { brightness: 0.3, ..fractadyne_color::adjust::PaletteAdjust::NEUTRAL };
             let k = keys(self);
             rows.push(("the palette's brightness", k.0 != before.0, k.1 != before.1));
+            // Blend in OKLab (C7) recolors every sample too.
+            self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+            let before = keys(self);
+            self.coloring.palette_oklab = !self.coloring.palette_oklab;
+            let k = keys(self);
+            rows.push(("Blend in OKLab", k.0 != before.0, k.1 != before.1));
+            self.coloring.palette_oklab = !self.coloring.palette_oklab;
             let pass = stable && rows.iter().all(|(_, a, m)| *a && *m);
             let yn = |b: bool| if b { "yes" } else { "NO" };
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "consistency",
                 name: "a change to the inside's coloring restarts a deep view's average and redraws the overview map".into(),
-                params: "Smooth, the inside by the orbit trap; then its palette (ice), its fit, solid, a solid inside's color, and the palette's saturation and brightness".into(),
+                params: "Smooth, the inside by the orbit trap; then its palette (ice), its fit, solid, a solid inside's color, the palette's saturation and brightness, and Blend in OKLab".into(),
                 result: format!(
                     "unchanged keys stable: {}; {}",
                     yn(stable),
@@ -11471,7 +11482,7 @@ zoom = \"1e94\"
                 self.coloring.normalize_live,
                 self.coloring.normalize_fit,
                 (self.coloring.transfer, self.coloring.wrap, self.coloring.steps, self.coloring.equalize),
-                self.coloring.palette_aa,
+                (self.coloring.palette_aa, self.coloring.palette_oklab),
             );
             let k0 = (
                 self.coloring.color_method,
@@ -11497,6 +11508,7 @@ zoom = \"1e94\"
             self.coloring.steps = 8;
             self.coloring.equalize = 0.6;
             self.coloring.palette_aa = !d.palette_aa;
+            self.coloring.palette_oklab = !d.palette_oklab;
             self.anim.palette_anim = crate::PaletteAnim::ALL[1];
             self.anim.palette_anim_speed = 1.5;
             // The choices, not their defaults.
@@ -11522,6 +11534,7 @@ zoom = \"1e94\"
                 && c.transfer == crate::transfer_of_spec(&d)
                 && c.equalize == d.equalize
                 && c.palette_aa == d.palette_aa
+                && c.palette_oklab == d.palette_oklab
                 && self.anim.palette_anim == crate::PaletteAnim::Off
                 && self.anim.palette_anim_speed == speed0;
             let kept = c.color_method == method
@@ -11535,7 +11548,7 @@ zoom = \"1e94\"
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "consistency",
                 name: "Reset coloring settings puts the tuned values back and keeps the choices".into(),
-                params: "Cycle, Divide iterations, Offset, the palette's adjustment, the normalization switches, the Scale (square root) and Equalize (60%), anti-aliasing and animation set away from their defaults; method stripe, palette ice, the inside by the trap in ember, trap cross, the Julia link on, Wrap mirror, 8 Steps".into(),
+                params: "Cycle, Divide iterations, Offset, the palette's adjustment, the normalization switches, the Scale (square root) and Equalize (60%), Blend in OKLab, anti-aliasing and animation set away from their defaults; method stripe, palette ice, the inside by the trap in ember, trap cross, the Julia link on, Wrap mirror, 8 Steps".into(),
                 result: format!("tuned values back to a new session's: {reset}; choices kept: {kept}"),
                 threshold: "both",
                 pass: reset && kept,
@@ -11548,7 +11561,7 @@ zoom = \"1e94\"
                 self.coloring.normalize_live,
                 self.coloring.normalize_fit,
                 (self.coloring.transfer, self.coloring.wrap, self.coloring.steps, self.coloring.equalize),
-                self.coloring.palette_aa,
+                (self.coloring.palette_aa, self.coloring.palette_oklab),
             ) = c0;
             (
                 self.coloring.color_method,
@@ -12420,6 +12433,131 @@ zoom = \"1e94\"
                 pass: q.is_some()
                     && areas.iter().all(|(_, eq, _)| *eq <= 1.25 / 16.0)
                     && areas.iter().any(|(t, _, fit)| *t == Transfer::Linear && *fit > 1.5 / 16.0),
+            });
+        }
+
+        // ---- Blend in OKLab (coloring plan C7) ----
+        // Through the app's own path: the request built with the switch on carries the palette baked
+        // in OKLab (`Gradient::bake_oklab`, whose definition the color crate's unit tests hold on
+        // every preset), and with it off the plain bake, bit for bit. Then the GPU colors every
+        // escaped pixel from that table: each against the CPU's reading of the OKLab table at the
+        // pixel's palette position over the count lane, with the sRGB table read the same way as the
+        // CONTROL (it must be apart, or the comparison sees nothing).
+        if want("palette-oklab") {
+            use fractadyne_color::segment::{Gradient, LUT_SIZE};
+            let saved_spec = self.coloring_spec();
+            let saved = (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.effects.light, self.effects.de);
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 8_000;
+            self.effects.light = false;
+            self.effects.de = false;
+            self.coloring.hook.turn_off();
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.use_custom_palette = false;
+            self.coloring.use_duotone = false;
+            self.coloring.use_binary = false;
+            let pal = fractadyne_color::preset_by_id("nebula").unwrap_or(0);
+            self.coloring.palette_idx = pal;
+            self.coloring.palette_adjust = fractadyne_color::adjust::PaletteAdjust::NEUTRAL;
+            self.coloring.iter_div = 1;
+            self.coloring.normalize_live = false;
+            self.coloring.normalize_fit = false;
+            self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
+            self.coloring.wrap = fractadyne_core::coloring::Wrap::Repeat;
+            self.coloring.steps = 0;
+            self.coloring.equalize = 0.0;
+            let (w, h) = (160u32, 90u32);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 256).expect("the tour point's coordinate");
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.set_center_mag(
+                at("-1.178853950372678747911373866849720956148855"),
+                at("0.1853420232408490265512092752061929308714979"),
+                1e10,
+            );
+            self.coloring.palette_oklab = true;
+            let mut req = self.lanes_request_for(&vp, false, None);
+            self.coloring.palette_oklab = false;
+            let off = self.lanes_request_for(&vp, false, None);
+            req.width = w;
+            req.height = h;
+            req.aa_palette = fractadyne_gpu::PaletteAa::Off;
+            (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.effects.light, self.effects.de) = saved;
+            self.apply_coloring_spec(&saved_spec);
+            let p = &fractadyne_color::PRESETS[pal];
+            let g = Gradient::from_stops(p.name, p.stops);
+            let (lab_table, srgb_table) = (g.bake_oklab(LUT_SIZE).entries, g.bake(LUT_SIZE).entries);
+            let tables = (req.lut.as_slice() == lab_table.as_slice(), off.lut.as_slice() == srgb_table.as_slice(), lab_table != srgb_table);
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "Blend in OKLab bakes the palette in OKLab, and off the bake is as it was".into(),
+                params: "the request the app builds for an export, palette nebula, the switch on and off".into(),
+                result: format!("on: the OKLab bake {}; off: the plain bake {}; the two tables differ {}", tables.0, tables.1, tables.2),
+                threshold: "all three",
+                pass: tables.0 && tables.1 && tables.2,
+            });
+            let counts: Vec<f32> = fractadyne_gpu::render_lanes(device, queue, &req, crate::tunables::CORRECT_WORK_BUDGET)
+                .ok()
+                .map(|r| r.pixels.chunks_exact(4).map(|t| t[0]).collect())
+                .unwrap_or_default();
+            let escaped: Vec<f32> = counts.iter().copied().filter(|c| *c >= 0.0).collect();
+            let lo = escaped.iter().copied().fold(f32::INFINITY, f32::min);
+            let hi = escaped.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            // The classic map at 2.5 sweeps over the frame's range: a pixel's palette position is
+            // its count times the rate, plus the offset.
+            let (rate, offset) = (2.5 / (hi - lo).max(1.0e-6), 0.125_f32);
+            let read = |lut: &[[f32; 4]], t: f64| -> [f64; 3] {
+                let n = lut.len();
+                let rgb = |e: [f32; 4]| [e[0] as f64, e[1] as f64, e[2] as f64];
+                let x = (t - t.floor()) * n as f64 - 0.5;
+                let i0 = x.floor() as i64;
+                let (a, b) = (rgb(lut[i0.rem_euclid(n as i64) as usize]), rgb(lut[(i0 + 1).rem_euclid(n as i64) as usize]));
+                let f = x - x.floor();
+                [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]
+            };
+            let pixels = {
+                let mut r = req.clone();
+                (r.norm_mode, r.norm_lo, r.cycle, r.offset, r.equalize) = (0, 0.0, rate, offset, None);
+                let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel).ok().map(|x| x.pixels)
+            };
+            // The share of escaped pixels more than one 8-bit level from a table's colors, and the
+            // largest gap.
+            let apart = |g: &[f32], lut: &[[f32; 4]]| -> (f64, f64) {
+                let (mut n, mut bad, mut worst) = (0usize, 0usize, 0.0f64);
+                for (px, &c) in g.chunks_exact(4).zip(&counts) {
+                    if c < 0.0 {
+                        continue;
+                    }
+                    let want = read(lut, c as f64 * rate as f64 + offset as f64);
+                    let d = (0..3).map(|k| (px[k] as f64 - want[k]).abs() * 255.0).fold(0.0, f64::max);
+                    n += 1;
+                    worst = worst.max(d);
+                    bad += (d > 1.0) as usize;
+                }
+                (bad as f64 / n.max(1) as f64, worst)
+            };
+            let (ok, result) = match &pixels {
+                Some(px) if escaped.len() > 1000 => {
+                    let (bad, worst) = apart(px, &lab_table);
+                    let (control, cworst) = apart(px, &srgb_table);
+                    (
+                        bad <= 0.005 && control >= 0.10,
+                        format!("{:.2}% apart from the OKLab table (max {worst:.2} levels); the sRGB table (control) {:.0}% apart (max {cworst:.1} levels)", bad * 100.0, control * 100.0),
+                    )
+                }
+                Some(_) => (false, format!("only {} escaped pixels", escaped.len())),
+                None => (false, "no render".into()),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "Blend in OKLab colors every pixel from the OKLab table".into(),
+                params: format!("the coloring-method tour's point at 1e10x, {w}x{h}, ss 1, point sampled, nebula, the classic map at 2.5 sweeps over [{lo:.1}, {hi:.1}]; each escaped pixel against the table read at its count"),
+                result,
+                threshold: "at most 0.5% of the escaped pixels more than 1 level from the OKLab table; the sRGB table 10% or more",
+                pass: ok,
             });
         }
 

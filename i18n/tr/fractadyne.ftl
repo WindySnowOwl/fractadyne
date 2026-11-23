@@ -269,7 +269,7 @@ menu-color-more = Döngü, kaydırma, animasyon ve efektler: Denetimler paneli �
 menu-color-browse = Paletlere göz at…
 menu-color-browse-hover = Geçerli görünüm üzerinde tüm paletler yan yana: onları etikete göre süzün ve kendi paletlerinizi etiketleyin.
 menu-color-reset-settings = Renklendirme ayarlarını sıfırla
-menu-color-reset-settings-hover = Döngü, Yinelemeleri böl, Kaydırma, Parlaklık, Kontrast, Doygunluk, normalleştirme anahtarları, paletin kenar yumuşatması ve animasyonu varsayılan değerlerine döner. Yöntem, paletler ve iç kısım olduğu gibi kalır.
+menu-color-reset-settings-hover = Döngü, Yinelemeleri böl, Kaydırma, Parlaklık, Kontrast, Doygunluk, OKLab'de karıştır, Eşitle, normalleştirme anahtarları, paletin kenar yumuşatması ve animasyonu varsayılan değerlerine döner. Yöntem, paletler ve iç kısım olduğu gibi kalır.
 
 # The palette browser window.
 palette-browser-title = Paletler
@@ -2846,6 +2846,8 @@ panel-inside-fit = İçin aralığına sığdır
 panel-inside-fit-hover = İç paleti, ekranda kümenin içinde ölçülen tuzak değerlerine yayar; böylece yapısı görünür. Bu görünümün dışa aktarımları aynı sığdırmayı kullanır.
 panel-palette-aa = Paleti yumuşat (kenar yumuşatma)
 panel-palette-aa-hover = Paletin bantlarının bir pikselden ince olduğu yerlerde, gürültü yerine ortalama renklerini göster. Genişlik kümeye olan uzaklıktan gelir; böylece ona yakın bantlar piksellerin izin verdiği kadar keskin kalır. Bu görünümün dışa aktarımları da bunu kullanır.
+panel-palette-oklab = OKLab'de karıştır
+panel-palette-oklab-hover = Paletin renklerini ekran değerleri yerine gözün görme biçimine dayanan OKLab renk uzayında karıştırır: her geçiş eşit biçimde açılır ya da koyulaşır ve birbirinden uzak iki renk arasındaki geçiş, koyu ya da bulanık bir ortadan geçmek yerine temiz bir orta korur. Çoğu palet biraz, birkaçı çok değişir. Bu görünümün dışa aktarımları da bunu kullanır.
 panel-palette = Palet
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = Küme içi

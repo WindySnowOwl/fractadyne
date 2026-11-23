@@ -367,7 +367,7 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "light_steep", "light_steep_px", "light_highlight", "light_shininess", "light_highlight_color",
     "palette_mode", "palette_lo", "palette_hi", "interior_color",
     "normalize_live", "normalize_fit", "log_scale", "palette_aa",
-    "palette_brightness", "palette_contrast", "palette_saturation", "julia_linked",
+    "palette_brightness", "palette_contrast", "palette_saturation", "palette_oklab", "julia_linked",
     // Written only for a view colored through a coloring hook (format 5).
     "coloring_hook", "coloring_hook_params",
     // Written only away from their defaults (C2), and Equalize colors (C6).

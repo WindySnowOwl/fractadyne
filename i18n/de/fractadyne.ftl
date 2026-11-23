@@ -269,7 +269,7 @@ menu-color-more = Zyklus, Versatz, Animation und Effekte: Bedienfeld ▸ Färbun
 menu-color-browse = Paletten durchsuchen…
 menu-color-browse-hover = Jede Palette über der aktuellen Ansicht, nebeneinander: nach Schlagwort filtern und eigene verschlagworten.
 menu-color-reset-settings = Farbeinstellungen zurücksetzen
-menu-color-reset-settings-hover = Zyklus, Iterationen teilen, Versatz, Helligkeit, Kontrast, Sättigung, die Normalisierungsschalter, die Kantenglättung der Palette und ihre Animation auf die Standardwerte. Methode, Paletten und das Innere bleiben, wie sie sind.
+menu-color-reset-settings-hover = Zyklus, Iterationen teilen, Versatz, Helligkeit, Kontrast, Sättigung, In OKLab überblenden, Ausgleichen, die Normalisierungsschalter, die Kantenglättung der Palette und ihre Animation auf die Standardwerte. Methode, Paletten und das Innere bleiben, wie sie sind.
 
 # The palette browser window.
 palette-browser-title = Paletten
@@ -2855,6 +2855,8 @@ panel-inside-fit = An den Innenbereich anpassen
 panel-inside-fit-hover = Die Innenpalette über die im Inneren der Menge gemessenen Fallenwerte verteilen, damit ihre Struktur sichtbar wird. Exporte dieser Ansicht nutzen dieselbe Anpassung.
 panel-palette-aa = Palette glätten (Antialiasing)
 panel-palette-aa-hover = Wo die Bänder der Palette feiner als ein Pixel sind, ihre mittlere Farbe statt Rauschen zeigen. Die Breite folgt dem Abstand zur Menge, sodass Bänder nahe an ihr so scharf bleiben, wie die Pixel es erlauben. Exporte dieser Ansicht nutzen es ebenfalls.
+panel-palette-oklab = In OKLab überblenden
+panel-palette-oklab-hover = Mischt zwischen den Farben der Palette in OKLab, einem Farbraum, der dem Sehen folgt, statt zwischen ihren Bildschirmwerten: Jeder Übergang wird gleichmäßig heller oder dunkler, und einer zwischen zwei weit entfernten Farben behält eine klare Mitte, statt durch eine dunkle oder trübe zu gehen. Die meisten Paletten ändern sich etwas, einige stark. Exporte dieser Ansicht verwenden es auch.
 panel-palette = Palette
 # The two colors of the Binary palette, each beside its color swatch.
 panel-in-set = In Menge

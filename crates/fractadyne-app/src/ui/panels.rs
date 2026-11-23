@@ -648,6 +648,9 @@ impl FractadyneApp {
                 self.palette_adjust_rows(ui);
                 // The palette's anti-aliasing (coloring plan C8): a recolor, no pass.
                 ui.checkbox(&mut self.coloring.palette_aa, tr!(panel_palette_aa)).on_hover_text(tr!(panel_palette_aa_hover));
+                // Blend in OKLab (coloring plan C7): every palette baked with its blends in OKLab; a
+                // recolor, no pass.
+                ui.checkbox(&mut self.coloring.palette_oklab, tr!(panel_palette_oklab)).on_hover_text(tr!(panel_palette_oklab_hover));
                 // Where a pixel's value lands on the palette: rate, divisor, offset, the fitted
                 // range, and the animation that moves the offset.
                 ui.separator();
