@@ -636,6 +636,34 @@ impl TrapPlace {
         let k = f64::from(self.size);
         k * shape.unit_dist((c * dx + s * dy) / k, (c * dy - s * dx) / k)
     }
+
+    /// This trap moved onto a point of `cycle` (coloring plan F4, part 2; `crate::cycle`), its
+    /// outline through it: a point or a cross is centered there (the cross keeps its turn); a circle
+    /// keeps its center and takes the radius that reaches it. A trap already through one of the
+    /// points moves on to the next in orbit order, so placing it again walks the whole cycle; one
+    /// through none takes the nearest (to its center, or to its circle). Returns the placement and
+    /// the index taken. `cycle` must not be empty; the size is clamped as [`for_shape`](Self::for_shape)
+    /// clamps it.
+    pub fn on_cycle(self, shape: TrapType, cycle: &[[f64; 2]]) -> (TrapPlace, usize) {
+        assert!(!cycle.is_empty(), "a cycle has a point");
+        let place = self.for_shape(shape);
+        let center = [f64::from(place.center[0]), f64::from(place.center[1])];
+        let from = |z: [f64; 2]| (z[0] - center[0]).hypot(z[1] - center[1]);
+        // How far a cycle point is from the trap's outline, and the tolerance of f32 there.
+        let off = |z: [f64; 2]| if shape.spec().sized { (from(z) - f64::from(place.size)).abs() } else { from(z) };
+        let tol = |z: [f64; 2]| 1.0e-6 * z[0].hypot(z[1]).max(1.0);
+        let k = match (0..cycle.len()).find(|&k| off(cycle[k]) <= tol(cycle[k])) {
+            Some(on) => (on + 1) % cycle.len(),
+            None => (0..cycle.len()).min_by(|&i, &j| off(cycle[i]).total_cmp(&off(cycle[j]))).unwrap_or(0),
+        };
+        let z = cycle[k];
+        let placed = if shape.spec().sized {
+            TrapPlace { size: from(z) as f32, ..place }
+        } else {
+            TrapPlace { center: [z[0] as f32, z[1] as f32], ..place }
+        };
+        (placed.for_shape(shape), k)
+    }
 }
 
 /// The orbit trap as the iteration measures it: its shape and its placement as the shape uses it

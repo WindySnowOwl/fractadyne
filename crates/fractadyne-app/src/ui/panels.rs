@@ -62,6 +62,13 @@ impl crate::FractadyneApp {
             }
             r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_size_hover), tr!(panel_double_click_reset)));
         }
+        // F4 part 2: onto the attracting cycle at the view's center, the next point each press.
+        if ui.button(tr!(panel_trap_on_cycle)).on_hover_text(tr!(panel_trap_on_cycle_hover)).clicked() {
+            let placed = self.place_trap_on_cycle();
+            let msg = self.trap_cycle_message(placed);
+            let ctx = ui.ctx().clone();
+            self.set_toast(msg, &ctx);
+        }
     }
 
     /// The panel's Brightness, Contrast and Saturation rows (`fractadyne_color::adjust`).
