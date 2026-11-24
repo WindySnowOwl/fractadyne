@@ -51,10 +51,11 @@ jobs:
       - name: System dependencies
         # make/gcc are on the image; m4 is not, and gmp-mpfr-sys' configure needs it. The rest are
         # for the app crate, which the A/B step below builds: --bench-bignum needs no GPU, but the
-        # crate still LINKS eframe/winit/rfd, so their headers have to be present.
+        # crate still LINKS eframe/winit/rfd, so their headers have to be present, and nasm
+        # assembles rav1e's fast paths (the AVIF export's encoder).
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends m4 \
+          sudo apt-get install -y --no-install-recommends m4 nasm \
             libgtk-3-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libxcursor-dev libxrandr-dev libxi-dev
       # ⚠`c-no-tests` is not an optimization — by default gmp-mpfr-sys BUILDS AND RUNS the full
@@ -78,6 +79,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: rustup default stable
+      # NASM assembles rav1e's fast paths (the AVIF export's encoder). The image has none, and its
+      # installer puts it on no PATH, so this step adds the folder it went to.
+      - name: NASM
+        shell: pwsh
+        run: |
+          choco install nasm --no-progress -y
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $d = @("$env:ProgramFiles\NASM", "$env:LOCALAPPDATA\bin\NASM") | Where-Object { Test-Path "$_\nasm.exe" } | Select-Object -First 1
+          if (-not $d) { Write-Host "::error::nasm.exe not found after installing it."; exit 1 }
+          Add-Content $env:GITHUB_PATH $d
       - run: cargo build --workspace
 
   # The GUI/GPU crates have never been compiled on Linux — `test` above only covers the two pure
@@ -92,15 +103,16 @@ jobs:
       - uses: actions/checkout@v7
       - run: rustup default stable
       # eframe/winit need X11 + Wayland + xkbcommon headers; rfd's file dialogs need GTK3 unless
-      # built for the xdg portal. Mesa's Vulkan drivers give the runner a software adapter
-      # (lavapipe) so the binary has something to initialize against — there is no GPU here.
+      # built for the xdg portal; nasm assembles rav1e's fast paths (the AVIF export's encoder).
+      # Mesa's Vulkan drivers give the runner a software adapter (lavapipe) so the binary has
+      # something to initialize against — there is no GPU here.
       - name: System dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libgtk-3-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
-            mesa-vulkan-drivers vulkan-tools xvfb libxkbcommon-x11-0
+            mesa-vulkan-drivers vulkan-tools xvfb libxkbcommon-x11-0 nasm
       - run: cargo build --workspace --release
       # INFORMATIONAL, never a gate. Software Vulkan is not the target and the goldens are exact
       # image comparisons, so failures here say "this is what a GPU-less Linux run looks like",

@@ -143,9 +143,11 @@ and link the libraries dynamically so you can replace them.
 
 ## Build & run
 
-Requires the Rust toolchain (rustup). **Windows quick start:** from the repo root run
-[`./scripts/setup.ps1`](scripts/setup.ps1) — it checks for (and can install) the Rust toolchain +
-the MSVC C++ build tools, then does a verification build.
+Requires the Rust toolchain (rustup) and [NASM](https://www.nasm.us), which assembles the AVIF
+encoder's fast paths (`apt install nasm`, `winget install NASM.NASM`; it must be on `PATH` or named
+by the `NASM` environment variable). **Windows quick start:** from the repo root run
+[`./scripts/setup.ps1`](scripts/setup.ps1) — it checks for (and can install) the Rust toolchain,
+the MSVC C++ build tools and NASM, then does a verification build.
 
 **From nothing at all**, on a machine with no toolchain and no checkout, one command does the whole
 job — install the prerequisites, clone, and build:

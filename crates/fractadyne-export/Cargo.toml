@@ -13,8 +13,9 @@ zune-jpeg = "0.5"
 zune-core = "0.5"
 gif = "0.14"
 color_quant = "1.1"
-# AVIF (rav1e): without its assembly, which needs nasm to build.
-ravif = { version = "0.13", default-features = false, features = ["threading"] }
+# AVIF (rav1e), with its assembly: building it needs NASM 2.14 or newer, on PATH or named by the
+# NASM environment variable (scripts/setup.ps1 and linux-build.sh --deps install it).
+ravif = { version = "0.13", default-features = false, features = ["threading", "asm"] }
 thiserror.workspace = true
 
 [lints]

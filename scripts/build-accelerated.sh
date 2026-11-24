@@ -88,6 +88,12 @@ for lib in gmp mpfr; do
 done
 pkg-config --exists gmp 2>/dev/null && need_ver gmp "$(pkg-config --modversion gmp)" 6 3
 pkg-config --exists mpfr 2>/dev/null && need_ver mpfr "$(pkg-config --modversion mpfr)" 4 2
+# nasm assembles rav1e's fast paths (the AVIF export's encoder); without it the build stops a few
+# hundred crates in, so say so first.
+command -v "${NASM:-nasm}" >/dev/null 2>&1 || fail "nasm not found (rav1e, the AVIF export's encoder, assembles with it). Install it:
+    Debian/Ubuntu:  sudo apt-get install -y nasm
+    Fedora:         sudo dnf install nasm
+    Arch:           sudo pacman -S nasm"
 
 step "Building (rug + system GMP/MPFR)"
 # `use-system-libs` is the LGPL section 4(d)(1) shape. See the header.

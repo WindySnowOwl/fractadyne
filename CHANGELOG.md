@@ -23,7 +23,8 @@ detail is in the git history.
   no preview of it. Like a PNG, each carries the view inside, so File ▸ Open reopens it and the
   gallery lists it. On the command line the format comes from `--out`'s extension (`.jpg` or
   `.jpeg`, `.avif`, `.gif`), with `--jpeg-quality N`, `--avif-quality N`, `--gif-colors N` and
-  `--gif-no-dither`.
+  `--gif-no-dither`. Building Fractadyne from source now needs NASM, which assembles the AVIF
+  encoder's fast paths (`scripts/setup.ps1` and `scripts/linux-build.sh --deps` install it).
 - **A new coloring method, Fringe.** Listed under Distance in the method box, it draws dark lines
   along the set on a light field whose colors turn once around every feature, the look known as the
   rainbow fringe. The colors come from your palette, taken by the direction of the slope, at a

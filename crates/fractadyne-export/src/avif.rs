@@ -6,9 +6,9 @@
 //! (2026-11-23, three 1920x1080 exports): at full color resolution (4:4:4) an AVIF matched our JPG
 //! at quality 90 in 40 to 60% of its size, and past it beat that JPG on every measure while still
 //! smaller; at half color resolution (4:2:0) it stopped improving at the busiest pixels, as a 4:2:0
-//! JPG or a WebP does. `ravif` (on `rav1e`, pure Rust) always encodes 4:4:4. Built without its
-//! assembly (that needs `nasm` at build time), so it is slower than libavif (0.1 to 0.5 s a 1080p
-//! frame): see [`AVIF_SPEED`]. Undithered, as a JPG is.
+//! JPG or a WebP does. `ravif` (on `rav1e`, Rust with x86 assembly, which NASM assembles at build
+//! time) always encodes 4:4:4. Still slower than libavif (0.1 to 0.5 s a 1080p frame): see
+//! [`AVIF_SPEED`]. Undithered, as a JPG is.
 //!
 //! **The view inside.** A TIFF block whose one tag, ImageDescription, holds the metadata's UTF-8
 //! text, stored as the file's Exif item (`avif-serialize` frames it); an Exif item has no 64 KB
@@ -27,8 +27,9 @@ use std::path::Path;
 /// busiest pixels 10.2 and 11.0 levels off against 10.4 and 11.3) in 52 to 65% of its size.
 pub const AVIF_QUALITY_DEFAULT: u8 = 85;
 
-/// `rav1e`'s speed (1 slowest to 10 fastest): a 1920x1080 frame in 0.5 to 1 s without the
-/// assembly; 8 made the same file, 4 a slightly better one in twice the time, 10 a worse one.
+/// `rav1e`'s speed (1 slowest to 10 fastest): a 1920x1080 frame in 0.4 to 0.8 s (its assembly
+/// makes it 20 to 30% faster than without, the same file); 8 made the same file, 4 a slightly better
+/// one in twice the time, 10 a worse one.
 pub const AVIF_SPEED: u8 = 6;
 
 /// The largest side an AVIF export may have (AV1 holds 16 bits a side).

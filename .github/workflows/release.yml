@@ -107,6 +107,17 @@ jobs:
       - name: Use stable Rust
         run: rustup default stable
 
+      # NASM assembles rav1e's fast paths (the AVIF export's encoder). The image has none, and its
+      # installer puts it on no PATH, so this step adds the folder it went to.
+      - name: NASM
+        shell: pwsh
+        run: |
+          choco install nasm --no-progress -y
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $d = @("$env:ProgramFiles\NASM", "$env:LOCALAPPDATA\bin\NASM") | Where-Object { Test-Path "$_\nasm.exe" } | Select-Object -First 1
+          if (-not $d) { Write-Host "::error::nasm.exe not found after installing it."; exit 1 }
+          Add-Content $env:GITHUB_PATH $d
+
       # The standard release profile (matches local builds: no debuginfo, LTO off).
       # Runners aren't page-file constrained, but keeping the same profile avoids
       # shipping an untested optimization config.
@@ -206,12 +217,13 @@ jobs:
       - name: Use stable Rust
         run: rustup default stable
 
+      # nasm assembles rav1e's fast paths (the AVIF export's encoder).
       - name: System dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libgtk-3-dev libxkbcommon-dev libwayland-dev \
-            libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev nasm
 
       - name: Build release binary
         run: cargo build --release --bin fractadyne
@@ -316,8 +328,9 @@ jobs:
           }
           # gcc links the GNU-target binary; pkgconf lets gmp-mpfr-sys FIND the system libraries;
           # gmp/mpfr are the libraries whose DLLs the package ships. m4/make are only needed if
-          # gmp-mpfr-sys ever falls back to building from source, and are cheap insurance.
-          C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm --needed --noprogressbar diffutils m4 make mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf mingw-w64-x86_64-gmp mingw-w64-x86_64-mpfr"
+          # gmp-mpfr-sys ever falls back to building from source, and are cheap insurance. nasm
+          # assembles rav1e's fast paths (the AVIF export's encoder); the script finds it there.
+          C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm --needed --noprogressbar diffutils m4 make mingw-w64-x86_64-gcc mingw-w64-x86_64-pkgconf mingw-w64-x86_64-gmp mingw-w64-x86_64-mpfr mingw-w64-x86_64-nasm"
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Build and package
@@ -410,11 +423,12 @@ jobs:
       - name: Use stable Rust
         run: rustup default stable
 
+      # nasm assembles rav1e's fast paths (the AVIF export's encoder).
       - name: System dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            m4 libgmp-dev libmpfr-dev \
+            m4 nasm libgmp-dev libmpfr-dev \
             libgtk-3-dev libxkbcommon-dev libwayland-dev \
             libx11-dev libxcursor-dev libxrandr-dev libxi-dev
 

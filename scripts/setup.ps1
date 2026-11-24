@@ -5,9 +5,10 @@
 
 .DESCRIPTION
     Idempotent bootstrap for someone who just downloaded the source. It checks for (and can
-    install) the two things a Windows build needs:
+    install) the three things a Windows build needs:
       1. The Rust toolchain (rustup + the stable `x86_64-pc-windows-msvc` toolchain).
       2. The MSVC C++ build tools + Windows SDK that the Rust `msvc` toolchain links against.
+      3. NASM, which assembles rav1e's fast paths (the AVIF export's encoder).
     Then it runs a verification build so you know the environment actually works.
 
     Safe to re-run: anything already present is left alone.
@@ -50,7 +51,7 @@ if ((Test-Path $cargoBin) -and ($env:Path -notlike "*$cargoBin*")) {
 function Have($name) { return [bool](Get-Command $name -ErrorAction SilentlyContinue) }
 
 Write-Host "Fractadyne - Windows build environment setup" -ForegroundColor White
-Write-Host "(this only installs a Rust toolchain and, if needed, the MSVC C++ build tools)"
+Write-Host "(this only installs a Rust toolchain and, if needed, the MSVC C++ build tools and NASM)"
 
 # ---------------------------------------------------------------------------
 # 1. Rust toolchain (rustup)
@@ -162,7 +163,75 @@ else {
 }
 
 # ---------------------------------------------------------------------------
-# 3. Verification build
+# 3. NASM (rav1e, the AVIF export's encoder, assembles its fast paths with it)
+# ---------------------------------------------------------------------------
+Write-Step "Checking for NASM (the assembler the AVIF encoder builds with)"
+# The nasm.us installer (asInvoker: no UAC prompt) goes to %LOCALAPPDATA%\bin\NASM unelevated or
+# Program Files elevated, and adds NEITHER to PATH, so look in both and put the one found on this
+# session's PATH. The version and hash are pinned; nasm.us keeps every release build.
+$NasmVersion = '3.02'
+$NasmSha256 = '0ddb40310861eb29f4d649feb9466779982a2d251c0db2b9cf0d21cf591171f3'
+function Add-NasmPath {
+    foreach ($d in @((Join-Path $env:ProgramFiles 'NASM'), (Join-Path $env:LOCALAPPDATA 'bin\NASM'))) {
+        if (Test-Path (Join-Path $d 'nasm.exe')) {
+            if ($env:Path -notlike "*$d*") { $env:Path = "$d;$env:Path" }
+            return $d
+        }
+    }
+    return $null
+}
+$nasmDir = $null
+if (-not (Have 'nasm')) { $nasmDir = Add-NasmPath }
+if (Have 'nasm') {
+    Write-Ok "nasm found: $((nasm -v) | Select-Object -First 1)"
+    # Found only in its folder: on the saved PATH (a terminal opened before it was added), or not?
+    $saved = @([Environment]::GetEnvironmentVariable('Path', 'Machine'),
+               [Environment]::GetEnvironmentVariable('Path', 'User')) -join ';'
+    if ($nasmDir -and (($saved -split ';') -notcontains $nasmDir)) {
+        Write-Warn2 "It is in $nasmDir, which is not on your PATH: a cargo build outside these"
+        Write-Warn2 "scripts needs it there (or the NASM variable set to $nasmDir\nasm.exe)."
+    }
+}
+elseif (Confirm-Action "Install NASM $NasmVersion now? (the nasm.us installer, about 1 MB)") {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $inst = Join-Path $env:TEMP "nasm-$NasmVersion-installer-x64.exe"
+    $prev = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'   # the 5.1 progress bar dominates the transfer
+    try {
+        Invoke-WebRequest -Uri "https://www.nasm.us/pub/nasm/releasebuilds/$NasmVersion/win64/nasm-$NasmVersion-installer-x64.exe" `
+                          -OutFile $inst -TimeoutSec 600
+    }
+    finally { $ProgressPreference = $prev }
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $inst).Hash -ne $NasmSha256) {
+        Remove-Item $inst -ErrorAction SilentlyContinue
+        Write-Warn2 "The NASM installer is not the expected file (SHA-256); not running it."
+        Write-Warn2 "Install NASM by hand from https://www.nasm.us and re-run."
+    }
+    else {
+        $p = Start-Process -FilePath $inst -ArgumentList '/S' -PassThru
+        if (-not $p.WaitForExit(10 * 60 * 1000)) { try { $p.Kill() } catch { } }
+        Remove-Item $inst -ErrorAction SilentlyContinue
+        $nasmDir = Add-NasmPath
+        if ($nasmDir -and (Have 'nasm')) {
+            Write-Ok "NASM installed in $nasmDir."
+            # On your PATH too, so a build in a new terminal finds it.
+            $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+            if (($user -split ';') -notcontains $nasmDir) {
+                [Environment]::SetEnvironmentVariable('Path', ((@($user, $nasmDir) | Where-Object { $_ }) -join ';'), 'User')
+                Write-Ok "Added $nasmDir to your PATH (new terminals see it)."
+            }
+        }
+        else {
+            Write-Warn2 "The NASM installer ran, but nasm.exe was not found; install it by hand: https://www.nasm.us"
+        }
+    }
+}
+else {
+    Write-Warn2 "Skipping. The build stops at rav1e (the AVIF encoder) until NASM is installed: https://www.nasm.us"
+}
+
+# ---------------------------------------------------------------------------
+# 4. Verification build
 # ---------------------------------------------------------------------------
 if ($SkipBuild) {
     Write-Step "Skipping the verification build (-SkipBuild)."
