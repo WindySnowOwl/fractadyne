@@ -12,6 +12,15 @@ detail is in the git history.
 
 ## 0.4.0 (unreleased)
 
+- **Six new orbit trap shapes.** Besides the point, the cross and the circle, the orbit trap can
+  be a line, a square, a hexagon, a 5-point star, a sine wave or an S curve. Each draws a picture
+  of its own: at the overview the shape itself shows around the set, and deeper each threads its
+  own pattern of lines and curves through the filaments. All but the point and the circle turn,
+  and all but the point, the cross and the line take a size. Place on the cycle works for every
+  shape: one that passes through its own center (the line, the sine wave, the S curve) is moved
+  onto the cycle point; a closed one (the polygons, the star) keeps its center and grows or
+  shrinks until its outline reaches it. On the command line they are `--trap line`, `square`,
+  `hexagon`, `star`, `sine` and `s-curve`.
 - **Move, turn and size the orbit trap.** Under Trap shape the panel now has the trap's center, x
   and y, and a rotation for the cross and a size, its radius, for the circle. Where the trap sits
   decides which orbits come near it, so moving it rearranges the bands and rings it draws, inside the

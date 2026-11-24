@@ -181,7 +181,7 @@ pub(crate) const FIELDS: [Field; 56] = [
     Field {
         key: "trap",
         name: "orbit trap",
-        doc: "The orbit trap's shape: point, cross or circle (method \"trap\", or an inside colored by the trap).",
+        doc: "The orbit trap's shape: point, cross, circle, line, square, hexagon, star, sine or s-curve (method \"trap\", or an inside colored by the trap).",
         access: Access::Choice(|s| &s.trap_type, |s, v| s.trap_type = v.to_string(), || {
             TrapType::ALL.iter().map(|t| t.key()).collect()
         }),
@@ -217,7 +217,7 @@ pub(crate) const FIELDS: [Field; 56] = [
     Field {
         key: "trap_rotation",
         name: "trap rotation",
-        doc: "The cross trap's turn, in degrees counterclockwise (trap \"cross\").",
+        doc: "The trap's turn, in degrees counterclockwise (the shapes that turn: not the point or the circle).",
         access: Access::Real(
             |s| s.trap_rotation,
             |s, v| s.trap_rotation = v,
@@ -230,7 +230,7 @@ pub(crate) const FIELDS: [Field; 56] = [
     Field {
         key: "trap_size",
         name: "trap size",
-        doc: "The circle trap's radius (trap \"circle\").",
+        doc: "The trap's size: the circle's radius, the polygons' and the star's outer corners' distance from its center (the shapes with a size: not the point, the cross or the line).",
         access: Access::Real(
             |s| s.trap_size,
             |s, v| s.trap_size = v,
@@ -243,7 +243,7 @@ pub(crate) const FIELDS: [Field; 56] = [
     Field {
         key: "interior_trap",
         name: "inside trap",
-        doc: "The inside's own trap shape, point, cross or circle, when the trap method colors the inside by a trap (the inside's own placement in the four keys after). Left out: the method's trap.",
+        doc: "The inside's own trap shape, point, cross, circle, line, square, hexagon, star, sine or s-curve, when the trap method colors the inside by a trap (the inside's own placement in the four keys after). Left out: the method's trap.",
         access: Access::Choice(|s| &s.interior_trap, |s, v| s.interior_trap = v.to_string(), || {
             TrapType::ALL.iter().map(|t| t.key()).collect()
         }),
@@ -269,7 +269,7 @@ pub(crate) const FIELDS: [Field; 56] = [
     Field {
         key: "interior_trap_rotation",
         name: "inside trap rotation",
-        doc: "The inside's own cross's turn, in degrees counterclockwise (`interior_trap` \"cross\").",
+        doc: "The inside's own trap's turn, as `trap_rotation`.",
         access: Access::Real(|s| s.interior_trap_rotation, |s, v| s.interior_trap_rotation = v, *slider_range::TRAP_ROTATION.start(), *slider_range::TRAP_ROTATION.end()),
         parents: &["method", "interior", "interior_trap"],
         shows: |s| inside_own_trap(s) && TrapType::from_key(&s.interior_trap).spec().turns,
@@ -277,7 +277,7 @@ pub(crate) const FIELDS: [Field; 56] = [
     Field {
         key: "interior_trap_size",
         name: "inside trap size",
-        doc: "The inside's own circle's radius (`interior_trap` \"circle\").",
+        doc: "The inside's own trap's size, as `trap_size`.",
         access: Access::Real(|s| s.interior_trap_size, |s, v| s.interior_trap_size = v, *slider_range::TRAP_SIZE.start(), *slider_range::TRAP_SIZE.end()),
         parents: &["method", "interior", "interior_trap"],
         shows: |s| inside_own_trap(s) && TrapType::from_key(&s.interior_trap).spec().sized,

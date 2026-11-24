@@ -7457,6 +7457,14 @@ impl FractadyneApp {
                 (M::OrbitTrap, T::Point, 1.0, P { center: [0.3, -0.2], ..at }, "orbit-trap-point-placed"),
                 (M::OrbitTrap, T::Cross, 1.0, P { center: [-0.2, 0.15], rotation: 35.0, ..at }, "orbit-trap-cross-placed"),
                 (M::OrbitTrap, T::Circle, 1.0, P { center: [0.1, 0.4], size: 0.3, ..at }, "orbit-trap-circle-placed"),
+                // The shapes of F4 part 3: the shader's `trap_unit_dist` against core's `unit_dist`,
+                // which the aggregates fold.
+                (M::OrbitTrap, T::Line, 1.0, at, "orbit-trap-line"),
+                (M::OrbitTrap, T::Square, 1.0, at, "orbit-trap-square"),
+                (M::OrbitTrap, T::Hexagon, 1.0, at, "orbit-trap-hexagon"),
+                (M::OrbitTrap, T::Star, 1.0, at, "orbit-trap-star"),
+                (M::OrbitTrap, T::Sine, 1.0, at, "orbit-trap-sine"),
+                (M::OrbitTrap, T::SCurve, 1.0, at, "orbit-trap-s-curve"),
                 (M::TriangleIneq, T::Point, 1.0, at, "triangle-ineq"),
                 (M::Stripe, T::Point, 5.0, at, "stripe"),
             ] {
@@ -7915,9 +7923,9 @@ impl FractadyneApp {
         // neither BLA nor the series, and that nudged 0.001 px: the accelerated render may change no
         // more pixels than the nudge does, and a placed trap must change >= 5% of the pixels of the
         // same shape unmoved (else the placement never reached the frame). Anti-vacuity for a trap's
-        // smooth field, not the angle group's chaotic one: > 50 colors and a nudge that moves >= 1%
-        // (measured 2026-11-24: 78 to 144 colors, the nudge 2.7% to 5.3%, BLA 1.3% to 2.7%; a flat
-        // picture, as at the aux-bla view, is 3 or 4 colors and 0%).
+        // smooth field, not the angle group's chaotic one: > 50 colors and a nudge that moves >= 0.25%
+        // (measured 2026-11-24: 78 to 176 colors, the nudge 0.7% (the square) to 6.5% (the hexagon),
+        // BLA 0.4% to 3.4%; a flat picture, as at the aux-bla view, is 3 or 4 colors and 0%).
         if want("trap-place") {
             use crate::{TrapPlace as P, TrapType as T};
             let saved = (
@@ -7958,11 +7966,20 @@ impl FractadyneApp {
                     / (p.len() / 4).max(1) as f64
             };
             let d = P::DEFAULT;
+            // The point's plain picture: each shape of F4 part 3 must make one of its own (the study's
+            // rank correlations with the old shapes, 0.22-0.67).
+            let mut point_plain: Option<Vec<f32>> = None;
             for (shape, place, label) in [
                 (T::Point, d, "point"),
                 (T::Point, P { center: [0.3, -0.2], ..d }, "point at 0.3,-0.2"),
                 (T::Cross, P { center: [-0.2, 0.15], rotation: 35.0, ..d }, "cross at -0.2,0.15 turned 35"),
                 (T::Circle, P { center: [0.1, 0.4], size: 0.3, ..d }, "circle at 0.1,0.4, radius 0.3"),
+                (T::Line, d, "line"),
+                (T::Square, d, "square"),
+                (T::Hexagon, d, "hexagon"),
+                (T::Star, d, "star"),
+                (T::Sine, d, "sine wave"),
+                (T::SCurve, d, "S curve"),
             ] {
                 self.coloring.trap_type = shape;
                 self.coloring.trap_place = place;
@@ -7986,6 +8003,8 @@ impl FractadyneApp {
                     (Some(a), Some(p), Some(n), u) if a.len() == p.len() && n.len() == p.len() && !p.is_empty() => {
                         let (by_accel, by_nudge) = (changed(&a, &p), changed(&n, &p));
                         let by_move = u.as_deref().map(|u| changed(&p, u));
+                        let new_shape = !matches!(shape, T::Point | T::Cross | T::Circle);
+                        let vs_point = if new_shape { point_plain.as_deref().map(|q| changed(&p, q)) } else { None };
                         let mut colors: Vec<[u8; 3]> =
                             p.chunks_exact(4).map(|v| [0, 1, 2].map(|c| (v[c].clamp(0.0, 1.0) * 255.0) as u8)).collect();
                         colors.sort_unstable();
@@ -7998,20 +8017,25 @@ impl FractadyneApp {
                                 "{:.1}% of pixels changed by BLA, {:.1}% by the nudge{}; the plain render has {} colors",
                                 by_accel * 100.0,
                                 by_nudge * 100.0,
-                                by_move.map_or(String::new(), |m| format!(", {:.1}% by the move", m * 100.0)),
+                                by_move.map_or(String::new(), |m| format!(", {:.1}% by the move", m * 100.0))
+                                    + &vs_point.map_or(String::new(), |v| format!(", {:.1}% from the point's picture", v * 100.0)),
                                 colors.len()
                             ),
                             threshold: if placed {
-                                "BLA engaged; BLA's share <= the nudge's; the nudge moves >= 1% of > 50 colors; the move changes >= 5%".into()
+                                "BLA engaged; BLA's share <= the nudge's; the nudge moves >= 0.25% of > 50 colors; the move changes >= 5%".into()
                             } else {
-                                "BLA engaged; BLA's share <= the nudge's; the nudge moves >= 1% of > 50 colors".into()
+                                "BLA engaged; BLA's share <= the nudge's; the nudge moves >= 0.25% of > 50 colors; a new shape differs from the point on 20%+".into()
                             },
                             pass: bla
                                 && by_accel <= by_nudge
-                                && by_nudge >= 0.01
+                                && by_nudge >= 0.0025
                                 && colors.len() > 50
-                                && (!placed || by_move.is_some_and(|m| m >= 0.05)),
+                                && (!placed || by_move.is_some_and(|m| m >= 0.05))
+                                && (!new_shape || vs_point.is_some_and(|v| v >= 0.2)),
                         });
+                        if label == "point" {
+                            point_plain = Some(p.clone());
+                        }
                     }
                     _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Trap",

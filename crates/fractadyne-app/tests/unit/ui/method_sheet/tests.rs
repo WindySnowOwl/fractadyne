@@ -39,6 +39,12 @@ fn a_frame_without_statistics_recolors_only_the_main_lane() {
             row("trap", "point", Render),
             row("trap", "cross", Render),
             row("trap", "circle", Render),
+            row("trap", "line", Render),
+            row("trap", "square", Render),
+            row("trap", "hexagon", Render),
+            row("trap", "star", Render),
+            row("trap", "sine", Render),
+            row("trap", "s-curve", Render),
             row("decomposition", "", Render),
         ]
     );
@@ -63,6 +69,12 @@ fn a_gbuffer_frame_recolors_what_it_holds_with_its_own_parameters() {
             row("trap", "point", Render),
             row("trap", "cross", Recolor),
             row("trap", "circle", Render),
+            row("trap", "line", Render),
+            row("trap", "square", Render),
+            row("trap", "hexagon", Render),
+            row("trap", "star", Render),
+            row("trap", "sine", Render),
+            row("trap", "s-curve", Render),
             row("decomposition", "", Render),
         ]
     );
@@ -117,10 +129,12 @@ fn short_groups_share_a_row_and_long_ones_wrap() {
         [
             vec![(EscapeCount, true, 1), (Distance, true, 2)],
             vec![(OrbitStatistics, true, 4)],
-            vec![(OrbitStatistics, false, 3), (Angle, true, 1)],
+            vec![(OrbitStatistics, false, 4)],
+            vec![(OrbitStatistics, false, 4)],
+            vec![(OrbitStatistics, false, 1), (Angle, true, 1)],
         ]
     );
-    assert_eq!(shape(1).len(), 11, "one cell a row");
+    assert_eq!(shape(1).len(), 17, "one cell a row");
     let all: usize = sheet_rows(&plan, 3).iter().flatten().map(|s| s.cells.len()).sum();
-    assert_eq!(all, 11, "every cell placed once");
+    assert_eq!(all, 17, "every cell placed once");
 }

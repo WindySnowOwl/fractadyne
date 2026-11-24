@@ -960,7 +960,7 @@ struct IterU {
     // on screen, which only the color pass reads (`ColorU.color_method`). See lib.rs `iter_stats`.
     orbit_stats: u32,
     stripe_freq: f32,      // stripe-average angular frequency
-    trap_type: u32,        // orbit-trap shape: TRAP_POINT, TRAP_CROSS or TRAP_CIRCLE
+    trap_type: u32,        // orbit-trap shape: a TRAP_* (`trap_unit_dist`)
     // Bitfield: bit 0 = accumulate orbit statistics into the aux target; bit 1 = stripe average
     // over the TAIL only (an exponential window, see `stripe_tail_on`); bits 2.. = that window's
     // length in iterations. Mirrors `aux_on_word` in lib.rs.
@@ -1535,12 +1535,54 @@ fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, siz
         let d = zf - c;
         w = vec2<f32>(t.x * d.x + t.y * d.y, t.x * d.y - t.y * d.x) * inv;
     }
-    var s: f32;
-    if (ty == TRAP_CROSS) { s = min(abs(w.x), abs(w.y)); }
-    else if (ty == TRAP_CIRCLE) { s = abs(length(w) - 1.0); }
-    else { s = length(w); }
+    var s = trap_unit_dist(w, ty);
     if (on != 0u) { s = s * size; }
     return s;
+}
+// The distance from w to shape `ty` at size 1, centered at the origin and unturned: core's
+// `TrapType::unit_dist` in f32 (the BLA aggregates fold that one, so the two must agree). The
+// shapes' dimensions are core's, generated (`TRAP_STAR_INNER`, `TRAP_SINE_*`, `TRAP_S_RADIUS`).
+fn trap_unit_dist(w: vec2<f32>, ty: u32) -> f32 {
+    if (ty == TRAP_CROSS) { return min(abs(w.x), abs(w.y)); }
+    if (ty == TRAP_CIRCLE) { return abs(length(w) - 1.0); }
+    if (ty == TRAP_LINE) { return abs(w.y); }
+    // The square's corners at 45 degrees (its sides along the axes), the star's first point up.
+    if (ty == TRAP_SQUARE) { return trap_star(vec2<f32>(0.70710678 * (w.x + w.y), 0.70710678 * (w.y - w.x)), 4.0, 0.70710678); }
+    if (ty == TRAP_HEXAGON) { return trap_star(w, 6.0, 0.86602540); }
+    if (ty == TRAP_STAR) { return trap_star(vec2<f32>(w.y, -w.x), 5.0, TRAP_STAR_INNER); }
+    if (ty == TRAP_SINE) {
+        let k = TRAP_SINE_FREQ * w.x;
+        let slope = TRAP_SINE_AMP * TRAP_SINE_FREQ * cos(k);
+        return abs(w.y - TRAP_SINE_AMP * sin(k)) / sqrt(1.0 + slope * slope);
+    }
+    if (ty == TRAP_S_CURVE) {
+        let r = TRAP_S_RADIUS;
+        return min(trap_arc(w, vec2<f32>(0.0, r), r, 0.0, 4.71238898), trap_arc(w, vec2<f32>(0.0, -r), r, 3.14159265, 4.71238898));
+    }
+    return length(w);
+}
+// A star-shaped outline with n outer corners on the unit circle, the first on the +x axis, and
+// inner corners at radius `ri` between them (a regular polygon: ri = cos(pi/n)): the angle folded
+// into one mirror sector [0, pi/n], measured to the one edge there.
+fn trap_star(p: vec2<f32>, n: f32, ri: f32) -> f32 {
+    let sector = 6.28318531 / n;
+    var a = atan2(p.y, p.x);
+    a = a - sector * floor(a / sector);
+    if (a > 0.5 * sector) { a = sector - a; }
+    let r = length(p);
+    let u = vec2<f32>(r * cos(a) - 1.0, r * sin(a));
+    let v = vec2<f32>(ri * cos(0.5 * sector) - 1.0, ri * sin(0.5 * sector));
+    let t = clamp(dot(u, v) / dot(v, v), 0.0, 1.0);
+    return length(u - t * v);
+}
+// The arc of center `cc` and radius r from angle a0 counterclockwise over `span`.
+fn trap_arc(p: vec2<f32>, cc: vec2<f32>, r: f32, a0: f32, span: f32) -> f32 {
+    let d = p - cc;
+    let ang = atan2(d.y, d.x) - a0;
+    if (ang - 6.28318531 * floor(ang / 6.28318531) <= span) { return abs(length(d) - r); }
+    let e0 = length(d - r * vec2<f32>(cos(a0), sin(a0)));
+    let e1 = length(d - r * vec2<f32>(cos(a0 + span), sin(a0 + span)));
+    return min(e0, e1);
 }
 fn trap_dist(zf: vec2<f32>) -> f32 {
     return trap_dist_of(zf, iu.trap_type, iu.trap_on, iu.trap_c, iu.trap_turn, iu.trap_size, iu.trap_inv);

@@ -3330,6 +3330,12 @@ impl ColoringLabel for TrapType {
             TrapType::Point => tr!(trap_point),
             TrapType::Cross => tr!(trap_cross),
             TrapType::Circle => tr!(trap_circle),
+            TrapType::Line => tr!(trap_line),
+            TrapType::Square => tr!(trap_square),
+            TrapType::Hexagon => tr!(trap_hexagon),
+            TrapType::Star => tr!(trap_star),
+            TrapType::Sine => tr!(trap_sine),
+            TrapType::SCurve => tr!(trap_s_curve),
         }
     }
 }

@@ -6,7 +6,7 @@ fn the_keys_are_the_persisted_ones() {
     let keys: Vec<_> = ColorMethod::ALL.iter().map(|m| m.key()).collect();
     assert_eq!(keys, ["smooth", "stripe", "triangle", "trap", "distance", "fringe", "decomposition"]);
     let traps: Vec<_> = TrapType::ALL.iter().map(|t| t.key()).collect();
-    assert_eq!(traps, ["point", "cross", "circle"]);
+    assert_eq!(traps, ["point", "cross", "circle", "line", "square", "hexagon", "star", "sine", "s-curve"]);
 }
 
 /// Each variant's row is its own, and the GPU number is the row's position.
@@ -167,8 +167,8 @@ fn an_unknown_key_is_none_or_the_default() {
     assert_eq!(ColorMethod::parse_key("Stripe"), None);
     assert_eq!(ColorMethod::parse_key(""), None);
     assert_eq!(ColorMethod::from_key("plasma"), ColorMethod::Smooth);
-    assert_eq!(TrapType::parse_key("square"), None);
-    assert_eq!(TrapType::from_key("square"), TrapType::Point);
+    assert_eq!(TrapType::parse_key("triangle"), None);
+    assert_eq!(TrapType::from_key("triangle"), TrapType::Point);
 }
 
 /// The predicate sets as they were when each lived in its own `matches!` (main.rs and the GPU
@@ -244,7 +244,12 @@ fn the_shader_constants_are_the_table() {
         assert_eq!(ids.matches(&line).count(), 1, "{line}");
     }
     let consts = ids.lines().filter(|l| l.starts_with("const ")).count();
-    assert_eq!(consts, ColorMethod::ALL.len() + TrapType::ALL.len() + Stat::ALL.len() + InteriorShading::ALL.len());
+    // ...and the trap shapes' four dimensions (F4 part 3), as core has them.
+    for (name, v) in [("TRAP_STAR_INNER", STAR_INNER), ("TRAP_SINE_AMP", SINE_AMP), ("TRAP_SINE_FREQ", SINE_FREQ), ("TRAP_S_RADIUS", S_RADIUS)] {
+        let line = format!("const {name}: f32 = {:?};", v as f32);
+        assert_eq!(ids.matches(&line).count(), 1, "{line}");
+    }
+    assert_eq!(consts, ColorMethod::ALL.len() + TrapType::ALL.len() + Stat::ALL.len() + InteriorShading::ALL.len() + 4);
     // Every other line is a comment or blank, so the block can go anywhere at module scope.
     for l in ids.lines().filter(|l| !l.starts_with("const ")) {
         assert!(l.is_empty() || l.starts_with("//"), "{l:?}");
@@ -306,8 +311,21 @@ fn every_method_is_under_one_heading_and_no_heading_is_empty() {
 /// point neither.
 #[test]
 fn each_trap_shape_says_what_it_uses() {
-    let uses: Vec<_> = TrapType::ALL.iter().map(|t| (t.key(), t.spec().turns, t.spec().sized)).collect();
-    assert_eq!(uses, [("point", false, false), ("cross", true, false), ("circle", false, true)]);
+    let uses: Vec<_> = TrapType::ALL.iter().map(|t| (t.key(), t.spec().turns, t.spec().sized, t.spec().closed)).collect();
+    assert_eq!(
+        uses,
+        [
+            ("point", false, false, false),
+            ("cross", true, false, false),
+            ("circle", false, true, true),
+            ("line", true, false, false),
+            ("square", true, true, true),
+            ("hexagon", true, true, true),
+            ("star", true, true, true),
+            ("sine", true, true, false),
+            ("s-curve", true, true, false),
+        ]
+    );
 }
 
 /// At the default placement every shape measures exactly as it always did, bit for bit: the
@@ -421,4 +439,80 @@ fn the_trap_walks_the_cycle_it_is_placed_on() {
     assert!(p1.dist(TrapType::Point, zp[0], zp[1]) < 1e-7);
     assert!(x.dist(TrapType::Cross, zp[0], zp[1]) < 1e-7);
     assert!(c1.dist(TrapType::Circle, zm[0], zm[1]) < 1e-6);
+}
+
+/// The shapes of F4 part 3 measure their outlines: points on each outline are at distance 0, and
+/// a few off it at their known distance.
+#[test]
+fn the_new_shapes_measure_their_outlines() {
+    use std::f64::consts::{FRAC_1_SQRT_2, PI};
+    let on = |t: TrapType, x: f64, y: f64| {
+        let d = t.unit_dist(x, y);
+        assert!(d.abs() < 1e-9, "{t:?}: ({x}, {y}) is on the outline, distance {d}");
+    };
+    let at = |t: TrapType, x: f64, y: f64, want: f64| {
+        let d = t.unit_dist(x, y);
+        assert!((d - want).abs() < 1e-9, "{t:?}: ({x}, {y}) at {d}, want {want}");
+    };
+    // The line: the real axis.
+    on(TrapType::Line, 3.0, 0.0);
+    at(TrapType::Line, -1.0, 0.25, 0.25);
+    // The square, inscribed in the unit circle, sides along the axes: its corners and side midpoints.
+    on(TrapType::Square, FRAC_1_SQRT_2, FRAC_1_SQRT_2);
+    on(TrapType::Square, -FRAC_1_SQRT_2, 0.2);
+    on(TrapType::Square, 0.1, -FRAC_1_SQRT_2);
+    at(TrapType::Square, 0.0, 0.0, FRAC_1_SQRT_2);
+    // The hexagon: a corner on the real axis, a side's midpoint at 30 degrees, cos 30 out.
+    on(TrapType::Hexagon, 1.0, 0.0);
+    on(TrapType::Hexagon, (PI / 6.0).cos() * (PI / 6.0).cos(), (PI / 6.0).cos() * (PI / 6.0).sin());
+    // The star: a point up, the inner corners STAR_INNER out halfway between the points.
+    on(TrapType::Star, 0.0, 1.0);
+    let inner = PI / 2.0 + PI / 5.0;
+    on(TrapType::Star, STAR_INNER * inner.cos(), STAR_INNER * inner.sin());
+    // The sine wave through the origin.
+    for x in [-1.3, -0.4, 0.0, 0.25, 0.9] {
+        on(TrapType::Sine, x, SINE_AMP * (SINE_FREQ * x).sin());
+    }
+    // The S curve: its top, bottom and middle, the bowls' outer sides, and a point in the top bowl's
+    // open quarter, nearer the bottom bowl (0.237 from it).
+    for (x, y) in [(0.0, 1.0), (0.0, -1.0), (0.0, 0.0), (0.5, 0.5), (-0.5, 0.5), (-0.5, -0.5), (0.5, -0.5)] {
+        on(TrapType::SCurve, x, y);
+    }
+    let q = (0.5 * FRAC_1_SQRT_2, 0.5 - 0.5 * FRAC_1_SQRT_2);
+    at(TrapType::SCurve, q.0, q.1, (q.0.hypot(q.1 + 0.5) - 0.5).abs());
+}
+
+/// A closed shape's radius toward any angle meets its outline; an open shape has none.
+#[test]
+fn a_closed_shapes_radius_meets_its_outline() {
+    for t in TrapType::ALL {
+        if !t.spec().closed {
+            assert_eq!(t.unit_radius(0.3), None, "{t:?}");
+            continue;
+        }
+        for k in 0..72 {
+            let a = f64::from(k) * std::f64::consts::TAU / 72.0 + 0.01;
+            let r = t.unit_radius(a).expect("closed");
+            let d = t.unit_dist(r * a.cos(), r * a.sin());
+            assert!(d < 1e-9, "{t:?} at {a}: radius {r} is {d} off the outline");
+        }
+    }
+}
+
+/// Place on the cycle for the new shapes: a closed one keeps its center and turn and passes through
+/// the cycle point; an open one is centered on it.
+#[test]
+fn the_new_shapes_are_placed_on_the_cycle() {
+    let cycle = [[-0.02483685875720304, -0.2416742977846682], [-0.975163141242797, 0.2416742977846682]];
+    let turned = TrapPlace { center: [0.1, 0.0], rotation: 20.0, size: 1.0 };
+    for t in [TrapType::Square, TrapType::Hexagon, TrapType::Star] {
+        let (p, k) = turned.on_cycle(t, &cycle);
+        assert_eq!((p.center, p.rotation), ([0.1, 0.0], 20.0), "{t:?} keeps its center and turn");
+        assert!(p.dist(t, cycle[k][0], cycle[k][1]) < 1e-6, "{t:?} passes through the point it took");
+    }
+    for t in [TrapType::Line, TrapType::Sine, TrapType::SCurve] {
+        let (p, k) = turned.on_cycle(t, &cycle);
+        assert_eq!(p.center, [cycle[k][0] as f32, cycle[k][1] as f32], "{t:?} is centered on the point");
+        assert!(p.dist(t, cycle[k][0], cycle[k][1]) < 1e-6, "{t:?} passes through its center");
+    }
 }

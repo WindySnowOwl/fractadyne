@@ -75,7 +75,7 @@ impl crate::FractadyneApp {
         let (placed, k) = at.on_cycle(shape, &cycle.points);
         let clamp = |v: f32, r: std::ops::RangeInclusive<f32>| v.clamp(*r.start(), *r.end());
         let mut place = at;
-        if shape.spec().sized {
+        if shape.spec().closed {
             place.size = clamp(placed.size, slider_range::TRAP_SIZE);
         } else {
             place.center = placed.center.map(|v| clamp(v, slider_range::TRAP_CENTER));
