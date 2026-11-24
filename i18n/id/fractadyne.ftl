@@ -858,6 +858,17 @@ dlg-export-aspect = Rasio
 dlg-export-aspect-window = Sesuai jendela
 # Before the choices PNG and OpenEXR.
 dlg-export-format = Format:
+dlg-export-jpeg-quality = Kualitas
+dlg-export-jpeg-quality-hover = Seberapa banyak detail yang disimpan JPG, 1 sampai 100: makin tinggi makin mendekati gambar dan makin besar berkasnya. Sekitar 90 menjaga filamen halus fraktal.
+dlg-export-jpeg-note = JPG bersifat lossy: berkasnya kecil karena detail dibuang, sehingga filamen terhalus bisa kabur dan gradasi halus bisa tampak berkotak. Pilih PNG untuk salinan persis.
+dlg-export-avif-quality = Kualitas
+dlg-export-avif-quality-hover = Seberapa banyak detail yang disimpan AVIF, 1 sampai 100: makin tinggi makin mendekati gambar dan makin besar berkasnya.
+dlg-export-avif-note = AVIF juga lossy, tetapi menyimpan lebih banyak detail daripada JPG berukuran sama. Lebih lama ditulis, beberapa program lama tidak bisa membukanya, dan galeri tidak menampilkan pratinjaunya.
+dlg-export-gif-colors = Warna
+dlg-export-gif-colors-hover = Berapa banyak warna yang dimuat GIF, 2 sampai 256, dipilih dari warna gambar itu sendiri.
+dlg-export-gif-dither = Dither
+dlg-export-gif-dither-hover = Campur warna palet yang bertetangga agar gradasi halus tidak pecah menjadi pita datar. Jika mati, gambar diposterisasi ke warna palet.
+dlg-export-gif-note = GIF memuat paling banyak 256 warna, jadi juga lossy: gradasi halus tersusun dari warna palet. Pilih PNG untuk salinan persis.
 dlg-export-hud = HUD lokasi
 dlg-export-hud-hover = Cetak permanen panel tingkat zoom + koordinat di kiri atas gambar yang diekspor (menyesuaikan skala keluaran; menampilkan zoom + pusat tampilan peta/Mandelbrot).
 dlg-export-glitch = Koreksi glitch

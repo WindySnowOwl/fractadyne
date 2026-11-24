@@ -55,7 +55,7 @@ A fractal explorer for Windows and Linux in Rust (wgpu + egui/eframe), built for
   grammar — examples, every constant and function, what is refused and why — is the "Coordinate
   expressions" section of the in-app Help (the `?` in the dialog opens it), and a coordinate that
   does not parse says which field, which character, and what to type instead.
-- **High-res export** — tiled PNG / OpenEXR with reloadable view metadata, a gallery
+- **High-res export** — tiled PNG / JPG / AVIF / GIF / OpenEXR with reloadable view metadata, a gallery
   browser, background rendering with progress + cancel.
 - **Bookmarks** — save and instantly return to favorite (deep) locations.
 - **Shareable locations** — copy/paste or save/load a self-contained `.fdn` location
@@ -143,9 +143,11 @@ and link the libraries dynamically so you can replace them.
 
 ## Build & run
 
-Requires the Rust toolchain (rustup). **Windows quick start:** from the repo root run
-[`./scripts/setup.ps1`](scripts/setup.ps1) — it checks for (and can install) the Rust toolchain +
-the MSVC C++ build tools, then does a verification build.
+Requires the Rust toolchain (rustup) and [NASM](https://www.nasm.us), which assembles the AVIF
+encoder's fast paths (`apt install nasm`, `winget install NASM.NASM`; it must be on `PATH` or named
+by the `NASM` environment variable). **Windows quick start:** from the repo root run
+[`./scripts/setup.ps1`](scripts/setup.ps1) — it checks for (and can install) the Rust toolchain,
+the MSVC C++ build tools and NASM, then does a verification build.
 
 **From nothing at all**, on a machine with no toolchain and no checkout, one command does the whole
 job — install the prerequisites, clone, and build:
@@ -316,7 +318,7 @@ or internal cross-checks):
 
 Cargo workspace under `crates/` (6 crates): `fractadyne-core` (numerics / viewport),
 `fractadyne-gpu` (wgpu pipelines + WGSL shaders), `fractadyne-color` (palettes),
-`fractadyne-state` (session / bookmarks), `fractadyne-export` (PNG/EXR + reloadable metadata), and
+`fractadyne-state` (session / bookmarks), `fractadyne-export` (PNG/JPG/AVIF/GIF/EXR + reloadable metadata), and
 `fractadyne-app` (the binary — app logic, UI split under `src/ui/`, scripting, CLI, all in modules).
 Render orchestration (tile scheduler / cache) is planned to become its own crate one day; that logic
 currently lives in `fractadyne-app`. (The earlier stub crates were retired rather than left empty.)

@@ -446,6 +446,17 @@ pub struct SessionState {
     pub export_ss: u32,
     #[serde(default = "default_export_format")]
     pub export_format: String,
+    /// A JPG export's quality, 1 to 100 (`fractadyne_export::JPEG_QUALITY_DEFAULT`).
+    #[serde(default = "default_export_jpeg_quality")]
+    pub export_jpeg_quality: u8,
+    /// An AVIF export's quality, 1 to 100 (`fractadyne_export::AVIF_QUALITY_DEFAULT`).
+    #[serde(default = "default_export_avif_quality")]
+    pub export_avif_quality: u8,
+    /// A GIF export's palette size, 2 to 256, and whether it is dithered.
+    #[serde(default = "default_export_gif_colors")]
+    pub export_gif_colors: u16,
+    #[serde(default = "default_true")]
+    pub export_gif_dither: bool,
     /// What the Snapshot button (Ctrl+S) does: `"ask"` (the default — the first press offers the
     /// choice), `"screen"` (save the view exactly as shown) or `"render"` (a full export at the
     /// export settings, in the background). Set by the first-press dialog when the user asks not
@@ -753,6 +764,18 @@ fn default_export_format() -> String {
     "png".to_string()
 }
 
+fn default_export_jpeg_quality() -> u8 {
+    90
+}
+
+fn default_export_avif_quality() -> u8 {
+    85
+}
+
+fn default_export_gif_colors() -> u16 {
+    256
+}
+
 fn default_export_dual_mode() -> String {
     "side".to_string()
 }
@@ -949,6 +972,10 @@ impl Default for SessionState {
             export_width: default_export_width(),
             export_ss: default_export_ss(),
             export_format: default_export_format(),
+            export_jpeg_quality: default_export_jpeg_quality(),
+            export_avif_quality: default_export_avif_quality(),
+            export_gif_colors: default_export_gif_colors(),
+            export_gif_dither: true,
             snapshot_mode: default_snapshot_mode(),
             mpfr_warning_suppressed: false,
             mpfr_present_last: None,

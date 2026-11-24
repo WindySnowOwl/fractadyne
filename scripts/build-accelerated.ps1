@@ -156,11 +156,13 @@ Prerequisites for the accelerated build
        pacman -Syuu --noconfirm
        pacman -S --noconfirm --needed diffutils m4 make mingw-w64-x86_64-gcc \
                                       mingw-w64-x86_64-pkgconf mingw-w64-x86_64-gmp \
-                                      mingw-w64-x86_64-mpfr
+                                      mingw-w64-x86_64-mpfr mingw-w64-x86_64-nasm
 
      diffutils/m4/make/gcc build gmp-mpfr-sys; pkgconf lets it FIND the system libraries
      (without it the build fails with 'Unable to execute pkg-config'); gmp/mpfr are the
-     libraries themselves, and their DLLs are what this package ships.
+     libraries themselves, and their DLLs are what this package ships. nasm assembles
+     rav1e's fast paths (the AVIF export's encoder); a NASM from the nasm.us installer
+     (winget NASM.NASM) is found too.
 "@
     exit 0
 }
@@ -177,6 +179,19 @@ foreach ($t in @("gcc.exe", "pkg-config.exe")) {
 foreach ($t in @("m4.exe", "make.exe")) {
     if (-not (Test-Path (Join-Path $MSYS "usr\bin\$t"))) { Fail "$t missing from MSYS2. Run with -Deps." }
 }
+# NASM assembles rav1e's fast paths (the AVIF export's encoder). The build runs in an MSYS2 shell
+# that does not see the Windows PATH, so the one found here is handed over by the NASM variable
+# rav1e's build honors (an environment variable crosses into MSYS2 untouched, as FRACTADYNE_GIT
+# does below): one already named, MSYS2's own, one on this shell's PATH, then the nasm.us
+# installer's two folders (it adds neither to PATH).
+$nasm = @($env:NASM, (Join-Path $MINGW_BIN "nasm.exe"),
+          (Get-Command nasm -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source),
+          (Join-Path $env:ProgramFiles "NASM\nasm.exe"),
+          (Join-Path $env:LOCALAPPDATA "bin\NASM\nasm.exe")) |
+        Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+if (-not $nasm) { Fail "nasm not found (rav1e, the AVIF export's encoder, assembles with it). Run with -Deps." }
+$env:NASM = $nasm
+Write-Host "  nasm: $nasm"
 foreach ($d in $RUNTIME_DLLS) {
     if (-not (Test-Path (Join-Path $MINGW_BIN $d))) { Fail "$d not found in $MINGW_BIN (see -Deps)." }
 }

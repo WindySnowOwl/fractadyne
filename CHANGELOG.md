@@ -12,6 +12,19 @@ detail is in the git history.
 
 ## 0.4.0 (unreleased)
 
+- **Export to JPG, AVIF and GIF.** The export dialog's Format row offers JPG, AVIF and GIF beside
+  PNG and OpenEXR. A JPG and an AVIF each have a Quality slider, 1 to 100 (90 and 85 to start), and a
+  GIF a Colors slider, 2 to 256, its palette chosen from the picture's own colors, with Dither on so
+  smooth ramps don't break into flat bands (off, the picture is posterized). All three are lossy, and
+  the dialog says so: PNG remains the exact copy. A JPG is about a tenth of the PNG's size at quality
+  90, and keeps full color resolution, so the fine filaments keep their colors. An AVIF keeps the
+  same detail in about half the JPG's size (and more, higher up), but takes longer to write (about
+  half a second for a 1920x1080 picture), some older programs can't open it, and the gallery shows
+  no preview of it. Like a PNG, each carries the view inside, so File ▸ Open reopens it and the
+  gallery lists it. On the command line the format comes from `--out`'s extension (`.jpg` or
+  `.jpeg`, `.avif`, `.gif`), with `--jpeg-quality N`, `--avif-quality N`, `--gif-colors N` and
+  `--gif-no-dither`. Building Fractadyne from source now needs NASM, which assembles the AVIF
+  encoder's fast paths (`scripts/setup.ps1` and `scripts/linux-build.sh --deps` install it).
 - **A new coloring method, Fringe.** Listed under Distance in the method box, it draws dark lines
   along the set on a light field whose colors turn once around every feature, the look known as the
   rainbow fringe. The colors come from your palette, taken by the direction of the slope, at a

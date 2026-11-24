@@ -858,6 +858,17 @@ dlg-export-aspect = 화면비
 dlg-export-aspect-window = 창에 맞춤
 # Before the choices PNG and OpenEXR.
 dlg-export-format = 형식:
+dlg-export-jpeg-quality = 품질
+dlg-export-jpeg-quality-hover = JPG가 남기는 세부의 양, 1~100: 높을수록 그림에 가깝고 파일이 커집니다. 90 정도면 프랙탈의 가는 필라멘트가 유지됩니다.
+dlg-export-jpeg-note = JPG는 손실 압축입니다: 세부를 버려 파일을 작게 유지하므로 가장 가는 필라멘트가 흐려지고 부드러운 그라데이션에 블록이 보일 수 있습니다. 정확한 사본은 PNG를 고르세요.
+dlg-export-avif-quality = 품질
+dlg-export-avif-quality-hover = AVIF가 남기는 세부의 양, 1~100: 높을수록 그림에 가깝고 파일이 커집니다.
+dlg-export-avif-note = AVIF도 손실 압축이지만 같은 크기의 JPG보다 세부를 더 많이 남깁니다. 쓰는 데 더 오래 걸리고, 일부 오래된 프로그램은 열지 못하며, 갤러리에는 미리 보기가 표시되지 않습니다.
+dlg-export-gif-colors = 색상 수
+dlg-export-gif-colors-hover = GIF가 담는 색의 수, 2~256, 그림 자체의 색에서 고릅니다.
+dlg-export-gif-dither = 디더
+dlg-export-gif-dither-hover = 팔레트의 이웃한 색을 섞어 부드러운 그라데이션이 평평한 띠로 깨지지 않게 합니다. 끄면 그림이 팔레트의 색으로 포스터화됩니다.
+dlg-export-gif-note = GIF는 최대 256색이므로 역시 손실 압축입니다: 부드러운 그라데이션은 팔레트의 색으로 만들어집니다. 정확한 사본은 PNG를 고르세요.
 dlg-export-hud = 위치 HUD
 dlg-export-hud-hover = 내보낸 이미지의 왼쪽 위에 줌 배율 + 좌표 패널을 새겨 넣습니다(출력 크기에 맞춰 조정되며, 지도/Mandelbrot 뷰의 줌 + 중심을 표시합니다).
 dlg-export-glitch = 글리치 보정

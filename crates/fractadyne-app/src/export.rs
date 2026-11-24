@@ -1749,8 +1749,8 @@ impl FractadyneApp {
 
     pub(crate) fn open_view(&mut self, ctx: &egui::Context) {
         let path = crate::diag::modal(|| rfd::FileDialog::new()
-            .add_filter(tr!(export_filter_view), &["png", "exr", "fdn", "kfr", "txt"])
-            .add_filter(tr!(export_filter_image), &["png", "exr"])
+            .add_filter(tr!(export_filter_view), &["png", "jpg", "jpeg", "avif", "gif", "exr", "fdn", "kfr", "txt"])
+            .add_filter(tr!(export_filter_image), &["png", "jpg", "jpeg", "avif", "gif", "exr"])
             .add_filter(tr!(export_filter_location), &["fdn", "kfr", "txt"])
             .set_directory(self.dialog_dir(Self::pictures_dir))
             .pick_file());
@@ -1771,12 +1771,14 @@ impl FractadyneApp {
                 Ok(m) => self.set_toast(m, ctx),
                 Err(e) => self.set_toast(tr!(export_import_failed, error = e.to_string()), ctx),
             },
-            // Exported image: restore the view from its embedded metadata (EXR or PNG).
+            // Exported image: restore the view from its embedded metadata (PNG, JPG, AVIF, GIF or EXR).
             _ => {
-                let meta = if ext == "exr" {
-                    fractadyne_export::read_exr_metadata(&path)
-                } else {
-                    fractadyne_export::read_png_metadata(&path)
+                let meta = match ext.as_str() {
+                    "exr" => fractadyne_export::read_exr_metadata(&path),
+                    "jpg" | "jpeg" => fractadyne_export::read_jpeg_metadata(&path),
+                    "avif" => fractadyne_export::read_avif_metadata(&path),
+                    "gif" => fractadyne_export::read_gif_metadata(&path),
+                    _ => fractadyne_export::read_png_metadata(&path),
                 };
                 match meta {
                     // ⚠Our keyword, but not necessarily a view: the golden images store a
@@ -1815,9 +1817,17 @@ impl FractadyneApp {
 
 
     pub(crate) fn export_ext(&self) -> &'static str {
-        match self.export.format {
-            ExportFormat::Png => "png",
-            ExportFormat::Exr => "exr",
+        self.export.format.ext()
+    }
+
+    /// How an export is written now: the format, a JPG's or an AVIF's quality, and a GIF's palette.
+    pub(crate) fn export_encoding(&self) -> ExportEncoding {
+        ExportEncoding {
+            format: self.export.format,
+            jpeg_quality: self.export.jpeg_quality,
+            avif_quality: self.export.avif_quality,
+            gif_colors: self.export.gif_colors,
+            gif_dither: self.export.gif_dither,
         }
     }
 
@@ -2233,14 +2243,11 @@ impl FractadyneApp {
         let _pump = crate::diag::progress_pump("render", progress.clone());
         let cancel = AtomicBool::new(false);
         let meta = self.export_meta_live();
-        let fmt = self.export.format;
+        let enc = self.export_encoding();
         let write = |p: &std::path::Path, w: u32, h: u32, mut px: Vec<f32>, meta: &str| {
             let t = std::time::Instant::now();
             self.apply_watermark(&mut px, w, h);
-            let r = match fmt {
-                ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(meta)),
-                ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(meta)),
-            };
+            let r = enc.write(p, w, h, &px, meta);
             // The file phase, on its own line so a benchmark can split it from the GPU phases:
             // a 4K PNG's encode is a CPU cost every renderer pays, and the one the `[fd-perf]
             // cli-render` line cannot see.
@@ -2248,7 +2255,7 @@ impl FractadyneApp {
                 "perf",
                 &format!(
                     "file-write: {} {w}x{h} {} bytes in {:.1}ms (encode+write){}",
-                    if matches!(fmt, ExportFormat::Png) { "png" } else { "exr" },
+                    enc.format.ext(),
                     std::fs::metadata(p).map_or(0, |m| m.len()),
                     t.elapsed().as_secs_f64() * 1000.0,
                     if r.is_err() { " FAILED" } else { "" },
@@ -2544,10 +2551,7 @@ impl FractadyneApp {
             if let Some(ov) = hud {
                 crate::scripting::blit_location_overlay(&mut px, w, h, ov);
             }
-            match self.export.format {
-                ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(meta)),
-                ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(meta)),
-            }
+            self.export_encoding().write(p, w, h, &px, meta)
         };
         let status = |res: Result<(), fractadyne_export::ExportError>, ok: String| match res {
             Ok(_) => Ok(ok),
@@ -2756,7 +2760,7 @@ impl FractadyneApp {
         use std::sync::atomic::Ordering::Relaxed;
         let job = self.lsystem_export_job();
         let meta = self.view_metadata();
-        let format = self.export.format;
+        let format = self.export_encoding();
         self.export.progress.store(0, Relaxed);
         self.export.cancel.store(false, Relaxed);
         let progress = self.export.progress.clone();
@@ -2778,10 +2782,7 @@ impl FractadyneApp {
                     if let Some(ov) = &hud {
                         crate::scripting::blit_location_overlay(&mut r.pixels, r.width, r.height, ov);
                     }
-                    let written = match format {
-                        ExportFormat::Png => fractadyne_export::write_png(&path, r.width, r.height, &r.pixels, Some(&meta)),
-                        ExportFormat::Exr => fractadyne_export::write_exr(&path, r.width, r.height, &r.pixels, Some(&meta)),
-                    };
+                    let written = format.write(&path, r.width, r.height, &r.pixels, &meta);
                     match written {
                         Ok(()) => {
                             let (size, path) = (format!("{}×{}", r.width, r.height), path.display().to_string());
@@ -2810,7 +2811,7 @@ impl FractadyneApp {
         meta: ExportMeta,
     ) {
         use std::sync::atomic::Ordering::Relaxed;
-        let format = self.export.format;
+        let format = self.export_encoding();
         self.export.progress.store(0, Relaxed);
         self.export.cancel.store(false, Relaxed);
         let progress = self.export.progress.clone();
@@ -2870,10 +2871,7 @@ impl FractadyneApp {
                 if let Some(ov) = &hud {
                     crate::scripting::blit_location_overlay(&mut px, w, h, ov);
                 }
-                match format {
-                    ExportFormat::Png => fractadyne_export::write_png(p, w, h, &px, Some(meta)),
-                    ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, &px, Some(meta)),
-                }
+                format.write(p, w, h, &px, meta)
             };
             let msg = (|| -> Result<String, crate::error::AppError> {
                 match job {
@@ -3087,4 +3085,29 @@ pub(crate) fn log_split(names: &[String], shares: &[fractadyne_gpu::DeviceShare]
         "render",
         &format!("split across {} card(s) in {:.0} ms — {}", shares.len(), t.elapsed().as_secs_f64() * 1000.0, words.join("; ")),
     );
+}
+
+/// How an export is written: its format, and the settings a JPG, an AVIF and a GIF take
+/// (`FractadyneApp::export_encoding`), copied into the worker that writes it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ExportEncoding {
+    pub(crate) format: ExportFormat,
+    pub(crate) jpeg_quality: u8,
+    pub(crate) avif_quality: u8,
+    pub(crate) gif_colors: u16,
+    pub(crate) gif_dither: bool,
+}
+
+impl ExportEncoding {
+    /// Write the renderer's display-space RGBA buffer to `p` in this format, with the view's
+    /// metadata inside (every format carries it, so the file reopens the view).
+    pub(crate) fn write(self, p: &std::path::Path, w: u32, h: u32, px: &[f32], meta: &str) -> Result<(), fractadyne_export::ExportError> {
+        match self.format {
+            ExportFormat::Png => fractadyne_export::write_png(p, w, h, px, Some(meta)),
+            ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, px, Some(meta)),
+            ExportFormat::Jpeg => fractadyne_export::write_jpeg(p, w, h, px, Some(meta), self.jpeg_quality),
+            ExportFormat::Avif => fractadyne_export::write_avif(p, w, h, px, Some(meta), self.avif_quality),
+            ExportFormat::Gif => fractadyne_export::write_gif(p, w, h, px, Some(meta), self.gif_colors, self.gif_dither),
+        }
+    }
 }

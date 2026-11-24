@@ -81,6 +81,12 @@ enum Screen {
     Report,
     Diagnostics,
     Export,
+    /// The export dialog with JPG chosen: its Quality slider and the note that it is lossy.
+    ExportJpg,
+    /// ...with AVIF: its Quality slider and note.
+    ExportAvif,
+    /// ...and with GIF: its Colors slider, Dither box and note.
+    ExportGif,
     ScriptExport,
     TourRender,
     /// Tools ▸ Render zoom video…, ⚠SEEDED with a deep view and a render in progress, so the walk
@@ -1232,6 +1238,9 @@ fn build_steps() -> Vec<Step> {
         screen("report-issue", Screen::Report),
         screen("diagnostics", Screen::Diagnostics),
         screen("export", Screen::Export),
+        screen("export-jpg", Screen::ExportJpg),
+        screen("export-avif", Screen::ExportAvif),
+        screen("export-gif", Screen::ExportGif),
         screen("script-to-view", Screen::ScriptExport),
         screen("tour-render", Screen::TourRender),
         screen("zoom-video", Screen::ZoomVideo),
@@ -2630,6 +2639,8 @@ impl FractadyneApp {
         self.share.open = false;
         self.report.open = false;
         self.export.open = false;
+        // ...and its format (the export-jpg and export-gif steps choose theirs).
+        self.export.format = crate::ExportFormat::Png;
         self.tour_render.open = false;
         self.zoom_video.open = false;
         self.farm_client.open = false;
@@ -2844,8 +2855,14 @@ impl FractadyneApp {
             // would contend for the same GPU the walk is rendering with, and turn a UI check into
             // a flaky performance test.
             Screen::Diagnostics => self.diagnostics.open = true,
-            Screen::Export => {
+            Screen::Export | Screen::ExportJpg | Screen::ExportAvif | Screen::ExportGif => {
                 self.export.open = true;
+                self.export.format = match s {
+                    Screen::ExportJpg => crate::ExportFormat::Jpeg,
+                    Screen::ExportAvif => crate::ExportFormat::Avif,
+                    Screen::ExportGif => crate::ExportFormat::Gif,
+                    _ => crate::ExportFormat::Png,
+                };
                 // A two-card machine, so the walk photographs "Use all graphics cards".
                 self.worker_cards = Some(vec![(1, self.gpu_name.clone()), (2, "AMD Radeon RX 6800 XT".into())]);
                 self.worker_cards_rx = None;

@@ -24,6 +24,10 @@ accepted = [
     # entry `cargo about generate` fails outright and the notices silently go stale.
     "CDLA-Permissive-2.0",
     "Unicode-3.0",
+    # jpeg-encoder (JPG export) is "(MIT OR Apache-2.0) AND IJG": its tables and DCT come from the
+    # Independent JPEG Group's libjpeg. IJG is permissive; for a binary its one condition is that the
+    # documentation say the software is based in part on their work, which about.hbs does.
+    "IJG",
     "OFL-1.1",
     "Ubuntu-font-1.0",
 ]

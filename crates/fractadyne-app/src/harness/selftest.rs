@@ -74,7 +74,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe",
     "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize", "palette-oklab",
-    "tour-equalize", "video-equalize", "trap-equalize",
+    "tour-equalize", "video-equalize", "trap-equalize", "lossy-formats",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -10371,6 +10371,13 @@ zoom = \"1e94\"
                     && restores(self, fractadyne_export::read_png_metadata(&png).ok().flatten());
                 let exr_ok = fractadyne_export::write_exr(&exr, 4, 4, &pixels, Some(&blob)).is_ok()
                     && restores(self, fractadyne_export::read_exr_metadata(&exr).ok().flatten());
+                let (jpg, gif, avif) = (dir.join("custom.jpg"), dir.join("custom.gif"), dir.join("custom.avif"));
+                let jpg_ok = fractadyne_export::write_jpeg(&jpg, 4, 4, &pixels, Some(&blob), 90).is_ok()
+                    && restores(self, fractadyne_export::read_jpeg_metadata(&jpg).ok().flatten());
+                let gif_ok = fractadyne_export::write_gif(&gif, 4, 4, &pixels, Some(&blob), 16, true).is_ok()
+                    && restores(self, fractadyne_export::read_gif_metadata(&gif).ok().flatten());
+                let avif_ok = fractadyne_export::write_avif(&avif, 4, 4, &pixels, Some(&blob), 85).is_ok()
+                    && restores(self, fractadyne_export::read_avif_metadata(&avif).ok().flatten());
                 let _ = std::fs::remove_dir_all(&dir);
                 // The tour: "Tour from current view", parsed back by the tour reader.
                 let tour_ok = restores(self, Some(blob.clone())) && {
@@ -10392,12 +10399,12 @@ zoom = \"1e94\"
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "View format",
                     name: "a_custom_view_travels_in_every_format".into(),
-                    params: "formula with a √ / é / emoji comment: view text, PNG, EXR, tour".into(),
+                    params: "formula with a √ / é / emoji comment: view text, PNG, EXR, JPG, AVIF, GIF, tour".into(),
                     result: format!(
-                        "ASCII {ascii}, format 2 {format2}; PNG {png_ok}, EXR {exr_ok}, tour {tour_ok}; built-in view format 1 {plain1}"
+                        "ASCII {ascii}, format 2 {format2}; PNG {png_ok}, EXR {exr_ok}, JPG {jpg_ok}, AVIF {avif_ok}, GIF {gif_ok}, tour {tour_ok}; built-in view format 1 {plain1}"
                     ),
                     threshold: "all true",
-                    pass: ascii && format2 && png_ok && exr_ok && tour_ok && plain1,
+                    pass: ascii && format2 && png_ok && exr_ok && jpg_ok && avif_ok && gif_ok && tour_ok && plain1,
                 });
             }
 
@@ -12761,6 +12768,117 @@ zoom = \"1e94\"
                 result: area_lines.join("; "),
                 threshold: "equalized at most 1.25/16 (7.8%) on each; fitted above 1.5/16 (9.4%) on one (else the check sees nothing)".into(),
                 pass: area_ok && fitted_uneven && area_lines.len() == views.len(),
+            });
+        }
+
+        // ---- JPG, GIF and AVIF exports: the picture, within what each setting keeps ----
+        // One render of a real view (the seahorse at 20x, 480x270), written through the app's own
+        // encoding (`ExportEncoding::write`, what every export path calls) as JPG at quality 90 and
+        // 40 and GIF at 256 and 16 colors, read back and compared with the 8-bit picture: each
+        // close enough, more quality or colors closer, the GIF's palette no bigger than asked; and
+        // each reopens the view it was exported from.
+        if want("lossy-formats") {
+            let saved = (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.format);
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 5_000;
+            let (w, h) = (480u32, 270u32);
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.set_center_mag(
+                fractadyne_core::parse_bf_prec("-0.7436438870371587", 128).expect("a center"),
+                fractadyne_core::parse_bf_prec("0.1318259042053120", 128).expect("a center"),
+                20.0,
+            );
+            let mut req = self.current_export_request_for(&vp, false);
+            req.width = w;
+            req.height = h;
+            let blob = self.view_metadata();
+            let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+            let render = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel);
+            let dir = std::env::temp_dir().join(format!("fd-selftest-lossy-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            let mut lines = Vec::new();
+            let mut ok = render.is_ok();
+            if let Ok(r) = &render {
+                let want8 = fractadyne_export::to_srgb8(&r.pixels);
+                let psnr = |rgb: &[u8], ch: usize| -> f64 {
+                    let mut se = 0.0f64;
+                    for (p, q) in rgb.chunks_exact(ch).zip(want8.chunks_exact(4)) {
+                        for k in 0..3 {
+                            se += (p[k] as f64 - q[k] as f64).powi(2);
+                        }
+                    }
+                    10.0 * (255.0f64 * 255.0 / (se / (3 * want8.len() / 4) as f64).max(1.0e-12)).log10()
+                };
+                let enc = |format, jpeg_quality, gif_colors| crate::export::ExportEncoding { format, jpeg_quality, avif_quality: 85, gif_colors, gif_dither: true };
+                let mut db = Vec::new();
+                for (name, e, ext) in [
+                    ("JPG 90", enc(crate::ExportFormat::Jpeg, 90, 256), "jpg"),
+                    ("JPG 40", enc(crate::ExportFormat::Jpeg, 40, 256), "jpg"),
+                    ("GIF 256", enc(crate::ExportFormat::Gif, 90, 256), "gif"),
+                    ("GIF 16", enc(crate::ExportFormat::Gif, 90, 16), "gif"),
+                ] {
+                    let path = dir.join(format!("{}.{ext}", name.replace(' ', "_")));
+                    let written = e.write(&path, w, h, &r.pixels, &blob);
+                    let back = match e.format {
+                        crate::ExportFormat::Jpeg => fractadyne_export::read_jpeg_rgb8(&path).map(|(bw, bh, px)| (bw, bh, px, 3)),
+                        _ => fractadyne_export::read_gif_rgba8(&path).map(|(bw, bh, px)| (bw, bh, px, 4)),
+                    };
+                    let meta = match e.format {
+                        crate::ExportFormat::Jpeg => fractadyne_export::read_jpeg_metadata(&path),
+                        _ => fractadyne_export::read_gif_metadata(&path),
+                    };
+                    match (written, back) {
+                        (Ok(()), Ok((bw, bh, px, ch))) if (bw, bh) == (w, h) => {
+                            let d = psnr(&px, ch);
+                            let colors = (ch == 4).then(|| px.chunks_exact(4).map(|c| [c[0], c[1], c[2]]).collect::<std::collections::HashSet<_>>().len());
+                            let view = meta.ok().flatten().as_deref() == Some(blob.as_str());
+                            let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+                            ok &= view && colors.is_none_or(|c| c <= e.gif_colors as usize);
+                            db.push(d);
+                            lines.push(format!(
+                                "{name}: {d:.1} dB, {:.0} KB{}{}",
+                                size as f64 / 1024.0,
+                                colors.map(|c| format!(", {c} colors")).unwrap_or_default(),
+                                if view { ", reopens the view" } else { ", NOT the view" }
+                            ));
+                        }
+                        (w_r, b_r) => {
+                            ok = false;
+                            lines.push(format!("{name}: written {:?}, read {:?}", w_r.err().map(|e| e.to_string()), b_r.err().map(|e| e.to_string())));
+                        }
+                    }
+                }
+                // At quality 90 and 256 colors close; fewer keep less (else the settings do nothing).
+                ok &= db.len() == 4 && db[0] >= 35.0 && db[2] >= 38.0 && db[1] < db[0] && db[3] < db[2];
+                // AVIF: no AV1 decoder ships, so its pixels are scored outside the app (Pillow's
+                // libavif); here it is written through the same encoding, smaller at a lower
+                // quality, under the JPG at 90, and it reopens its view.
+                let mut avif = Vec::new();
+                for q in [85u8, 50] {
+                    let path = dir.join(format!("AVIF_{q}.avif"));
+                    let e = crate::export::ExportEncoding { avif_quality: q, ..enc(crate::ExportFormat::Avif, 90, 256) };
+                    let written = e.write(&path, w, h, &r.pixels, &blob).is_ok();
+                    let view = fractadyne_export::read_avif_metadata(&path).ok().flatten().as_deref() == Some(blob.as_str());
+                    let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+                    ok &= written && view;
+                    avif.push(size);
+                    lines.push(format!("AVIF {q}: {:.0} KB{}", size as f64 / 1024.0, if view { ", reopens the view" } else { ", NOT the view" }));
+                }
+                let jpg90 = std::fs::metadata(dir.join("JPG_90.jpg")).map_or(0, |m| m.len());
+                ok &= avif.len() == 2 && avif[1] < avif[0] && avif[0] < jpg90;
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+            (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.format) = saved;
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "JPG, AVIF and GIF exports are the picture within what their settings keep".into(),
+                params: "the seahorse at 20x, 480x270, 5,000 iterations; written through ExportEncoding::write as JPG 90 and 40, GIF 256 and 16 colors (dithered), AVIF 85 and 50; read back with the view's metadata (an AVIF's pixels are scored outside the app: no AV1 decoder ships)".into(),
+                result: if lines.is_empty() { format!("could not render: {:?}", render.err().map(|e| e.to_string())) } else { lines.join("; ") },
+                threshold: "JPG 90 at least 35 dB and GIF 256 at least 38 dB against the 8-bit picture; JPG 40 and GIF 16 below them; a GIF's colors no more than asked; AVIF 85 smaller than the JPG at 90, AVIF 50 smaller still; each reopens its view".into(),
+                pass: ok,
             });
         }
 

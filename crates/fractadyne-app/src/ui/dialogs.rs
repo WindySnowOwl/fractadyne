@@ -747,8 +747,8 @@ impl FractadyneApp {
         let mut cancel = false;
         let (w, h, ss) = (self.export.width.max(1), self.export_height(), self.export.ss.max(1));
         let fmt = match self.export.format {
-            crate::ExportFormat::Png => "PNG",
             crate::ExportFormat::Exr => "EXR",
+            f => f.label(),
         };
         egui::Window::new(tr!(dlg_snapshot_title))
             .id(egui::Id::new("fractadyne.dlg.snapshot-choice"))
@@ -2272,9 +2272,62 @@ impl FractadyneApp {
                     });
                 ui.horizontal(|ui| {
                     ui.label(tr!(dlg_export_format));
-                    ui.radio_value(&mut self.export.format, ExportFormat::Png, "PNG");
-                    ui.radio_value(&mut self.export.format, ExportFormat::Exr, "OpenEXR");
+                    for f in ExportFormat::ALL {
+                        ui.radio_value(&mut self.export.format, f, f.label());
+                    }
                 });
+                // A JPG's quality, a GIF's palette: indented under the format, with the note that
+                // each is lossy (a PNG is the exact copy).
+                let note = |ui: &mut egui::Ui, text: String| {
+                    ui.horizontal(|ui| {
+                        ui.add_space(ui.spacing().indent * 0.5);
+                        ui.add(egui::Label::new(egui::RichText::new(text).weak().small()).wrap());
+                    });
+                };
+                match self.export.format {
+                    ExportFormat::Jpeg => {
+                        ui.horizontal(|ui| {
+                            ui.add_space(ui.spacing().indent * 0.5);
+                            ui.label(tr!(dlg_export_jpeg_quality));
+                            let r = ui.add(egui::Slider::new(&mut self.export.jpeg_quality, 1..=100));
+                            if crate::ui::panels::slider_double_clicked(&r) {
+                                self.export.jpeg_quality = fractadyne_export::JPEG_QUALITY_DEFAULT;
+                            }
+                            r.on_hover_text(format!("{}\n\n{}", tr!(dlg_export_jpeg_quality_hover), tr!(panel_double_click_reset)));
+                        });
+                        note(ui, tr!(dlg_export_jpeg_note));
+                    }
+                    ExportFormat::Avif => {
+                        ui.horizontal(|ui| {
+                            ui.add_space(ui.spacing().indent * 0.5);
+                            ui.label(tr!(dlg_export_avif_quality));
+                            let r = ui.add(egui::Slider::new(&mut self.export.avif_quality, 1..=100));
+                            if crate::ui::panels::slider_double_clicked(&r) {
+                                self.export.avif_quality = fractadyne_export::AVIF_QUALITY_DEFAULT;
+                            }
+                            r.on_hover_text(format!("{}\n\n{}", tr!(dlg_export_avif_quality_hover), tr!(panel_double_click_reset)));
+                        });
+                        note(ui, tr!(dlg_export_avif_note));
+                    }
+                    ExportFormat::Gif => {
+                        ui.horizontal(|ui| {
+                            ui.add_space(ui.spacing().indent * 0.5);
+                            ui.label(tr!(dlg_export_gif_colors));
+                            let r = ui.add(egui::Slider::new(
+                                &mut self.export.gif_colors,
+                                fractadyne_export::GIF_COLORS_MIN..=fractadyne_export::GIF_COLORS_MAX,
+                            ));
+                            if crate::ui::panels::slider_double_clicked(&r) {
+                                self.export.gif_colors = fractadyne_export::GIF_COLORS_DEFAULT;
+                            }
+                            r.on_hover_text(format!("{}\n\n{}", tr!(dlg_export_gif_colors_hover), tr!(panel_double_click_reset)));
+                            ui.checkbox(&mut self.export.gif_dither, tr!(dlg_export_gif_dither))
+                                .on_hover_text(tr!(dlg_export_gif_dither_hover));
+                        });
+                        note(ui, tr!(dlg_export_gif_note));
+                    }
+                    ExportFormat::Png | ExportFormat::Exr => {}
+                }
                 ui.checkbox(&mut self.show_location, tr!(dlg_export_hud))
                     .on_hover_text(tr!(dlg_export_hud_hover));
                 ui.checkbox(&mut self.render_cfg.glitch_correct, tr!(dlg_export_glitch))

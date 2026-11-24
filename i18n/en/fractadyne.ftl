@@ -926,6 +926,18 @@ dlg-export-aspect = Aspect
 dlg-export-aspect-window = Match window
 # Before the choices PNG and OpenEXR.
 dlg-export-format = Format:
+# The export dialog's JPG, AVIF and GIF rows: a JPG's and an AVIF's quality slider (1 to 100) and the note that each is lossy (an AVIF's also that it is slower to write and has no gallery preview); a GIF's palette size slider (2 to 256), its dither box, and the note that it is lossy too.
+dlg-export-jpeg-quality = Quality
+dlg-export-jpeg-quality-hover = How much detail the JPG keeps, 1 to 100: higher is closer to the picture and makes a bigger file. Around 90 keeps a fractal's fine filaments.
+dlg-export-jpeg-note = JPG is lossy: it keeps the file small by discarding detail, so the finest filaments can blur and smooth ramps can show blocks. Choose PNG for an exact copy.
+dlg-export-avif-quality = Quality
+dlg-export-avif-quality-hover = How much detail the AVIF keeps, 1 to 100: higher is closer to the picture and makes a bigger file.
+dlg-export-avif-note = AVIF is lossy too, but keeps more detail than a JPG of the same size. It takes longer to write, some older programs can't open it, and the gallery shows no preview of it.
+dlg-export-gif-colors = Colors
+dlg-export-gif-colors-hover = How many colors the GIF holds, 2 to 256, chosen from the picture's own colors.
+dlg-export-gif-dither = Dither
+dlg-export-gif-dither-hover = Mix neighboring colors from the palette so smooth ramps don't break into flat bands. Off, the picture is posterized into the palette's colors.
+dlg-export-gif-note = GIF holds at most 256 colors, so it is lossy too: smooth ramps are made of the palette's colors. Choose PNG for an exact copy.
 dlg-export-hud = Location HUD
 dlg-export-hud-hover = Burn a zoom-level + coordinate panel into the top-left of the exported image (scales with the output; shows the map/Mandelbrot view's zoom + center).
 dlg-export-glitch = Glitch correction

@@ -53,13 +53,14 @@ done
 
 # ---------------------------------------------------------------- system dependencies
 # Mirrors the release/CI Linux jobs: winit/eframe need X11 + Wayland + xkbcommon; rfd (the
-# native file dialogs this build now remembers directories for) needs GTK3.
+# native file dialogs this build now remembers directories for) needs GTK3; nasm assembles rav1e's
+# fast paths (the AVIF export's encoder).
 if [ "$DO_DEPS" = "1" ]; then
   command -v apt-get >/dev/null 2>&1 || die "--deps assumes Debian/Ubuntu (apt-get not found); install the GTK3 + X11/Wayland dev packages manually"
   say "Installing system dependencies (sudo)…"
   sudo apt-get update
   sudo apt-get install -y --no-install-recommends \
-    git curl build-essential pkg-config \
+    git curl build-essential pkg-config nasm \
     libgtk-3-dev libxkbcommon-dev libwayland-dev \
     libx11-dev libxcursor-dev libxrandr-dev libxi-dev
   # xvfb only needed for --selftest on a headless box; harmless to have.
@@ -73,6 +74,7 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 command -v cargo >/dev/null 2>&1 || die "cargo not found — install Rust: https://rustup.rs (curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh)"
 command -v git   >/dev/null 2>&1 || die "git not found — run with --deps, or apt-get install git"
+command -v "${NASM:-nasm}" >/dev/null 2>&1 || die "nasm not found (rav1e, the AVIF export's encoder, assembles with it) — run with --deps, or apt-get install nasm"
 
 # ---------------------------------------------------------------- fetch / update source
 if [ -d "${DIR}/.git" ]; then

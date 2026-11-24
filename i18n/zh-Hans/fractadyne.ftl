@@ -859,6 +859,17 @@ dlg-export-aspect = 宽高比
 dlg-export-aspect-window = 与窗口一致
 # Before the choices PNG and OpenEXR.
 dlg-export-format = 格式：
+dlg-export-jpeg-quality = 质量
+dlg-export-jpeg-quality-hover = JPG 保留多少细节，1 到 100：越高越接近图像，文件也越大。约 90 可保留分形的细丝。
+dlg-export-jpeg-note = JPG 是有损的：它靠丢弃细节保持文件小，因此最细的细丝可能变模糊，平滑渐变可能出现方块。需要精确副本请选择 PNG。
+dlg-export-avif-quality = 质量
+dlg-export-avif-quality-hover = AVIF 保留多少细节，1 到 100：越高越接近图像，文件也越大。
+dlg-export-avif-note = AVIF 也是有损的，但比同样大小的 JPG 保留更多细节。它写入更慢，一些旧程序无法打开它，图库也不显示它的预览。
+dlg-export-gif-colors = 颜色数
+dlg-export-gif-colors-hover = GIF 包含多少种颜色，2 到 256，从图像自身的颜色中选出。
+dlg-export-gif-dither = 抖动
+dlg-export-gif-dither-hover = 混合调色板中相邻的颜色，使平滑渐变不会断成平坦的色带。关闭时，图像会被色调分离为调色板的颜色。
+dlg-export-gif-note = GIF 最多包含 256 种颜色，因此也是有损的：平滑渐变由调色板的颜色组成。需要精确副本请选择 PNG。
 dlg-export-hud = 位置 HUD
 dlg-export-hud-hover = 在导出图像的左上角烙印一个缩放级别 + 坐标面板（随输出尺寸缩放；显示地图/Mandelbrot 视图的缩放 + 中心）。
 dlg-export-glitch = 失真校正
