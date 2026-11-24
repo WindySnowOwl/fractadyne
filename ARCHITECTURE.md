@@ -216,7 +216,7 @@ and growing gently when real frames run cheap, floored at the user's `min_motion
 ## 6. Coloring
 
 Compute↔coloring split (§5). Implemented methods (`color_method`, 6): **smooth**, **stripe
-average**, **triangle-inequality average (TIA)**, **orbit trap** (point/cross/circle), **distance
+average**, **triangle-inequality average (TIA)**, **orbit trap** (point/cross/circle, moved, turned and sized), **distance
 estimate**, **decomposition**. Plus **duotone** and **binary** two-color modes. Palettes: preset
 gradients (`fractadyne-color`), a custom multi-stop gradient editor, and import from a Fractint /
 Kalles Fraktaler `.map` file (`--palette-map`); cyclic with cycle/offset, plus palette animation

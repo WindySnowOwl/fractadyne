@@ -3048,6 +3048,14 @@ panel-tail-length = Tail length
 panel-tail-length-unit = it
 panel-tail-length-hover = Window length in iterations. Short windows (8–32) give the classic bold banding at any depth; longer ones average toward a flat color again, since the stripe term of a long chaotic orbit averages out.
 panel-trap-shape = Trap shape
+# Where the orbit trap sits (coloring plan F4): its two coordinates in the plane the orbits move in.
+panel-trap-center-x = Trap center x
+panel-trap-center-y = Trap center y
+panel-trap-center-hover = Where the trap sits among the points the orbits pass through, not a point of the picture. Moving it changes which orbits come close to it, so its bands and rings rearrange. 0, 0 is where the trap has always been. Also --trap-center X,Y for --render.
+panel-trap-rotation = Trap rotation
+panel-trap-rotation-hover = Turn the cross counterclockwise, in degrees. Also --trap-rotation for --render.
+panel-trap-size = Trap size
+panel-trap-size-hover = The circle's radius. Also --trap-size for --render.
 # The panel's Inside rows (coloring plan B5): what colors the inside of the set.
 panel-inside = Inside
 panel-inside-hover = What colors the inside of the set.

@@ -31,6 +31,7 @@ fn scrambled() -> ViewColoring {
         stripe_tail: true,
         stripe_tail_len: 900,
         trap: TrapType::Circle,
+        trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6 },
         light: true,
         light_angle: -1.25,
         light_height: 3.5,
@@ -90,6 +91,9 @@ fn variants() -> Vec<ViewColoring> {
     v.push(ViewColoring { stripe_freq: 1.0, stripe_tail: true, stripe_tail_len: 4096, ..stripe.clone() });
     for t in TrapType::ALL {
         v.push(ViewColoring { method: ColorMethod::OrbitTrap, trap: t, ..d.clone() });
+        // Placed (F4): moved, turned and sized, each shape writing what it uses.
+        let place = crate::TrapPlace { center: [-0.75, 1.5], rotation: -40.0, size: 2.5 }.for_shape(t);
+        v.push(ViewColoring { method: ColorMethod::OrbitTrap, trap: t, trap_place: place, ..d.clone() });
     }
     v.push(ViewColoring { light: true, ..d.clone() });
     v.push(ViewColoring { light: true, light_angle: 0.3, light_height: 0.2, ..d.clone() });
@@ -132,6 +136,8 @@ fn variants() -> Vec<ViewColoring> {
     v.push(ViewColoring { interior: Some(InteriorMode::Solid), ..d.clone() });
     v.push(ViewColoring { interior: Some(InteriorMode::Trap), ..d.clone() });
     v.push(ViewColoring { interior: Some(InteriorMode::Trap), trap: TrapType::Cross, interior_palette: "ember".into(), ..d.clone() });
+    let turned = crate::TrapPlace { center: [0.5, 0.0], rotation: 15.0, size: 1.0 };
+    v.push(ViewColoring { interior: Some(InteriorMode::Trap), trap: TrapType::Cross, trap_place: turned, ..d.clone() });
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior: Some(InteriorMode::Solid), ..d.clone() });
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_palette: "ember".into(), ..d.clone() });
     // A solid inside's own color (C1), and the same color under Duotone, where it does not show.
@@ -221,6 +227,7 @@ fn what_the_picture_does_not_depend_on_is_left_alone() {
     // What it does not depend on keeps this session's values.
     assert_eq!((got.stripe_freq, got.stripe_tail, got.stripe_tail_len), (17.0, true, 900));
     assert_eq!(got.trap, TrapType::Circle);
+    assert_eq!(got.trap_place, s.trap_place, "the trap's placement is the trap's");
     assert_eq!((got.light_angle, got.light_height), (-1.25, 3.5));
     assert_eq!((got.glow_strength, got.glow_width), (0.15, 3.25));
     assert_eq!((got.lo, got.hi), (s.lo, s.hi));
@@ -246,6 +253,9 @@ fn a_left_out_setting_resets_only_under_the_parent_the_file_names() {
 
     let (got, _) = load("method=trap\n", &s, true);
     assert_eq!(got.trap, d.trap);
+    // The point (F4) uses its center, which resets, and neither the turn nor the size.
+    assert_eq!(got.trap_place.center, d.trap_place.center);
+    assert_eq!((got.trap_place.rotation, got.trap_place.size), (25.0, 0.6), "the point uses neither");
     assert_eq!((got.normalize_fit, got.log_scale), (false, false), "the trap fits its own range");
 
     let (got, _) = load("light=1\nglow=1\npalette_mode=duotone\n", &s, true);

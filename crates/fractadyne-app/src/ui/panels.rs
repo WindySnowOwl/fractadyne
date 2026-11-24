@@ -16,8 +16,9 @@ const PANEL_LABEL_W: f32 = 104.0;
 /// Checkboxes deliberately do NOT use this: a trailing label is the convention for a checkbox,
 /// and the panel's seventeen already read correctly.
 impl crate::FractadyneApp {
-    /// The trap's shape (the orbit trap method's, or the inside's when the trap colors it, B5):
-    /// one row, drawn with whichever uses it.
+    /// The trap's shape (the orbit trap method's, or the inside's when the trap colors it, B5) and
+    /// where it sits (F4): drawn with whichever uses it. The turn only for a shape that turns and
+    /// the size only for one that has a size (`TrapSpec::turns`, `sized`), so no row does nothing.
     fn trap_shape_row(&mut self, ui: &mut egui::Ui) {
         labelled(ui, &tr!(panel_trap_shape), |ui| {
             egui::ComboBox::from_id_salt("panel_trap_shape")
@@ -28,6 +29,39 @@ impl crate::FractadyneApp {
                     }
                 });
         });
+        let reset = TrapPlace::DEFAULT;
+        let spec = self.coloring.trap_type.spec();
+        let place = &mut self.coloring.trap_place;
+        let center_hover = format!("{}\n\n{}", tr!(panel_trap_center_hover), tr!(panel_double_click_reset));
+        let [cx, cy] = &mut place.center;
+        for (label, value, d) in [
+            (tr!(panel_trap_center_x), cx, reset.center[0]),
+            (tr!(panel_trap_center_y), cy, reset.center[1]),
+        ] {
+            let r = labelled(ui, &label, |ui| ui.add(egui::Slider::new(value, crate::slider_range::TRAP_CENTER).fixed_decimals(3)));
+            if slider_double_clicked(&r) {
+                *value = d;
+            }
+            r.on_hover_text(&center_hover);
+        }
+        if spec.turns {
+            let r = labelled(ui, &tr!(panel_trap_rotation), |ui| {
+                ui.add(egui::Slider::new(&mut place.rotation, crate::slider_range::TRAP_ROTATION).suffix("°").fixed_decimals(1))
+            });
+            if slider_double_clicked(&r) {
+                place.rotation = reset.rotation;
+            }
+            r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_rotation_hover), tr!(panel_double_click_reset)));
+        }
+        if spec.sized {
+            let r = labelled(ui, &tr!(panel_trap_size), |ui| {
+                ui.add(egui::Slider::new(&mut place.size, crate::slider_range::TRAP_SIZE).logarithmic(true))
+            });
+            if slider_double_clicked(&r) {
+                place.size = reset.size;
+            }
+            r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_size_hover), tr!(panel_double_click_reset)));
+        }
     }
 
     /// The panel's Brightness, Contrast and Saturation rows (`fractadyne_color::adjust`).

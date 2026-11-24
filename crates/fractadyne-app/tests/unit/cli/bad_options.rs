@@ -32,6 +32,8 @@ fn free_form_values_that_start_with_a_minus_are_values() {
     assert_eq!(first_bad_option(&s(&["exe", "--render", "--center", "-3/4", "-0.5 + 0.25*cos(pi/4)"])), None);
     assert_eq!(first_bad_option(&s(&["exe", "--render", "--formula", "-z^2 + c", "--formula-params", "-0.5,0;-1,2"])), None);
     assert_eq!(first_bad_option(&s(&["exe", "--julia-c", "-0.8", "-0.156", "--render"])), None);
+    // The trap's center (F4), refused as an option until it was listed.
+    assert_eq!(first_bad_option(&s(&["exe", "--render", "--trap-center", "-0.2,0.15", "--trap-rotation", "-40"])), None);
     // Only that many values: an unknown option after them is still caught.
     assert_eq!(
         first_bad_option(&s(&["exe", "--formula", "z^2 + c", "-x"])),

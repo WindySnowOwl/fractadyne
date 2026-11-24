@@ -66,7 +66,7 @@ const GOLDEN_MEAN_CROSS_GPU: f64 = 24.0;
 /// The check groups `--selftest-list` prints: every `want("…")` tag in this file
 /// (`every_want_group_is_listed`), so a group can be found and run on its own.
 pub(crate) const GROUPS: &[&str] = &[
-    "numeric", "symmetry", "abs-family", "custom-formula", "custom-dip", "life", "lsystem", "multibrot-sa", "bla", "aux-bla", "aux-series", "angle",
+    "numeric", "symmetry", "abs-family", "custom-formula", "custom-dip", "life", "lsystem", "multibrot-sa", "bla", "aux-bla", "aux-series", "angle", "trap-place",
     "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
     "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata", "view-coloring",
     "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams", "palette-aa",
@@ -773,6 +773,9 @@ impl FractadyneApp {
         self.coloring.equalize = 0.0;
         // Blend in OKLab (C7) changes every palette's colors: off unless a check asks.
         self.coloring.palette_oklab = false;
+        // A moved trap (F4) changes every trap check's colors: each shape at the origin, unturned
+        // and of size 1, unless a check asks.
+        self.coloring.trap_place = crate::TrapPlace::DEFAULT;
         self.effects.de = false;
         self.effects.light = false;
         // D2.2: echo the effective config so any residual leak is visible in the report
@@ -7435,15 +7438,27 @@ impl FractadyneApp {
             // Each case sets the live aux params BEFORE building the request, so the BLA aggregate is
             // baked for exactly the method / trap-type / frequency the render then reads (all three
             // trap types exercised; stripe at a non-default 5.0). Rebuilt per case for that reason.
-            use crate::{ColorMethod as M, TrapType as T};
-            for (m, tt, freq, label) in [
-                (M::OrbitTrap, T::Point, 1.0f32, "orbit-trap-point"),
-                (M::OrbitTrap, T::Cross, 1.0, "orbit-trap-cross"),
-                (M::OrbitTrap, T::Circle, 1.0, "orbit-trap-circle"),
-                (M::TriangleIneq, T::Point, 1.0, "triangle-ineq"),
-                (M::Stripe, T::Point, 5.0, "stripe"),
+            use crate::{ColorMethod as M, TrapPlace as P, TrapType as T};
+            // The placed traps (F4): the aggregates must measure from the moved, turned or sized
+            // trap as the frame's `trap_dist` does, or BLA and every iteration part. Each placed case
+            // must also MOVE the picture (the same frame with the trap unmoved, BLA off): a placement
+            // that never reached the GPU would pass the fold check on an unplaced picture. ⚠This view
+            // is 3 or 4 colors for every trap (each orbit's nearest approach comes while it still
+            // shadows the reference), so these compare the two at that approach only; `trap-place`
+            // judges a picture with structure.
+            let at = P::DEFAULT;
+            for (m, tt, freq, place, label) in [
+                (M::OrbitTrap, T::Point, 1.0f32, at, "orbit-trap-point"),
+                (M::OrbitTrap, T::Cross, 1.0, at, "orbit-trap-cross"),
+                (M::OrbitTrap, T::Circle, 1.0, at, "orbit-trap-circle"),
+                (M::OrbitTrap, T::Point, 1.0, P { center: [0.3, -0.2], ..at }, "orbit-trap-point-placed"),
+                (M::OrbitTrap, T::Cross, 1.0, P { center: [-0.2, 0.15], rotation: 35.0, ..at }, "orbit-trap-cross-placed"),
+                (M::OrbitTrap, T::Circle, 1.0, P { center: [0.1, 0.4], size: 0.3, ..at }, "orbit-trap-circle-placed"),
+                (M::TriangleIneq, T::Point, 1.0, at, "triangle-ineq"),
+                (M::Stripe, T::Point, 5.0, at, "stripe"),
             ] {
                 self.coloring.trap_type = tt;
+                self.coloring.trap_place = place;
                 self.coloring.stripe_freq = freq;
                 let mut on = self.current_export_request_for(&vp, false);
                 on.width = N;
@@ -7455,6 +7470,11 @@ impl FractadyneApp {
                 let (bla_on, mode) = (on.bla_on, on.mode);
                 let mut off = on.clone();
                 off.bla_on = 0;
+                let placed = !place.is_default();
+                let mut unmoved = off.clone();
+                unmoved.trap_place = P::DEFAULT;
+                let chans = (nn * nn * 4) as u64;
+                let share = |a: &[f32], b: &[f32]| a.iter().zip(b).filter(|(x, y)| (*x - *y).abs() > 0.02).count() as u64;
                 match (rex(&on), rex(&off)) {
                     (Some(a), Some(b)) if bla_on == 1 && mode == 2 && a.len() == b.len() => {
                         let (mut maxd, mut nd) = (0.0f32, 0u64);
@@ -7465,14 +7485,21 @@ impl FractadyneApp {
                                 nd += 1;
                             }
                         }
-                        let chans = (nn * nn * 4) as u64;
+                        // The placed cases' anti-vacuity: how much the move changed the picture.
+                        let moved = if placed { rex(&unmoved).map(|u| share(&b, &u)) } else { None };
+                        let moved_ok = !placed || moved.is_some_and(|n| n >= chans / 20);
+                        let moved_txt = moved.map_or(String::new(), |n| format!("; the move changed {n}/{chans} channels >2%"));
                         push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "BLA",
                             name: format!("{label}: BLA-fold == non-BLA @1e30×"),
-                            params: format!("bla_on {bla_on}, maxΔ {maxd:.4}"),
+                            params: format!("bla_on {bla_on}, maxΔ {maxd:.4}{moved_txt}"),
                             result: format!("{nd}/{chans} channels >2%"),
-                            threshold: "bla engaged, maxΔ<0.1, <1% differ",
-                            pass: maxd < 0.1 && nd < chans / 100,
+                            threshold: if placed {
+                                "bla engaged, maxΔ<0.1, <1% differ; the move changes ≥5% of the picture"
+                            } else {
+                                "bla engaged, maxΔ<0.1, <1% differ"
+                            },
+                            pass: maxd < 0.1 && nd < chans / 100 && moved_ok,
                         });
                     }
                     _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
@@ -7490,6 +7517,7 @@ impl FractadyneApp {
             self.coloring.color_method = crate::ColorMethod::Smooth;
             self.coloring.stripe_freq = saved_stripe_freq;
             self.coloring.trap_type = saved_trap_type;
+            self.coloring.trap_place = crate::TrapPlace::DEFAULT;
         }
 
         // ---- aux-series: the series prefix must not drop the coloring statistics (A5a) ----
@@ -7536,15 +7564,23 @@ impl FractadyneApp {
             // aggregates come from. Measured 0.029 off, so it is held to maxΔ < 0.06 only, enough to
             // catch a prefix that is dropped (0.70). BLA ALONE is exact for it since its nodes carry
             // the window-weighted sum (2026-11-15: 0.23 → 0.0000), and held to < 0.01.
-            for (m, tt, freq, tail, label) in [
-                (crate::ColorMethod::Stripe, crate::TrapType::Point, 5.0f32, false, "stripe"),
-                (crate::ColorMethod::Stripe, crate::TrapType::Point, 5.0, true, "stripe-tail-16"),
-                (crate::ColorMethod::TriangleIneq, crate::TrapType::Point, 1.0, false, "triangle-ineq"),
-                (crate::ColorMethod::OrbitTrap, crate::TrapType::Point, 1.0, false, "orbit-trap-point"),
-                (crate::ColorMethod::OrbitTrap, crate::TrapType::Cross, 1.0, false, "orbit-trap-cross"),
+            // The placed traps (F4) too: the prefix the series skips folds the reference's
+            // aggregates, which must measure from the moved trap.
+            let at = crate::TrapPlace::DEFAULT;
+            let turned = crate::TrapPlace { center: [-0.2, 0.15], rotation: 35.0, ..at };
+            let ringed = crate::TrapPlace { center: [0.1, 0.4], size: 0.3, ..at };
+            for (m, tt, freq, tail, place, label) in [
+                (crate::ColorMethod::Stripe, crate::TrapType::Point, 5.0f32, false, at, "stripe"),
+                (crate::ColorMethod::Stripe, crate::TrapType::Point, 5.0, true, at, "stripe-tail-16"),
+                (crate::ColorMethod::TriangleIneq, crate::TrapType::Point, 1.0, false, at, "triangle-ineq"),
+                (crate::ColorMethod::OrbitTrap, crate::TrapType::Point, 1.0, false, at, "orbit-trap-point"),
+                (crate::ColorMethod::OrbitTrap, crate::TrapType::Cross, 1.0, false, at, "orbit-trap-cross"),
+                (crate::ColorMethod::OrbitTrap, crate::TrapType::Cross, 1.0, false, turned, "orbit-trap-cross-placed"),
+                (crate::ColorMethod::OrbitTrap, crate::TrapType::Circle, 1.0, false, ringed, "orbit-trap-circle-placed"),
             ] {
                 self.coloring.color_method = m;
                 self.coloring.trap_type = tt;
+                self.coloring.trap_place = place;
                 self.coloring.stripe_freq = freq;
                 self.coloring.stripe_tail = tail;
                 self.coloring.stripe_tail_len = 16;
@@ -7620,6 +7656,7 @@ impl FractadyneApp {
                 self.render_cfg.series_approx,
                 self.render_cfg.use_bla,
             ) = saved;
+            self.coloring.trap_place = crate::TrapPlace::DEFAULT;
         }
 
         // ---- angle: decomposition's final angle, read at escape (coloring plan B8) ----
@@ -7865,6 +7902,136 @@ impl FractadyneApp {
                     self.render_cfg.use_bla,
                 ) = saved;
             }
+        }
+
+        // ---- trap-place: the orbit trap moved, turned and sized (coloring plan F4) ----
+        // On a picture with structure, deep enough for BLA: corpus 07 at 1e30x, as the angle group's
+        // nudge rule judges it (the aux-bla view, the seahorse at 1e30x, is 3 or 4 colors for every
+        // trap: there the placed cases show only that the aggregates measure from the moved trap at
+        // the orbit's nearest approach). Each trap renders as the app builds the export (BLA), with
+        // neither BLA nor the series, and that nudged 0.001 px: the accelerated render may change no
+        // more pixels than the nudge does, and a placed trap must change >= 5% of the pixels of the
+        // same shape unmoved (else the placement never reached the frame). Anti-vacuity for a trap's
+        // smooth field, not the angle group's chaotic one: > 50 colors and a nudge that moves >= 1%
+        // (measured 2026-11-24: 78 to 144 colors, the nudge 2.7% to 5.3%, BLA 1.3% to 2.7%; a flat
+        // picture, as at the aux-bla view, is 3 or 4 colors and 0%).
+        if want("trap-place") {
+            use crate::{TrapPlace as P, TrapType as T};
+            let saved = (
+                self.fractal,
+                self.julia_mode,
+                self.coloring.color_method,
+                self.coloring.trap_type,
+                self.coloring.use_custom_palette,
+                self.render_cfg.max_iter,
+                self.render_cfg.auto_iter,
+                self.render_cfg.series_approx,
+                self.render_cfg.use_bla,
+            );
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+            self.coloring.use_custom_palette = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 25_000;
+            self.render_cfg.series_approx = true;
+            self.render_cfg.use_bla = true;
+            let (w, h) = (320u32, 200u32);
+            let progress = std::sync::atomic::AtomicU32::new(0);
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 256).expect("the view's coordinate");
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.set_center_mag(at(CRX), at(CRY), 1.0e30);
+            let px = |r: &fractadyne_gpu::ExportRequest| match fractadyne_gpu::render_export(device, queue, r, &progress, &cancel) {
+                Ok(x) => Some(x.pixels),
+                Err(e) => {
+                    eprintln!("[selftest] GPU ERROR (render_export): {e}");
+                    None
+                }
+            };
+            // The share of pixels of `x` with a channel more than 0.02 from `p`'s.
+            let changed = |x: &[f32], p: &[f32]| {
+                x.chunks_exact(4).zip(p.chunks_exact(4)).filter(|(u, v)| (0..3).any(|c| !((u[c] - v[c]).abs() <= 0.02))).count() as f64
+                    / (p.len() / 4).max(1) as f64
+            };
+            let d = P::DEFAULT;
+            for (shape, place, label) in [
+                (T::Point, d, "point"),
+                (T::Point, P { center: [0.3, -0.2], ..d }, "point at 0.3,-0.2"),
+                (T::Cross, P { center: [-0.2, 0.15], rotation: 35.0, ..d }, "cross at -0.2,0.15 turned 35"),
+                (T::Circle, P { center: [0.1, 0.4], size: 0.3, ..d }, "circle at 0.1,0.4, radius 0.3"),
+            ] {
+                self.coloring.trap_type = shape;
+                self.coloring.trap_place = place;
+                let mut req = self.current_export_request_for(&vp, false);
+                req.width = w;
+                req.height = h;
+                req.ss = 1;
+                req.aa_palette = fractadyne_gpu::PaletteAa::Off;
+                let (bla, skip, mode) = (req.bla_on == 1, req.sa_skip, req.mode);
+                let mut plain = req.clone();
+                plain.bla_on = 0;
+                plain.sa_skip = 0;
+                let mut nudged = plain.clone();
+                nudged.jitter = [1.0e-3, 1.0e-3];
+                let mut unmoved = plain.clone();
+                unmoved.trap_place = P::DEFAULT;
+                let placed = !req.trap_place.is_default();
+                let name = format!("{label} at 1e30x: BLA moves no more pixels than a nudge");
+                let params = format!("corpus07, {w}x{h}, 25000 iter, mode {mode}, BLA {}, series skip {skip}", if bla { "on" } else { "off" });
+                match (px(&req), px(&plain), px(&nudged), if placed { px(&unmoved) } else { None }) {
+                    (Some(a), Some(p), Some(n), u) if a.len() == p.len() && n.len() == p.len() && !p.is_empty() => {
+                        let (by_accel, by_nudge) = (changed(&a, &p), changed(&n, &p));
+                        let by_move = u.as_deref().map(|u| changed(&p, u));
+                        let mut colors: Vec<[u8; 3]> =
+                            p.chunks_exact(4).map(|v| [0, 1, 2].map(|c| (v[c].clamp(0.0, 1.0) * 255.0) as u8)).collect();
+                        colors.sort_unstable();
+                        colors.dedup();
+                        push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Trap",
+                            name,
+                            params,
+                            result: format!(
+                                "{:.1}% of pixels changed by BLA, {:.1}% by the nudge{}; the plain render has {} colors",
+                                by_accel * 100.0,
+                                by_nudge * 100.0,
+                                by_move.map_or(String::new(), |m| format!(", {:.1}% by the move", m * 100.0)),
+                                colors.len()
+                            ),
+                            threshold: if placed {
+                                "BLA engaged; BLA's share <= the nudge's; the nudge moves >= 1% of > 50 colors; the move changes >= 5%".into()
+                            } else {
+                                "BLA engaged; BLA's share <= the nudge's; the nudge moves >= 1% of > 50 colors".into()
+                            },
+                            pass: bla
+                                && by_accel <= by_nudge
+                                && by_nudge >= 0.01
+                                && colors.len() > 50
+                                && (!placed || by_move.is_some_and(|m| m >= 0.05)),
+                        });
+                    }
+                    _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                        category: "Trap",
+                        name,
+                        params,
+                        result: "render failed".into(),
+                        threshold: "every render".into(),
+                        pass: false,
+                    }),
+                }
+            }
+            (
+                self.fractal,
+                self.julia_mode,
+                self.coloring.color_method,
+                self.coloring.trap_type,
+                self.coloring.use_custom_palette,
+                self.render_cfg.max_iter,
+                self.render_cfg.auto_iter,
+                self.render_cfg.series_approx,
+                self.render_cfg.use_bla,
+            ) = saved;
+            self.coloring.trap_place = P::DEFAULT;
         }
 
         // ---- invariance & consistency (Phase 3) — oracle-free, targets the tier crossovers ----
@@ -11051,6 +11218,7 @@ zoom = \"1e94\"
                 stripe_tail: true,
                 stripe_tail_len: 900,
                 trap: TrapType::Circle,
+                trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6 },
                 light: true,
                 light_angle: -1.25,
                 light_height: 3.5,
@@ -11130,6 +11298,26 @@ zoom = \"1e94\"
                 ),
                 (ViewColoring { normalize_live: false, log_scale: true, ..d.clone() }, &["normalize_live=0", "log_scale=1"][..]),
                 (ViewColoring { method: ColorMethod::Decomposition, ..d.clone() }, &["method=decomposition"][..]),
+                // A placed trap (F4): the cross moved and turned, the circle moved and sized; each
+                // writes only what its shape uses.
+                (
+                    ViewColoring {
+                        method: ColorMethod::OrbitTrap,
+                        trap: TrapType::Cross,
+                        trap_place: crate::TrapPlace { center: [0.25, -0.5], rotation: 30.0, size: 1.0 },
+                        ..d.clone()
+                    },
+                    &["method=trap", "trap=cross", "trap_x=0.25", "trap_y=-0.5", "trap_rotation=30"][..],
+                ),
+                (
+                    ViewColoring {
+                        method: ColorMethod::OrbitTrap,
+                        trap: TrapType::Circle,
+                        trap_place: crate::TrapPlace { center: [0.0, 0.125], rotation: 0.0, size: 0.5 },
+                        ..d.clone()
+                    },
+                    &["method=trap", "trap=circle", "trap_y=0.125", "trap_size=0.5"][..],
+                ),
                 // The inside colored by the trap in a palette of its own, under Smooth (B5).
                 (
                     ViewColoring { interior: Some(crate::InteriorMode::Trap), trap: TrapType::Cross, interior_palette: "ember".into(), ..d.clone() },
@@ -11289,6 +11477,10 @@ zoom = \"1e94\"
                 stripe_tail: true,
                 stripe_tail_len: 64,
                 trap_type: TrapType::Circle.key().into(),
+                trap_x: 0.3,
+                trap_y: -0.45,
+                trap_rotation: 25.0,
+                trap_size: 0.6,
                 custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
                 custom_palette_flat: true,
                 custom_segments: vec![fractadyne_state::PaletteSegment {

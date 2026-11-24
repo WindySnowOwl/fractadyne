@@ -1980,6 +1980,10 @@ pub struct BlaNode {
 #[derive(Clone, Copy)]
 pub struct AuxAggParams {
     pub trap_type: crate::coloring::TrapType,
+    /// Where the trap sits, turned and sized (F4), as the shape uses it
+    /// ([`TrapPlace::for_shape`](crate::coloring::TrapPlace::for_shape)): what the frame's
+    /// `trap_dist` measures from, so the aggregates measure from the same trap.
+    pub trap_place: crate::coloring::TrapPlace,
     pub stripe_freq: f64,
     pub cmag: f64, // |c| of the reference (triangle-inequality)
     pub power: f64, // formula degree (triangle-inequality)
@@ -1989,7 +1993,14 @@ pub struct AuxAggParams {
 }
 impl Default for AuxAggParams {
     fn default() -> Self {
-        AuxAggParams { trap_type: crate::coloring::TrapType::Point, stripe_freq: 1.0, cmag: 0.0, power: 2.0, stripe_tail_alpha: 0.0 }
+        AuxAggParams {
+            trap_type: crate::coloring::TrapType::Point,
+            trap_place: crate::coloring::TrapPlace::DEFAULT,
+            stripe_freq: 1.0,
+            cmag: 0.0,
+            power: 2.0,
+            stripe_tail_alpha: 0.0,
+        }
     }
 }
 
@@ -2018,13 +2029,8 @@ pub fn merge_stripe(x: f64, y: f64, y_span: u32, alpha: f64) -> f64 {
 
 // Per-iterate aux stat contributions, mirroring the GPU `aux_step` (used to seed the BLA
 // aggregates; the shader folds the same quantities on a skip).
-pub(crate) fn aux_trap_dist(zx: f64, zy: f64, trap_type: crate::coloring::TrapType) -> f64 {
-    use crate::coloring::TrapType;
-    match trap_type {
-        TrapType::Cross => zx.abs().min(zy.abs()),
-        TrapType::Circle => ((zx * zx + zy * zy).sqrt() - 1.0).abs(),
-        TrapType::Point => (zx * zx + zy * zy).sqrt(),
-    }
+pub(crate) fn aux_trap_dist(zx: f64, zy: f64, aux: AuxAggParams) -> f64 {
+    aux.trap_place.dist(aux.trap_type, zx, zy)
 }
 pub(crate) fn aux_stripe_term(zx: f64, zy: f64, freq: f64) -> f64 {
     0.5 + 0.5 * (freq * zy.atan2(zx)).sin()
@@ -2143,7 +2149,7 @@ fn bla_level0_node(
     // whose TIA is skipped by the `n>=1` guard, so its TIA seed is 0.
     // ⛔`sample_xy`, never the lane sums: a dip is stored in extended range (see `bla_level0_aux`).
     let (z1r, z1i) = sample_xy(&orbit[n + 1]);
-    let agg_trap = aux_trap_dist(z1r, z1i, aux.trap_type);
+    let agg_trap = aux_trap_dist(z1r, z1i, aux);
     let agg_stripe = aux_stripe_term(z1r, z1i, aux.stripe_freq);
     let agg_tia = if n == 0 {
         0.0
@@ -2270,7 +2276,7 @@ fn bla_level0_aux(n: usize, orbit: &[[f32; 4]], aux: AuxAggParams) -> [f64; 3] {
     // minibrot's nearest approaches: at the 9.3e78 minibrot every BLA node over one dropped it, and
     // the point and cross traps read ~1e-10 where the orbit comes within ~1e-40 (2026-11-15).
     let (z1r, z1i) = sample_xy(&orbit[n + 1]);
-    let agg_trap = aux_trap_dist(z1r, z1i, aux.trap_type);
+    let agg_trap = aux_trap_dist(z1r, z1i, aux);
     let agg_stripe = aux_stripe_term(z1r, z1i, aux.stripe_freq);
     let agg_tia = if n == 0 {
         0.0

@@ -63,6 +63,10 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `interior_palette` | string: a palette id, such as "ember" | (left out) | The palette the trap colors the inside with, a preset's id (when the inside is colored by the trap). Left out: the outside palette. |
 | `interior_fit` | bool | false | Live view and its exports: fit the inside's palette to the trap values measured inside the set on screen (when the inside is colored by the trap). An offline render keeps the fixed rate. |
 | `trap` | string: point \| cross \| circle | "point" | The orbit trap's shape: point, cross or circle (method "trap", or an inside colored by the trap). |
+| `trap_x` | float, -4 to 4 | 0 | Where the orbit trap sits in the orbit's plane, its real coordinate (with the trap). |
+| `trap_y` | float, -4 to 4 | 0 | Where the orbit trap sits in the orbit's plane, its imaginary coordinate (with the trap). |
+| `trap_rotation` | float, -180 to 180 | 0 | The cross trap's turn, in degrees counterclockwise (trap "cross"). |
+| `trap_size` | float, 0.01 to 10 | 1 | The circle trap's radius (trap "circle"). |
 | `light` | bool | false | Relief lighting from the distance estimate. |
 | `light_angle` | float | 2.2 | The light's direction in radians (with `light`). |
 | `light_height` | float, 0.2 to 4 | 1.2 | Relief strength: smaller is sharper (with `light`). |

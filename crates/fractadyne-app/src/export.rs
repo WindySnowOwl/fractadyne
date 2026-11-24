@@ -352,6 +352,8 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     // the live normalization. Each written only when the picture depends on it and it is not the
     // default, so an ordinary view is byte-identical to one written before the keys existed.
     "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "interior_fit", "trap",
+    // The trap's placement (coloring plan F4).
+    "trap_x", "trap_y", "trap_rotation", "trap_size",
     "light", "light_angle", "light_height", "light_steep", "light_steep_px", "light_highlight", "light_shininess", "light_highlight_color",
     "glow", "glow_strength", "glow_width",
     "palette_mode", "palette_lo", "palette_hi", "interior_color",
@@ -435,6 +437,10 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("interior_palette", ValueKind::Id),
     ("interior_fit", ValueKind::Flag),
     ("trap", ValueKind::Trap),
+    ("trap_x", ValueKind::Float),
+    ("trap_y", ValueKind::Float),
+    ("trap_rotation", ValueKind::Float),
+    ("trap_size", ValueKind::Float),
     ("light", ValueKind::Flag),
     ("light_angle", ValueKind::Float),
     ("light_height", ValueKind::Float),
@@ -2461,7 +2467,7 @@ impl FractadyneApp {
                 "de_log2": "log2 of the distance estimate in pixels; 1e30 inside or where there is none",
                 "stripe": "stripe average, 0..1, blended between the last two averages by the band position",
                 "triangle": "triangle-inequality average, 0..1, blended as stripe",
-                "trap": "the orbit's nearest approach to the trap shape (1e30 if never)",
+                "trap": "the orbit's nearest approach to the trap shape, placed at coloring.trap_center, turned and sized (1e30 if never)",
                 "angle": "the final z's angle, 0..1 (atan2/2pi + 0.5)",
             },
             "coloring": {
@@ -2478,6 +2484,10 @@ impl FractadyneApp {
                 "stripe_tail": req.stripe_tail,
                 "stripe_tail_len": req.stripe_tail_len,
                 "trap": trap.key(),
+                // Where it sits, as the shape uses it (F4): a point has no turn or size.
+                "trap_center": req.trap_place.center,
+                "trap_rotation": req.trap_place.rotation,
+                "trap_size": req.trap_place.size,
                 "interior_color": req.interior_col,
                 "inside_palette_smooth": req.interior.lut_smooth,
                 "inside_cycle": req.interior.cycle,

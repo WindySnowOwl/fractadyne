@@ -301,3 +301,75 @@ fn every_method_is_under_one_heading_and_no_heading_is_empty() {
     let total: usize = listed.iter().map(|(_, ms)| ms.len()).sum();
     assert_eq!(total, ColorMethod::ALL.len(), "a method is under no heading or under two");
 }
+
+/// What each shape takes from its placement (F4): the cross turns, the circle has a size, the
+/// point neither.
+#[test]
+fn each_trap_shape_says_what_it_uses() {
+    let uses: Vec<_> = TrapType::ALL.iter().map(|t| (t.key(), t.spec().turns, t.spec().sized)).collect();
+    assert_eq!(uses, [("point", false, false), ("cross", true, false), ("circle", false, true)]);
+}
+
+/// At the default placement every shape measures exactly as it always did, bit for bit: the
+/// views and goldens from before F4 keep every pixel.
+#[test]
+fn the_default_placement_is_the_unit_shape_exactly() {
+    let place = TrapPlace::default();
+    assert!(place.is_default());
+    for t in TrapType::ALL {
+        for (x, y) in [(0.3, -0.7), (-1.9, 0.01), (1.0e-40, 3.0e-41), (0.0, 0.0), (250.0, -12.5)] {
+            assert_eq!(place.dist(t, x, y).to_bits(), t.unit_dist(x, y).to_bits(), "{t:?} at ({x}, {y})");
+        }
+    }
+}
+
+/// The placed shapes, measured in the orbit's plane: the point at its center, the cross as the
+/// two lines through its center turned counterclockwise, the circle with its size as the radius.
+#[test]
+fn a_placed_trap_is_measured_in_the_orbits_plane() {
+    let c = [0.3f32, -0.2f32];
+    let (cx, cy) = (f64::from(c[0]), f64::from(c[1]));
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-6;
+    // The point: |z - center|, whatever the turn and size, which it does not use.
+    let point = TrapPlace { center: c, rotation: 30.0, size: 3.0 }.for_shape(TrapType::Point);
+    assert_eq!((point.rotation, point.size), (0.0, 1.0));
+    assert!(near(point.dist(TrapType::Point, cx + 0.3, cy + 0.4), 0.5));
+    // The circle: radius = size, centered; a turn changes nothing.
+    let circle = TrapPlace { center: c, rotation: 77.0, size: 0.5 }.for_shape(TrapType::Circle);
+    assert_eq!(circle.rotation, 0.0);
+    for a in [0.0f64, 1.0, 2.5, 4.0] {
+        assert!(near(circle.dist(TrapType::Circle, cx + 0.5 * a.cos(), cy + 0.5 * a.sin()), 0.0), "on the rim at {a}");
+    }
+    assert!(near(circle.dist(TrapType::Circle, cx, cy), 0.5), "the center is a radius away");
+    assert!(near(circle.dist(TrapType::Circle, cx + 2.0, cy), 1.5));
+    // The cross turned by 30 degrees: its arms run at 30 and 120 degrees through the center, and a
+    // point at 75 degrees, between them, is r * sin 45 degrees from either.
+    let cross = TrapPlace { center: c, rotation: 30.0, size: 9.0 }.for_shape(TrapType::Cross);
+    assert_eq!(cross.size, 1.0);
+    let at = |deg: f64, r: f64| {
+        let a = deg.to_radians();
+        cross.dist(TrapType::Cross, cx + r * a.cos(), cy + r * a.sin())
+    };
+    for deg in [30.0, 120.0, 210.0, 300.0] {
+        assert!(near(at(deg, 0.8), 0.0), "on the arm at {deg} degrees");
+    }
+    assert!(near(at(75.0, 1.0), std::f64::consts::FRAC_1_SQRT_2));
+    // Unturned, the cross through the center is the axes moved there.
+    let plain = TrapPlace { center: c, rotation: 0.0, size: 1.0 };
+    assert!(near(plain.dist(TrapType::Cross, cx + 0.25, cy - 0.5), 0.25));
+}
+
+/// What reaches the iteration is finite and in range: an unreadable number takes its default, the
+/// size is clamped, and a negative zero is a zero (keys hash the bits).
+#[test]
+fn a_placement_for_a_shape_is_finite_and_clamped() {
+    let wild = TrapPlace { center: [f32::NAN, -0.0], rotation: f32::INFINITY, size: 0.0 };
+    let c = wild.for_shape(TrapType::Circle);
+    assert_eq!(c, TrapPlace { center: [0.0, 0.0], rotation: 0.0, size: TrapPlace::SIZE_MIN });
+    assert_eq!(c.center[1].to_bits(), 0.0f32.to_bits(), "no negative zero");
+    let x = wild.for_shape(TrapType::Cross);
+    assert_eq!((x.rotation, x.size), (0.0, 1.0));
+    assert_eq!(TrapPlace { size: 1.0e9, ..TrapPlace::DEFAULT }.for_shape(TrapType::Circle).size, TrapPlace::SIZE_MAX);
+    // A placement the shape ignores entirely is the default, so it computes as before.
+    assert!(TrapPlace { rotation: 45.0, size: 2.0, ..TrapPlace::DEFAULT }.for_shape(TrapType::Point).is_default());
+}
