@@ -55,3 +55,33 @@ fn the_slots_agree_with_the_shader() {
     assert!(wgsl.contains(&format!("const TRAP_HIST_LO: f32 = {TRAP_HIST_LO:.1};")));
     assert!(wgsl.contains(&format!("const TRAP_HIST_PER_UNIT: f32 = {TRAP_HIST_PER_UNIT:.1};")));
 }
+
+/// The trap's distribution (coloring plan C6c): its ends the outer edges of the lowest and highest
+/// buckets in use, every knot never below the one before, and the share below a knot its own (the
+/// samples spread evenly inside a bucket); fewer than 16 samples say nothing.
+#[test]
+fn the_trap_distribution_is_the_histograms_quantiles() {
+    use fractadyne_core::coloring::{cdf_at, EQ_QUANTILES};
+    let vals: Vec<(f32, u32)> = (0..=60).map(|i| (-1.0 + i as f32 * 0.1, 10 + (i % 7) * 5)).chain([(9.6, 4), (40.0, 1)]).collect();
+    let h = hist_of(&vals);
+    let q = trap_quantiles(&h).expect("a distribution");
+    let edge = |k: usize| TRAP_HIST_LO + k as f32 / TRAP_HIST_PER_UNIT;
+    let (first, last) = (h.iter().position(|&n| n > 0).unwrap(), h.iter().rposition(|&n| n > 0).unwrap());
+    assert_eq!((q[0], q[EQ_QUANTILES]), (edge(first), edge(last + 1)));
+    assert!(q.windows(2).all(|w| w[0] <= w[1]), "never decreasing");
+    // The share at or below a knot, counted from the buckets (spread evenly inside each): its own.
+    let total: f64 = h.iter().map(|&n| n as f64).sum();
+    for i in (8..EQ_QUANTILES).step_by(8) {
+        let v = q[i];
+        let mut below = 0.0;
+        for (k, &n) in h.iter().enumerate() {
+            let (a, b) = (edge(k), edge(k + 1));
+            below += n as f64 * (((v - a) / (b - a)) as f64).clamp(0.0, 1.0);
+        }
+        assert!((below / total - i as f64 / EQ_QUANTILES as f64).abs() < 1.0e-4, "knot {i} at {v}: share {}", below / total);
+        // And the CDF Equalize reads off the knots agrees.
+        assert!((cdf_at(&q, v as f64) - i as f64 / EQ_QUANTILES as f64).abs() <= 1.0 / EQ_QUANTILES as f64);
+    }
+    assert!(trap_quantiles(&hist_of(&[(1.0, 15)])).is_none(), "15 samples");
+    assert!(trap_quantiles(&hist_of(&[(1.0, 16)])).is_some(), "16 samples");
+}

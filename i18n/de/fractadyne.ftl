@@ -2892,7 +2892,8 @@ panel-equalize-hover =
     Verteilt die Palette so, dass jede Farbe etwa den gleichen Anteil des Bildes bedeckt, je nachdem, wie viel des Bildes jeder Bereich der Fluchtzahlen füllt (Histogramm-Färbung). Nützlich, wenn eine Farbe die Ansicht flutet und die Details in einen schmalen Streifen der anderen gedrängt sind.
 
     Bei 0 % setzt allein die Kurve der Skala die Farben. Bei 100 % können die feinen Filamente an der Menge, die wenige Pixel bedecken, eine einzige Farbe annehmen; etwas weniger erhält sie.
-panel-equalize-method-hover = Ausgleichen verteilt die Fluchtzahl und wirkt daher mit Glatte Iteration.
+panel-equalize-method-hover = Ausgleichen verteilt die Fluchtzahl oder die Werte der Orbitfalle und wirkt daher mit Glatte Iteration und Orbitfalle.
+panel-equalize-trap-off-hover = Mit Orbitfalle wirkt Ausgleichen, sobald „Bereich immer anpassen“ die Palette an die Werte der Falle anpasst.
 # The curves the Scale list offers.
 transfer-linear = Linear
 transfer-sqrt = Quadratwurzel

@@ -74,7 +74,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe",
     "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize", "palette-oklab",
-    "tour-equalize", "video-equalize",
+    "tour-equalize", "video-equalize", "trap-equalize",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -12589,6 +12589,179 @@ zoom = \"1e94\"
                     pass: false,
                 }),
             }
+        }
+
+        // ---- Equalize colors for the orbit trap (coloring plan C6c) ----
+        // One render of a trap view gives the trap lane and the GPU's own histogram of it (the one
+        // the live view reads, on its 4x4 grid). Its distribution (`trap_quantiles`) against every
+        // pixel's exact one, as Equalize's remap over the fitted window (`trap_window`); the colors
+        // the GPU draws with the equalized map against the CPU's reading of the palette at each
+        // pixel's equalized position (the share at 0 as the control); and the property it is for.
+        if want("trap-equalize") {
+            use fractadyne_core::coloring::{eq_knots, eq_remap, equalized, quantiles_of_sorted, Transfer, EQ_KNOTS};
+            let saved_spec = self.coloring_spec();
+            let saved = (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.effects.light, self.effects.de);
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.dual = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 5_000;
+            self.effects.light = false;
+            self.effects.de = false;
+            c6b_setup(self);
+            self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+            // The trap colors its own inside (the method's default), so every pixel is on its map.
+            self.coloring.interior = None;
+            self.coloring.equalize = 0.0;
+            let (w, h) = (320u32, 180u32);
+            let sweeps = 2.0f32;
+            let user_offset = 0.125f32;
+            let mut views = Vec::new();
+            for (name, shape) in [("point", "point"), ("cross", "cross")] {
+                self.coloring.trap_type = crate::TrapType::from_key(shape);
+                let mut vp = Viewport::new(w as f64, h as f64);
+                vp.set_center_mag(
+                    fractadyne_core::parse_bf_prec("-0.7436438870371587", 128).expect("a center"),
+                    fractadyne_core::parse_bf_prec("0.1318259042053120", 128).expect("a center"),
+                    20.0,
+                );
+                let mut req = self.lanes_request_for(&vp, false, None);
+                req.width = w;
+                req.height = h;
+                req.aa_palette = fractadyne_gpu::PaletteAa::Off;
+                views.push((name, req));
+            }
+            (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.effects.light, self.effects.de) = saved;
+            self.apply_coloring_spec(&saved_spec);
+            let (mut def_ok, mut def_lines, mut read_lines, mut read_ok, mut area_lines, mut area_ok) = (true, Vec::new(), Vec::new(), true, Vec::new(), true);
+            let mut fitted_uneven = false;
+            for (name, req) in &views {
+                let lanes = match fractadyne_gpu::render_lanes(device, queue, req, crate::tunables::CORRECT_WORK_BUDGET) {
+                    Ok(r) if r.aux.len() == r.pixels.len() => r,
+                    _ => {
+                        def_ok = false;
+                        def_lines.push(format!("{name}: no trap lane"));
+                        continue;
+                    }
+                };
+                let pv: Vec<f32> = lanes.aux.chunks_exact(4).map(|a| -(a[2].max(1.0e-20)).log2()).collect();
+                let hist: Vec<u32> = lanes.counters[fractadyne_gpu::CTR_TRAP_HIST..fractadyne_gpu::CTR_TRAP_HIST + fractadyne_gpu::TRAP_HIST_BUCKETS]
+                    .iter()
+                    .map(|&n| n.min(u32::MAX as u64) as u32)
+                    .collect();
+                let (Some((lo, hi)), Some(q)) = (fractadyne_gpu::trap_window(&hist, fractadyne_gpu::TRAP_WINDOW_QUANTILES), fractadyne_gpu::trap_quantiles(&hist)) else {
+                    def_ok = false;
+                    read_ok = false;
+                    def_lines.push(format!("{name}: no histogram ({} samples)", hist.iter().map(|&n| n as u64).sum::<u64>()));
+                    continue;
+                };
+                // The histogram's distribution against every pixel's exact one, as the remap.
+                let mut sorted: Vec<f32> = pv.iter().copied().filter(|v| v.is_finite()).collect();
+                sorted.sort_unstable_by(f32::total_cmp);
+                let exact = quantiles_of_sorted(&sorted).expect("values");
+                let (mut worst, mut mean) = (0.0f64, 0.0f64);
+                for t in [Transfer::Linear, Transfer::Sqrt] {
+                    let (kh, kx) = (eq_knots(&q, lo as f64, hi as f64, t), eq_knots(&exact, lo as f64, hi as f64, t));
+                    worst = worst.max((0..=EQ_KNOTS).map(|j| (kh[j] - kx[j]).abs() as f64).fold(0.0, f64::max) * sweeps as f64);
+                    let span = t.apply((hi - lo) as f64);
+                    let m: f64 = pv.iter().map(|&v| (eq_remap(&kh, (t.apply((v - lo).max(0.0) as f64) / span).min(1.0)) - eq_remap(&kx, (t.apply((v - lo).max(0.0) as f64) / span).min(1.0))).abs()).sum::<f64>() / pv.len().max(1) as f64;
+                    mean = mean.max(m * sweeps as f64);
+                }
+                read_ok &= worst <= 0.04 && mean <= 0.01;
+                read_lines.push(format!("{name}: window [{lo:.2}, {hi:.2}], the remap from the histogram at most {worst:.3} of a sweep from the exact, {mean:.4} on average"));
+                // The colors, against their definition, under the GPU's own distribution.
+                let lut = req.lut.clone();
+                let smooth = req.lut_smooth;
+                let read = |p: f64| -> [f64; 3] {
+                    let n = lut.len();
+                    let rgb = |e: [f32; 4]| [e[0] as f64, e[1] as f64, e[2] as f64];
+                    let tt = p - p.floor();
+                    if !smooth {
+                        return rgb(lut[((tt * n as f64) as usize).min(n - 1)]);
+                    }
+                    let x = tt * n as f64 - 0.5;
+                    let i0 = x.floor() as i64;
+                    let (a, b) = (rgb(lut[i0.rem_euclid(n as i64) as usize]), rgb(lut[(i0 + 1).rem_euclid(n as i64) as usize]));
+                    let f = x - x.floor();
+                    [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]
+                };
+                for t in [Transfer::Linear, Transfer::Sqrt] {
+                    let rate = match t {
+                        Transfer::Linear => sweeps / (hi - lo).max(1.0e-6),
+                        t => sweeps / crate::render::curve_span(hi - lo, t),
+                    };
+                    let knots = eq_knots(&q, lo as f64, hi as f64, t);
+                    let x_of = |v: f32| -> f64 {
+                        let d = (v - lo) as f64;
+                        (if t == Transfer::Linear { d } else { t.apply(d.max(0.0)) }) * rate as f64
+                    };
+                    for share in [0.5f32, 1.0] {
+                        let mut r = req.clone();
+                        (r.norm_mode, r.norm_lo, r.cycle, r.offset) = (t.gpu_id(), lo, rate, user_offset);
+                        r.equalize = Some(fractadyne_gpu::Equalize { share, sweeps, knots });
+                        let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                        let Ok(g) = fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel) else {
+                            def_ok = false;
+                            def_lines.push(format!("{name} {} {share}: no render", t.key()));
+                            continue;
+                        };
+                        let (mut n, mut bad, mut worst, mut control) = (0usize, 0usize, 0.0f64, 0usize);
+                        for (px, &v) in g.pixels.chunks_exact(4).zip(&pv) {
+                            let off = |want: [f64; 3]| (0..3).map(|k| (px[k] as f64 - want[k]).abs() * 255.0).fold(0.0, f64::max);
+                            let d = off(read(equalized(x_of(v), share as f64, sweeps as f64, &knots) + user_offset as f64));
+                            n += 1;
+                            worst = worst.max(d);
+                            bad += (d > 1.0) as usize;
+                            control += (off(read(x_of(v) + user_offset as f64)) > 1.0) as usize;
+                        }
+                        let (bad, control) = (bad as f64 / n.max(1) as f64, control as f64 / n.max(1) as f64);
+                        def_ok &= bad <= 0.005 && control >= 0.05;
+                        def_lines.push(format!("{name} {} {share}: {:.2}% apart (max {worst:.2} levels), control {:.0}%", t.key(), bad * 100.0, control * 100.0));
+                    }
+                }
+                // Equal areas: the fullest of 16 colors over the window's pixels, 2 whole sweeps,
+                // equalized by the histogram's distribution and fitted alone (linear).
+                let knots = eq_knots(&q, lo as f64, hi as f64, Transfer::Linear);
+                let fullest = |share: f64| {
+                    let mut bins = [0usize; 16];
+                    let mut n = 0usize;
+                    for &v in pv.iter().filter(|&&v| v >= lo && v <= hi) {
+                        let p = equalized((v - lo) as f64 / (hi - lo) as f64 * sweeps as f64, share, sweeps as f64, &knots);
+                        bins[((p - p.floor()) * 16.0).floor().clamp(0.0, 15.0) as usize] += 1;
+                        n += 1;
+                    }
+                    bins.iter().copied().max().unwrap_or(0) as f64 / n.max(1) as f64
+                };
+                let (eq, fit) = (fullest(1.0), fullest(0.0));
+                area_ok &= eq <= 1.25 / 16.0;
+                fitted_uneven |= fit > 1.5 / 16.0;
+                area_lines.push(format!("{name}: the fullest of 16 colors {:.1}% equalized, {:.1}% fitted", eq * 100.0, fit * 100.0));
+            }
+            let params = "Seahorse Valley at 20x, 320x180, 5,000 iterations, the point and cross traps, the trap coloring its inside; one render: the trap lane and the GPU's histogram of it (the 4x4 grid, as the live view reads it); 2 sweeps";
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "the orbit trap's distribution from the GPU's histogram is its values' own".into(),
+                params: params.into(),
+                result: read_lines.join("; "),
+                threshold: "Equalize's remap from it at most 0.04 of a sweep from the exact distribution's anywhere in the window, 0.01 on average, linear and sqrt".into(),
+                pass: read_ok && read_lines.len() == views.len(),
+            });
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "Equalize colors the orbit trap by its definition".into(),
+                params: format!("{params}; the trap's fitted window and its histogram's distribution, linear and sqrt, shares 0.5 and 1; each pixel against `equalized` over the trap lane, the same map with no share as the control"),
+                result: def_lines.join("; "),
+                threshold: "at most 0.5% of the pixels more than 1 level apart; the control 5% or more".into(),
+                pass: def_ok && def_lines.len() == 4 * views.len(),
+            });
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "Equalize colors gives the orbit trap's colors about the same area each".into(),
+                params: format!("{params}; the window's pixels, share 1, linear; the fitted map alone as the control"),
+                result: area_lines.join("; "),
+                threshold: "equalized at most 1.25/16 (7.8%) on each; fitted above 1.5/16 (9.4%) on one (else the check sees nothing)".into(),
+                pass: area_ok && fitted_uneven && area_lines.len() == views.len(),
+            });
         }
 
         // ---- Blend in OKLab (coloring plan C7) ----

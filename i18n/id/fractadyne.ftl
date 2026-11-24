@@ -2811,7 +2811,8 @@ panel-equalize-hover =
     Menyebarkan palet agar setiap warna menutupi bagian gambar yang kurang lebih sama, menurut seberapa banyak gambar yang diisi tiap rentang hitungan lolos (pewarnaan histogram). Gunakan saat satu warna membanjiri tampilan dan detailnya terjepit di pita sempit warna lain.
 
     Pada 0% kurva Skala sendiri yang menempatkan warna. Pada 100% filamen halus di dekat himpunan, yang hanya menutupi sedikit piksel, bisa menjadi satu warna; sedikit di bawahnya mempertahankannya.
-panel-equalize-method-hover = Ratakan menyebarkan hitungan lolos, jadi berlaku dengan Iterasi halus.
+panel-equalize-method-hover = Ratakan menyebarkan hitungan lolos atau nilai perangkap orbit, jadi berlaku dengan Iterasi halus dan Perangkap orbit.
+panel-equalize-trap-off-hover = Dengan Perangkap orbit, Ratakan berlaku setelah "Selalu sesuaikan rentang" menyesuaikan palet dengan nilai perangkap.
 # The curves the Scale list offers.
 transfer-linear = Linear
 transfer-sqrt = Akar kuadrat

@@ -2892,7 +2892,8 @@ panel-equalize-hover =
     Reparte la paleta para que cada color cubra más o menos la misma parte de la imagen, según cuánto de la imagen llena cada intervalo de recuentos de escape (coloreado por histograma). Úsalo cuando un color inunda la vista y el detalle queda apretado en una franja estrecha de los demás.
 
     Al 0 % la curva de Escala coloca los colores sola. Al 100 % los filamentos finos junto al conjunto, que cubren pocos píxeles, pueden quedar de un solo color; algo menos los conserva.
-panel-equalize-method-hover = Ecualizar reparte el recuento de escape, así que se aplica con Iteración suave.
+panel-equalize-method-hover = Ecualizar reparte el recuento de escape o los valores de la trampa de órbita, así que se aplica con Iteración suave y Trampa de órbita.
+panel-equalize-trap-off-hover = Con Trampa de órbita, Ecualizar se aplica una vez que «Ajustar siempre el rango» ajusta la paleta a los valores de la trampa.
 # The curves the Scale list offers.
 transfer-linear = Lineal
 transfer-sqrt = Raíz cuadrada

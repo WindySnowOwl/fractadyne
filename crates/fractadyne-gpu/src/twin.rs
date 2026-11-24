@@ -749,6 +749,7 @@ impl MandelbrotParams {
         p.norm_hist_out = None;
         // The window's orbit-trap window: a twin's trap values are its own frame's.
         p.trap_window_out = None;
+        p.trap_dist_out = None;
         p.inside_window_out = None;
         p.content_out = None;
         p.content_stamp_out = None;

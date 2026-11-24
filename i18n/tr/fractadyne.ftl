@@ -2883,7 +2883,8 @@ panel-equalize-hover =
     Paleti, her kaçış sayısı aralığının resmin ne kadarını doldurduğuna göre yayar; böylece her renk resmin aşağı yukarı aynı payını kaplar (histogram renklendirme). Bir renk görünümü kapladığında ve ayrıntı diğerlerinin dar bir şeridine sıkıştığında kullanın.
 
     %0'da renkleri yalnızca Ölçek eğrisi yerleştirir. %100'de kümenin yanındaki, az pikselin kapladığı ince iplikler tek renge dönebilir; biraz daha azı onları korur.
-panel-equalize-method-hover = Eşitle kaçış sayısını yayar, bu yüzden Yumuşak yineleme ile geçerlidir.
+panel-equalize-method-hover = Eşitle kaçış sayısını ya da yörünge tuzağının değerlerini yayar, bu yüzden Yumuşak yineleme ve Yörünge tuzağı ile geçerlidir.
+panel-equalize-trap-off-hover = Yörünge tuzağı ile Eşitle, "Her zaman aralığa sığdır" paleti tuzağın değerlerine sığdırdığında geçerlidir.
 # The curves the Scale list offers.
 transfer-linear = Doğrusal
 transfer-sqrt = Karekök
