@@ -311,6 +311,8 @@ pub struct ExportRequest {
     pub stripe_tail: bool,
     pub stripe_tail_len: u32,
     pub trap_type: u32,
+    /// Where the trap sits, turned and sized — see `MandelbrotParams::trap_place`.
+    pub trap_place: fractadyne_core::coloring::TrapPlace,
     pub aa_filter: u32,
     pub interior_col: [f32; 4],
     /// What else may color the inside (coloring plan B5); the default, the method's own interior.
@@ -2044,6 +2046,7 @@ impl<'a> TileRenderer<'a> {
             rn: req.rn_uniform(),
             map: req.map,
             fold: self.fold,
+            trap: crate::trap_uniform(req.trap_place),
         };
         queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3131,6 +3134,7 @@ fn render_iter_tiled_impl(
                 rn: req.rn_uniform(),
                 map: req.map,
                 fold,
+                trap: if accum { crate::trap_uniform(req.trap_place) } else { crate::TrapU::default() },
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3688,6 +3692,7 @@ impl GatherPass {
                 rn: req.rn_uniform(),
                 map: req.map,
                 fold,
+                trap: crate::TrapU::default(),
             };
             queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -4022,6 +4027,7 @@ fn render_iter_passes(
         rn: req.rn_uniform(),
         map: req.map,
         fold: req.ref_fold(),
+        trap: crate::TrapU::default(),
     };
     // The speed probe's passes (`render_iter_probe`) run the exact-repeat check OFF (bit 1).
     if live.is_some() {

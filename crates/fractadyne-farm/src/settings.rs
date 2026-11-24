@@ -135,6 +135,10 @@ impl RenderSettings {
             ("relief highlight", self.coloring.light_highlight),
             ("relief shininess", self.coloring.light_shininess),
             ("stripe frequency", self.coloring.stripe_freq),
+            ("trap center", self.coloring.trap_x),
+            ("trap center", self.coloring.trap_y),
+            ("trap rotation", self.coloring.trap_rotation),
+            ("trap size", self.coloring.trap_size),
         ] {
             finite32(w, v)?;
         }

@@ -213,6 +213,18 @@ pub struct ColoringSpec {
     /// Orbit-trap shape: "point" | "cross" | "circle" (method = "trap").
     #[serde(default = "default_trap_type")]
     pub trap_type: String,
+    /// Where the orbit trap sits in the orbit's plane, its turn in degrees counterclockwise and its
+    /// size (coloring plan F4, `fractadyne_core::coloring::TrapPlace`): 0, 0, 0 and 1, each shape as
+    /// it always was. A shape ignores what it does not use (the point its turn and size, the cross
+    /// its size, the circle its turn). A session from before them reads the defaults.
+    #[serde(default)]
+    pub trap_x: f32,
+    #[serde(default)]
+    pub trap_y: f32,
+    #[serde(default)]
+    pub trap_rotation: f32,
+    #[serde(default = "default_trap_size")]
+    pub trap_size: f32,
     /// Custom gradient stops `[pos, r, g, b]` (DISPLAY-space RGB) from the gradient editor.
     #[serde(default)]
     pub custom_palette: Vec<[f32; 4]>,
@@ -867,6 +879,10 @@ fn default_trap_type() -> String {
     "point".to_string()
 }
 
+fn default_trap_size() -> f32 {
+    1.0
+}
+
 impl Default for ColoringSpec {
     fn default() -> Self {
         Self {
@@ -908,6 +924,10 @@ impl Default for ColoringSpec {
             stripe_tail: false,
             stripe_tail_len: default_stripe_tail_len(),
             trap_type: default_trap_type(),
+            trap_x: 0.0,
+            trap_y: 0.0,
+            trap_rotation: 0.0,
+            trap_size: default_trap_size(),
             custom_palette: Vec::new(),
             custom_palette_flat: false,
             custom_segments: Vec::new(),

@@ -172,8 +172,9 @@ pub(crate) struct RecomputeResult {
     bla_stripe_freq: f64,
     /// Stripe tail's α the `agg_stripe` lane was built with (0 = the plain sum; same purpose).
     bla_stripe_tail: f64,
-    /// Trap type the BLA's `agg_trap` lane was built with (same rebuild-on-change purpose).
-    bla_trap_type: crate::TrapType,
+    /// The trap (shape and placement) the BLA's `agg_trap` lane was built with (same
+    /// rebuild-on-change purpose).
+    bla_trap: crate::Trap,
     /// Precision the orbit was BUILT at — `req_prec + REF_PREC_HEADROOM` on a fresh build, or the
     /// (already headroom-inflated) precision of the orbit a reuse extended.
     prec: usize,
@@ -447,9 +448,9 @@ pub(crate) struct RecomputeInputs {
     /// The stripe tail's α to bake into the same lane (`fc::stripe_tail_alpha`; 0 = tail off): with
     /// the tail on the lane is the window-weighted sum, not the plain one (`fc::merge_stripe`).
     stripe_tail_alpha: f64,
-    /// Orbit-trap shape to bake into the BLA `agg_trap` lane (the aggregate is
-    /// trap-type-specific). Irrelevant unless orbit-trap rides BLA, but always carried.
-    trap_type: crate::TrapType,
+    /// The orbit trap (shape and placement) to bake into the BLA `agg_trap` lane (the aggregate
+    /// is the trap's own). Irrelevant unless orbit-trap rides BLA, but always carried.
+    trap: crate::Trap,
     /// A prior reference the worker may extend instead of rebuilding (deeper zoom, same in-view
     /// point). `None` forces a fresh best-reference pick + full orbit build.
     reuse: Option<ReuseRef>,
@@ -514,7 +515,7 @@ fn aux_agg_from_orbit(
     orbit: &[[f32; 4]],
     stripe_freq: f64,
     stripe_tail_alpha: f64,
-    trap_type: crate::TrapType,
+    trap: crate::Trap,
     power: u32,
 ) -> fractadyne_core::AuxAggParams {
     let cmag = orbit
@@ -526,12 +527,19 @@ fn aux_agg_from_orbit(
             (x * x + y * y).sqrt()
         })
         .unwrap_or(0.0);
-    // `stripe_freq` and `trap_type` must be the LIVE values: the aux aggregates they select
-    // (stripe's Σ(0.5+0.5·sin(freq·arg Z)); trap's running min of aux_trap_dist(Z, trap_type)) are
+    // `stripe_freq` and `trap` must be the LIVE values: the aux aggregates they select
+    // (stripe's Σ(0.5+0.5·sin(freq·arg Z)); trap's running min of its distance from Z) are
     // parameter-specific, so a stripe/cross/circle-trap BLA tree rebuilds when its slider changes
     // (see the live rebuild in build_params). `power` is the formula's degree, the
     // triangle-inequality term's (BLA runs for every `z^d + c` family).
-    fractadyne_core::AuxAggParams { trap_type, stripe_freq, cmag, power: f64::from(power), stripe_tail_alpha }
+    fractadyne_core::AuxAggParams {
+        trap_type: trap.shape,
+        trap_place: trap.place,
+        stripe_freq,
+        cmag,
+        power: f64::from(power),
+        stripe_tail_alpha,
+    }
 }
 
 /// Device-derived ceiling on the stored reference-orbit LENGTH (in samples), set once at startup
@@ -1186,7 +1194,7 @@ fn early_inputs_differ(a: &RecomputeInputs, b: &RecomputeInputs) -> Option<&'sta
         ("BLA radius", a.bla_dc_max != b.bla_dc_max),
         ("stripe frequency", a.stripe_freq.to_bits() != b.stripe_freq.to_bits()),
         ("stripe tail", a.stripe_tail_alpha.to_bits() != b.stripe_tail_alpha.to_bits()),
-        ("trap type", a.trap_type != b.trap_type),
+        ("trap", a.trap != b.trap),
         ("reuse", a.reuse.is_some() || b.reuse.is_some()),
         ("nucleus pick", a.nucleus != b.nucleus),
     ];
@@ -1740,7 +1748,7 @@ fn finish_reference(
                 &orbit,
                 dc_max,
                 crate::tunables::cost().bla_eps,
-                aux_agg_from_orbit(&orbit, inp.stripe_freq, inp.stripe_tail_alpha, inp.trap_type, power),
+                aux_agg_from_orbit(&orbit, inp.stripe_freq, inp.stripe_tail_alpha, inp.trap, power),
                 inp.formula,
             );
             (std::sync::Arc::new(tree), dc_max.log2())
@@ -1816,7 +1824,7 @@ fn finish_reference(
         bla_dc_max_log2,
         bla_stripe_freq: inp.stripe_freq,
         bla_stripe_tail: inp.stripe_tail_alpha,
-        bla_trap_type: inp.trap_type,
+        bla_trap: inp.trap,
         prec: orbit_prec,
         req_prec: inp.precision,
         iter: orbit_iter,
@@ -2542,7 +2550,7 @@ impl FractadyneApp {
                 let key = {
                     use std::hash::{Hash, Hasher};
                     let mut h = std::collections::hash_map::DefaultHasher::new();
-                    (self.perf.norm_sig[vb], self.coloring.trap_type.gpu_id()).hash(&mut h);
+                    (self.perf.norm_sig[vb], self.coloring.trap().key_bits()).hash(&mut h);
                     h.finish()
                 };
                 let decided = at_rest && before.is_some() && self.perf.inside_sig[vb] == key;
@@ -3056,7 +3064,7 @@ impl FractadyneApp {
         vc.bla_dc_max_log2 = res.bla_dc_max_log2;
         vc.bla_stripe_freq = res.bla_stripe_freq;
         vc.bla_stripe_tail = res.bla_stripe_tail;
-        vc.bla_trap_type = Some(res.bla_trap_type);
+        vc.bla_trap = Some(res.bla_trap);
         self.perf.recompute_ms = res.ref_ms;
         self.perf.recompute_total += 1;
         self.perf.rate_count += 1;
@@ -3553,7 +3561,7 @@ impl FractadyneApp {
                     .then(|| Self::bla_dc_max(span_mantissa, delta_exp).mul_pow2(1.0)),
                 stripe_freq: self.coloring.stripe_freq as f64,
                 stripe_tail_alpha: self.bla_tail_alpha(),
-                trap_type: self.coloring.trap_type,
+                trap: self.coloring.trap(),
                 reuse,
                 stop_at: None,
                 spawn_orbit_id: self.ref_cache[0].orbit_id,
@@ -3840,7 +3848,7 @@ impl FractadyneApp {
                 .then(|| Self::bla_dc_max(span_mantissa, delta_exp).mul_pow2(1.0)),
             stripe_freq: self.coloring.stripe_freq as f64,
             stripe_tail_alpha: self.bla_tail_alpha(),
-            trap_type: self.coloring.trap_type,
+            trap: self.coloring.trap(),
             reuse,
             stop_at: None,
             spawn_orbit_id: self.ref_cache[0].orbit_id,
@@ -3986,7 +3994,7 @@ impl FractadyneApp {
             self.coloring.orbit_stats(RenderMode::Floatexp),
             self.coloring.stripe_freq,
             self.bla_tail_alpha(),
-            self.coloring.trap_type,
+            self.coloring.trap(),
             vc,
         );
         let need_log2 = Self::bla_dc_max(vp.gpu_scale().span_mantissa, delta_exp).log2();
@@ -4032,7 +4040,7 @@ impl FractadyneApp {
         // a thousandth of a pixel in every floatexp view of the coloring matrix).
         let orbit_stats = self.coloring.orbit_stats(mode);
         // Statistics with a GPU-validated BLA-skip fold: orbit-trap (all trap types — the `agg_trap`
-        // lane is built for the live trap_type), triangle-inequality (reference-intrinsic aggregate),
+        // lane is built for the live trap), triangle-inequality (reference-intrinsic aggregate),
         // and stripe-average (Σ stripe terms — freq-specific). The trap-type/frequency the aggregate
         // was built with is tracked so the tree rebuilds when the slider changes (see build_params).
         self.render_cfg.use_bla
@@ -4172,7 +4180,7 @@ impl FractadyneApp {
             orbit,
             dc_max,
             crate::tunables::cost().bla_eps,
-            aux_agg_from_orbit(orbit, self.coloring.stripe_freq as f64, self.bla_tail_alpha(), self.coloring.trap_type, power),
+            aux_agg_from_orbit(orbit, self.coloring.stripe_freq as f64, self.bla_tail_alpha(), self.coloring.trap(), power),
             formula,
         );
         if tree.is_empty() {
@@ -4237,7 +4245,7 @@ impl FractadyneApp {
             bla_dc_max,
             stripe_freq: self.coloring.stripe_freq as f64,
             stripe_tail_alpha: self.bla_tail_alpha(),
-            trap_type: self.coloring.trap_type,
+            trap: self.coloring.trap(),
             // ⭐⭐**MEASURED, and deliberately left OFF.** A GUI export could hand the worker the
             // live view's resident reference and EXTEND it instead of picking and building a
             // fresh one — `try_reuse_reference` does exactly that for the live path, and the
@@ -4743,6 +4751,7 @@ impl FractadyneApp {
             stripe_tail: self.coloring.stripe_tail,
             stripe_tail_len: self.coloring.stripe_tail_len,
             trap_type: self.coloring.trap_type.gpu_id(),
+            trap_place: self.coloring.trap().place,
             aa_filter: 1,
             interior_col: self.interior_color(),
             // The chosen method's interior: an export never shows a preview.
@@ -4823,6 +4832,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         stripe_tail: p.stripe_tail,
         stripe_tail_len: p.stripe_tail_len,
         trap_type: p.trap_type,
+        trap_place: p.trap_place,
         aa_filter: p.aa_filter,
         interior_col: p.interior_col,
         interior: p.interior.clone(),
@@ -5055,7 +5065,7 @@ impl FractadyneApp {
                             &orbit,
                             self.coloring.stripe_freq as f64,
                             self.bla_tail_alpha(),
-                            self.coloring.trap_type,
+                            self.coloring.trap(),
                             power,
                         ),
                         req.formula,
@@ -7757,6 +7767,7 @@ impl FractadyneApp {
             stripe_tail: self.coloring.stripe_tail,
             stripe_tail_len: self.coloring.stripe_tail_len,
             trap_type: self.coloring.trap_type.gpu_id(),
+            trap_place: self.coloring.trap().place,
             aa_filter,
             interior_col: self.view_interior_color(),
             // As shown: a method sheet preview shows that method's interior, and the palette
@@ -9197,7 +9208,7 @@ impl FractadyneApp {
             // What the iteration accumulates, and only the parameters of what it accumulates: the
             // GPU `IterKey`'s rule (B2), so Smooth to Distance keeps a completed grid as it keeps
             // the GPU's texture.
-            iter_coloring_hash(self.coloring.orbit_stats(band), self.coloring.stripe_freq, self.coloring.stripe_tail, self.coloring.stripe_tail_len, self.coloring.trap_type, &mut h);
+            iter_coloring_hash(self.coloring.orbit_stats(band), self.coloring.stripe_freq, self.coloring.stripe_tail, self.coloring.stripe_tail_len, self.coloring.trap(), &mut h);
             self.render_cfg.series_approx.hash(&mut h);
             self.render_cfg.use_bla.hash(&mut h);
             eff_iter.hash(&mut h);
@@ -9730,9 +9741,9 @@ impl FractadyneApp {
                                         && same_aux_lanes(
                                             self.coloring.orbit_stats(mode),
                                             (vc.bla_stripe_freq, vc.bla_stripe_tail),
-                                            vc.bla_trap_type,
+                                            vc.bla_trap,
                                             (res.bla_stripe_freq, res.bla_stripe_tail),
-                                            res.bla_trap_type,
+                                            res.bla_trap,
                                         ),
                                     res.orbit_len > vc.orbit_len
                                         || res.prec > vc.orbit_prec
@@ -9952,7 +9963,7 @@ impl FractadyneApp {
                         .then(|| Self::bla_dc_max(span_mantissa, delta_exp).mul_pow2(1.0)),
                     stripe_freq: self.coloring.stripe_freq as f64,
                     stripe_tail_alpha: self.bla_tail_alpha(),
-                    trap_type: self.coloring.trap_type,
+                    trap: self.coloring.trap(),
                     reuse,
                     stop_at: None,
                     spawn_orbit_id: self.ref_cache[vi].orbit_id,
@@ -10585,7 +10596,7 @@ impl FractadyneApp {
                     self.coloring.orbit_stats(mode),
                     self.coloring.stripe_freq,
                     self.bla_tail_alpha(),
-                    self.coloring.trap_type,
+                    self.coloring.trap(),
                     &self.ref_cache[vi],
                 );
                 let vc = &self.ref_cache[vi];
@@ -10606,7 +10617,7 @@ impl FractadyneApp {
                     vc.bla_dc_max_log2 = build_dc.log2();
                     vc.bla_stripe_freq = self.coloring.stripe_freq as f64;
                     vc.bla_stripe_tail = tail;
-                    vc.bla_trap_type = Some(self.coloring.trap_type);
+                    vc.bla_trap = Some(self.coloring.trap());
                 } else if aux_stale && !self.ref_cache[vi].bla.is_empty() {
                     // ⭐Only a coloring param (stripe frequency / trap type) moved and the cached
                     // geometry is still valid: patch just the aggregate lanes in place rather than
@@ -10619,7 +10630,7 @@ impl FractadyneApp {
                         &orbit,
                         self.coloring.stripe_freq as f64,
                         self.bla_tail_alpha(),
-                        self.coloring.trap_type,
+                        self.coloring.trap(),
                         fractadyne_core::formula::power(self.fractal.formula_id()),
                     );
                     let vc = &mut self.ref_cache[vi];
@@ -10628,7 +10639,7 @@ impl FractadyneApp {
                     vc.bla = std::sync::Arc::new(buf);
                     vc.bla_stripe_freq = self.coloring.stripe_freq as f64;
                     vc.bla_stripe_tail = aux.stripe_tail_alpha;
-                    vc.bla_trap_type = Some(self.coloring.trap_type);
+                    vc.bla_trap = Some(self.coloring.trap());
                 }
                 let vc = &self.ref_cache[vi];
                 // INSTRUMENT: withhold the tree for the armed number of frames after a mode
@@ -10934,9 +10945,9 @@ fn same_reference(vc: &crate::RefCache, res: &RecomputeResult, orbit_stats: crat
         && same_aux_lanes(
             orbit_stats,
             (vc.bla_stripe_freq, vc.bla_stripe_tail),
-            vc.bla_trap_type,
+            vc.bla_trap,
             (res.bla_stripe_freq, res.bla_stripe_tail),
-            res.bla_trap_type,
+            res.bla_trap,
         )
 }
 
@@ -10947,9 +10958,9 @@ fn same_reference(vc: &crate::RefCache, res: &RecomputeResult, orbit_stats: crat
 pub(crate) fn same_aux_lanes(
     orbit_stats: crate::StatSet,
     a_stripe: (f64, f64),
-    a_trap: Option<crate::TrapType>,
+    a_trap: Option<crate::Trap>,
     b_stripe: (f64, f64),
-    b_trap: crate::TrapType,
+    b_trap: crate::Trap,
 ) -> bool {
     (!orbit_stats.has(crate::Stat::Stripe) || a_stripe == b_stripe) && (!orbit_stats.has(crate::Stat::Trap) || a_trap == Some(b_trap))
 }
@@ -10962,7 +10973,7 @@ pub(crate) fn iter_coloring_hash(
     stripe_freq: f32,
     stripe_tail: bool,
     stripe_tail_len: u32,
-    trap_type: crate::TrapType,
+    trap: crate::Trap,
     h: &mut impl std::hash::Hasher,
 ) {
     use std::hash::Hash;
@@ -10973,7 +10984,7 @@ pub(crate) fn iter_coloring_hash(
         stripe_tail_len.hash(h);
     }
     if orbit_stats.has(crate::Stat::Trap) {
-        trap_type.gpu_id().hash(h);
+        trap.key_bits().hash(h);
     }
 }
 
@@ -10984,12 +10995,12 @@ pub(crate) fn aux_lanes_stale(
     orbit_stats: crate::StatSet,
     stripe_freq: f32,
     stripe_tail_alpha: f64,
-    trap_type: crate::TrapType,
+    trap: crate::Trap,
     vc: &crate::RefCache,
 ) -> bool {
     (orbit_stats.has(crate::Stat::Stripe)
         && ((stripe_freq as f64 - vc.bla_stripe_freq).abs() > 1.0e-9 || stripe_tail_alpha != vc.bla_stripe_tail))
-        || (orbit_stats.has(crate::Stat::Trap) && Some(trap_type) != vc.bla_trap_type)
+        || (orbit_stats.has(crate::Stat::Trap) && Some(trap) != vc.bla_trap)
 }
 
 /// The per-frame inputs `pin_verdict` decides on — plain copyable data so the decision table is a

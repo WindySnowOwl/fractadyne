@@ -502,6 +502,11 @@ pub struct TrapSpec {
     pub key: &'static str,
     /// The name of the shader constant that carries its GPU number (`TRAP_CROSS`).
     pub wgsl: &'static str,
+    /// A turn changes it ([`TrapPlace::rotation`]): not the point or the circle, which look the
+    /// same turned.
+    pub turns: bool,
+    /// Its size changes it ([`TrapPlace::size`]): not the point or the cross, which have none.
+    pub sized: bool,
 }
 
 /// An orbit-trap shape (the orbit-trap method's). Like [`ColorMethod`], the order gives the GPU
@@ -518,9 +523,9 @@ pub enum TrapType {
 }
 
 const TRAPS: [TrapSpec; 3] = [
-    TrapSpec { key: "point", wgsl: "TRAP_POINT" },
-    TrapSpec { key: "cross", wgsl: "TRAP_CROSS" },
-    TrapSpec { key: "circle", wgsl: "TRAP_CIRCLE" },
+    TrapSpec { key: "point", wgsl: "TRAP_POINT", turns: false, sized: false },
+    TrapSpec { key: "cross", wgsl: "TRAP_CROSS", turns: true, sized: false },
+    TrapSpec { key: "circle", wgsl: "TRAP_CIRCLE", turns: false, sized: true },
 ];
 
 impl TrapType {
@@ -549,6 +554,111 @@ impl TrapType {
     /// The shape a key names, or the point trap for one it does not know.
     pub fn from_key(s: &str) -> TrapType {
         TrapType::parse_key(s).unwrap_or_default()
+    }
+    /// How far `z` is from the unit shape at the origin: the shader's distance in `aux_step`.
+    pub fn unit_dist(self, zx: f64, zy: f64) -> f64 {
+        match self {
+            TrapType::Cross => zx.abs().min(zy.abs()),
+            TrapType::Circle => ((zx * zx + zy * zy).sqrt() - 1.0).abs(),
+            TrapType::Point => (zx * zx + zy * zy).sqrt(),
+        }
+    }
+}
+
+/// Where the orbit trap sits, how it is turned and how large it is (coloring plan F4, part 1).
+///
+/// The shape's own coordinates are `w = R(−rotation)·(z − center) / size`; the distance is measured
+/// there and scaled back, `size · shape(w)`, so it stays a distance in the orbit's plane: the point
+/// trap is `|z − center|`, the cross is the two lines through `center` turned by `rotation`, and the
+/// circle's radius is `size`.
+///
+/// A shape ignores what it does not use ([`TrapPlace::for_shape`]). The default is each shape as it
+/// always was, and a placement at the default computes exactly as before, with no transform (on the
+/// GPU too), so a view that never moved its trap keeps every bit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrapPlace {
+    /// The trap's center in the orbit's plane, `[re, im]`.
+    pub center: [f32; 2],
+    /// Its turn, in degrees counterclockwise.
+    pub rotation: f32,
+    /// Its size: the circle's radius. 1: the unit shape.
+    pub size: f32,
+}
+
+impl Default for TrapPlace {
+    fn default() -> Self {
+        TrapPlace::DEFAULT
+    }
+}
+
+impl TrapPlace {
+    /// Each shape as it always was: at the origin, unturned, of size 1.
+    pub const DEFAULT: TrapPlace = TrapPlace { center: [0.0, 0.0], rotation: 0.0, size: 1.0 };
+    /// The sizes a placement computes with; [`for_shape`](Self::for_shape) clamps into them.
+    pub const SIZE_MIN: f32 = 1.0e-4;
+    pub const SIZE_MAX: f32 = 1.0e4;
+
+    /// This placement as `shape` uses it: the turn and the size at their defaults where the shape
+    /// ignores them, every number finite (an unreadable one at its default), the size clamped and
+    /// no negative zero. What reaches the iteration, its keys and the BLA aggregates, so a setting the
+    /// shape ignores never iterates a frame again or moves a bit.
+    pub fn for_shape(self, shape: TrapType) -> TrapPlace {
+        let spec = shape.spec();
+        // `+ 0.0` turns −0.0 into 0.0, so a key from the bits sees one zero.
+        let fin = |v: f32, d: f32| if v.is_finite() { v + 0.0 } else { d };
+        TrapPlace {
+            center: [fin(self.center[0], 0.0), fin(self.center[1], 0.0)],
+            rotation: if spec.turns { fin(self.rotation, 0.0) } else { 0.0 },
+            size: if spec.sized { fin(self.size, 1.0).clamp(Self::SIZE_MIN, Self::SIZE_MAX) } else { 1.0 },
+        }
+    }
+    /// Each shape as it always was.
+    pub fn is_default(self) -> bool {
+        self == Self::DEFAULT
+    }
+    /// The four numbers' bits, for keys: `[center re, center im, rotation, size]`.
+    pub fn bits(self) -> [u32; 4] {
+        [self.center[0].to_bits(), self.center[1].to_bits(), self.rotation.to_bits(), self.size.to_bits()]
+    }
+    /// The turn's cosine and sine.
+    pub fn turn(self) -> (f64, f64) {
+        let r = f64::from(self.rotation).to_radians();
+        (r.cos(), r.sin())
+    }
+    /// How far `z` is from `shape` placed here: what the shader's `trap_dist` computes in f32, and
+    /// exactly [`TrapType::unit_dist`] at the default.
+    pub fn dist(self, shape: TrapType, zx: f64, zy: f64) -> f64 {
+        if self.is_default() {
+            return shape.unit_dist(zx, zy);
+        }
+        let (c, s) = self.turn();
+        let (dx, dy) = (zx - f64::from(self.center[0]), zy - f64::from(self.center[1]));
+        let k = f64::from(self.size);
+        k * shape.unit_dist((c * dx + s * dy) / k, (c * dy - s * dx) / k)
+    }
+}
+
+/// The orbit trap as the iteration measures it: its shape and its placement as the shape uses it
+/// ([`TrapPlace::for_shape`], applied by [`Trap::new`]). What the iteration's keys, the BLA
+/// aggregates and their staleness checks compare, so two settings that measure alike are one trap.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct Trap {
+    pub shape: TrapType,
+    pub place: TrapPlace,
+}
+
+impl Trap {
+    /// `shape` placed at `place`, as the shape uses it.
+    pub fn new(shape: TrapType, place: TrapPlace) -> Trap {
+        Trap { shape, place: place.for_shape(shape) }
+    }
+    /// `shape` at the default placement: the trap as it was before F4.
+    pub fn of(shape: TrapType) -> Trap {
+        Trap { shape, place: TrapPlace::DEFAULT }
+    }
+    /// What keys hash: the shape's GPU number for this build and the placement's bits.
+    pub fn key_bits(self) -> (u32, [u32; 4]) {
+        (self.shape.gpu_id(), self.place.bits())
     }
 }
 

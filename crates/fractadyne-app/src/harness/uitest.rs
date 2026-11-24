@@ -427,6 +427,12 @@ enum Screen {
     TrapFit,
     /// ...then Equalize at 75% (coloring plan C6c): another picture, no pass, a table on the map.
     EqualizeTrap,
+    /// The trap placed (coloring plan F4), the same view with Equalize off: the cross moved and
+    /// turned, for the panel's center and rotation rows (no size row: the cross has none)...
+    TrapPlaceCross,
+    /// ...then the circle moved and sized: the center and size rows, no rotation row. Leaves the
+    /// trap placed; no later screen uses the trap (one that does sets its own).
+    TrapPlaceCircle,
     /// Edge shading (coloring plan C3): the Julia-link point in Smooth, point sampled, the shading
     /// off (the base)...
     EdgeShadeOff,
@@ -1426,6 +1432,8 @@ fn build_steps() -> Vec<Step> {
         screen("equalize", Screen::Equalize),
         screen("trap-fit", Screen::TrapFit),
         screen("equalize-trap", Screen::EqualizeTrap),
+        screen("trap-place-cross", Screen::TrapPlaceCross),
+        screen("trap-place-circle", Screen::TrapPlaceCircle),
         screen("edge-shade-off", Screen::EdgeShadeOff),
         screen("edge-shade", Screen::EdgeShade),
         screen("edge-shade-inside", Screen::EdgeShadeInside),
@@ -3341,6 +3349,20 @@ impl FractadyneApp {
                 self.coloring.palette_aa = false;
                 self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
                 self.coloring.equalize = if matches!(s, Screen::EqualizeTrap) { 0.75 } else { 0.0 };
+                self.dialogs.right_panel_open = true;
+            }
+            // F4: the same view under a placed trap, Equalize off; the cross moved and turned, then
+            // the circle moved and sized.
+            Screen::TrapPlaceCross | Screen::TrapPlaceCircle => {
+                self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+                self.coloring.interior = Some(crate::InteriorMode::Solid);
+                self.coloring.equalize = 0.0;
+                let d = crate::TrapPlace::DEFAULT;
+                (self.coloring.trap_type, self.coloring.trap_place) = if matches!(s, Screen::TrapPlaceCross) {
+                    (crate::TrapType::Cross, crate::TrapPlace { center: [-0.2, 0.15], rotation: 35.0, ..d })
+                } else {
+                    (crate::TrapType::Circle, crate::TrapPlace { center: [0.1, 0.4], size: 0.3, ..d })
+                };
                 self.dialogs.right_panel_open = true;
             }
             // C3: the Julia-link point again (filaments enough to shade), Smooth, point sampled; the

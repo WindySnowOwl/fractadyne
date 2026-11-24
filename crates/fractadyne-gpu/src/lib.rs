@@ -118,6 +118,43 @@ pub(crate) struct IterUniforms {
     /// THE REFERENCE'S OWN CYCLE (the shader's `fold_*`): `[fold_end, fold_by, 0, 0]` from
     /// [`ref_fold`], zeros = none. A row of its own after the strip map's, so no field moved.
     pub(crate) fold: [u32; 4],
+    /// THE ORBIT TRAP'S PLACEMENT (the shader's `trap_*`, coloring plan F4): [`trap_uniform`].
+    /// Two rows of its own after the fold row, so no field moved.
+    pub(crate) trap: TrapU,
+}
+
+/// Where the orbit trap sits, turned and sized (the shader's `trap_c` .. `trap_on`; coloring plan
+/// F4): the shape's coordinates are `w = R(−θ)·(z − center)·inv_size` and its distance is
+/// `size · shape(w)`, as [`fractadyne_core::coloring::TrapPlace::dist`] computes it in f64.
+/// `on` 0, all zeros: the unit shape at the origin, computed with no transform at all, as every
+/// frame did before F4.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct TrapU {
+    pub(crate) center: [f32; 2],
+    /// The turn's cosine and sine.
+    pub(crate) turn: [f32; 2],
+    pub(crate) size: f32,
+    pub(crate) inv_size: f32,
+    pub(crate) on: u32,
+    pub(crate) pad: u32,
+}
+
+/// The trap uniform for a placement, as the shape uses it (`TrapPlace::for_shape`, applied by
+/// whoever built the params): `on` 0 at the default, so an unmoved trap keeps every bit.
+pub(crate) fn trap_uniform(place: fractadyne_core::coloring::TrapPlace) -> TrapU {
+    if place.is_default() {
+        return TrapU::default();
+    }
+    let (c, s) = place.turn();
+    TrapU {
+        center: place.center,
+        turn: [c as f32, s as f32],
+        size: place.size,
+        inv_size: (1.0 / f64::from(place.size)) as f32,
+        on: 1,
+        pad: 0,
+    }
 }
 
 /// THE REFERENCE'S OWN CYCLE, for mode 0's exact-repeat check (`cycle_check_on` in mandelbrot.wgsl):
@@ -766,6 +803,9 @@ struct IterKey {
     stripe_tail: bool,
     stripe_tail_len: u32,
     trap_type: u32,
+    /// The trap's placement (F4, `TrapPlace::bits`): moving the trap re-iterates, while the trap
+    /// is accumulated (zeros otherwise).
+    trap_place: [u32; 4],
     sa_skip: u32,
     bla_on: u32,
     /// Sub-pixel jitter (progressive SSAA): a changed jitter is a new sample and must re-iterate,
@@ -3848,6 +3888,9 @@ pub struct MandelbrotParams {
     pub stripe_tail: bool,
     pub stripe_tail_len: u32,
     pub trap_type: u32,
+    /// Where the trap sits, turned and sized (coloring plan F4), as its shape uses it
+    /// (`TrapPlace::for_shape`); the default is the unit shape at the origin.
+    pub trap_place: fractadyne_core::coloring::TrapPlace,
     /// Color-pass box-filter taps per axis (≥1). >1 anti-aliases an upscaled iteration
     /// texture (set when the work-budget reduced its resolution below the display).
     pub aa_filter: u32,
@@ -3969,6 +4012,7 @@ impl MandelbrotParams {
             stripe_tail: stripe && self.stripe_tail,
             stripe_tail_len: if stripe { self.stripe_tail_len } else { 0 },
             trap_type: if orbit_stats.has(Stat::Trap) { self.trap_type } else { 0 },
+            trap_place: if orbit_stats.has(Stat::Trap) { self.trap_place.bits() } else { [0; 4] },
             sa_skip: self.sa_skip,
             bla_on: self.bla_on,
             jitter: self.jitter,
@@ -4127,6 +4171,7 @@ impl Default for MandelbrotParams {
             stripe_tail: false,
             stripe_tail_len: 1,
             trap_type: fractadyne_core::coloring::TrapType::Point.gpu_id(),
+            trap_place: fractadyne_core::coloring::TrapPlace::DEFAULT,
             aa_filter: 1,
             interior_col: [0.0, 0.0, 0.0, 1.0],
             interior: InteriorShade::default(),
@@ -4758,6 +4803,7 @@ impl CallbackTrait for MandelbrotParams {
                 rn: self.rn_uniform(),
                 map: StripMap::default(),
                 fold,
+                trap: trap_uniform(self.trap_place),
             };
             // A split pass is a single full-frame pass by definition (`MandelbrotParams::split`).
             let split_on = self.split[0] > 1 && self.chunk_range.is_none() && self.tile.is_none();

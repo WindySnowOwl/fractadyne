@@ -1047,6 +1047,16 @@ struct IterU {
     // spare words, so no field moved.
     crit_at: u32,
     crit_len: u32,
+    // THE ORBIT TRAP'S PLACEMENT (coloring plan F4; lib.rs `TrapU`, `trap_uniform`): `trap_dist`
+    // measures in the shape's coordinates w = R(−θ)·(z − trap_c)·trap_inv and scales back by
+    // trap_size. trap_on 0 (every field 0): the unit shape at the origin, no transform at all.
+    // Two rows of their own after the fold row, so no field moved.
+    trap_c: vec2<f32>,
+    trap_turn: vec2<f32>,  // the turn's (cos, sin)
+    trap_size: f32,
+    trap_inv: f32,         // 1 / trap_size
+    trap_on: u32,
+    trap_pad: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -1493,15 +1503,29 @@ fn aux_init(z0: vec2<f32>) -> Aux {
 // per-iteration `pow`). The statistics touch disjoint fields (TIA alone reads and writes
 // `prev_abs`), so each keeps its own exact accumulation order with or without the others: a lane's
 // value does not depend on what else is accumulated.
+// How far z is from the orbit trap: its shape (point / axes-cross / unit circle) placed, turned and
+// sized (coloring plan F4; `trap_c` .. `trap_on`), measured in the shape's coordinates and scaled
+// back, so it stays a distance in the orbit's plane. Mirrors core `TrapPlace::dist`, whose f64 the
+// BLA aggregates fold. `trap_on` 0: the unit shape exactly as before F4, with no transform.
+fn trap_dist(zf: vec2<f32>) -> f32 {
+    var w = zf;
+    if (iu.trap_on != 0u) {
+        let d = zf - iu.trap_c;
+        let t = iu.trap_turn;
+        w = vec2<f32>(t.x * d.x + t.y * d.y, t.x * d.y - t.y * d.x) * iu.trap_inv;
+    }
+    var s: f32;
+    if (iu.trap_type == TRAP_CROSS) { s = min(abs(w.x), abs(w.y)); }
+    else if (iu.trap_type == TRAP_CIRCLE) { s = abs(length(w) - 1.0); }
+    else { s = length(w); }
+    if (iu.trap_on != 0u) { s = s * iu.trap_size; }
+    return s;
+}
 fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
     let st = iu.orbit_stats;
     if ((st & STAT_TRAP) != 0u) {
-        // Orbit trap: nearest approach to a shape (point / axes-cross / unit circle).
-        var d: f32;
-        if (iu.trap_type == TRAP_CROSS) { d = min(abs(zf.x), abs(zf.y)); }
-        else if (iu.trap_type == TRAP_CIRCLE) { d = abs(length(zf) - 1.0); }
-        else { d = length(zf); }
-        (*a).trap = min((*a).trap, d);
+        // Orbit trap: nearest approach to its shape (`trap_dist`).
+        (*a).trap = min((*a).trap, trap_dist(zf));
     }
     if ((st & STAT_STRIPE) != 0u) {
         // Stripe average: smooth orbit average of a sinusoid of the argument.

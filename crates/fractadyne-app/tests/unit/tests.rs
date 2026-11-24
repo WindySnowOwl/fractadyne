@@ -362,6 +362,8 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "lsystem", "lsystem_order", "lsystem_angle", "lsystem_width", "lsystem_colour",
     "iter_div",
     "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "interior_fit", "trap",
+    // Written only with a trap moved, turned or sized (F4).
+    "trap_x", "trap_y", "trap_rotation", "trap_size",
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
     // Written only with the relief light on, and its slope from the distance (C5).
     "light_steep", "light_steep_px", "light_highlight", "light_shininess", "light_highlight_color",
@@ -1547,7 +1549,7 @@ fn the_iteration_hash_keys_what_is_accumulated() {
     use std::hash::Hasher;
     let hash = |orbit_stats: StatSet, freq: f32, tail: bool, trap: TrapType| {
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        crate::render::iter_coloring_hash(orbit_stats, freq, tail, 16, trap, &mut h);
+        crate::render::iter_coloring_hash(orbit_stats, freq, tail, 16, crate::Trap::of(trap), &mut h);
         h.finish()
     };
     let (none, stripe, trap) = (StatSet::NONE, StatSet::of(Stat::Stripe), StatSet::of(Stat::Trap));
@@ -1558,6 +1560,19 @@ fn the_iteration_hash_keys_what_is_accumulated() {
     assert_eq!(hash(stripe, 1.0, false, TrapType::Point), hash(stripe, 1.0, false, TrapType::Circle));
     assert_ne!(hash(trap, 1.0, false, TrapType::Point), hash(trap, 1.0, false, TrapType::Cross));
     assert_eq!(hash(trap, 1.0, false, TrapType::Point), hash(trap, 5.0, true, TrapType::Point));
+    // The trap's placement (F4) likewise: keyed while the trap is accumulated, and only what the
+    // shape uses (a turned point is the point).
+    let placed = |orbit_stats: StatSet, t: crate::Trap| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        crate::render::iter_coloring_hash(orbit_stats, 1.0, false, 16, t, &mut h);
+        h.finish()
+    };
+    let moved = crate::TrapPlace { center: [0.25, 0.0], rotation: 30.0, size: 1.0 };
+    let unturned = crate::TrapPlace { rotation: 0.0, ..moved };
+    assert_ne!(placed(trap, crate::Trap::of(TrapType::Point)), placed(trap, crate::Trap::new(TrapType::Point, moved)));
+    assert_eq!(placed(none, crate::Trap::of(TrapType::Point)), placed(none, crate::Trap::new(TrapType::Point, moved)));
+    assert_eq!(placed(trap, crate::Trap::new(TrapType::Point, moved)), placed(trap, crate::Trap::new(TrapType::Point, unturned)));
+    assert_ne!(placed(trap, crate::Trap::new(TrapType::Cross, moved)), placed(trap, crate::Trap::new(TrapType::Cross, unturned)));
 }
 
 /// Two BLA trees' aggregate lanes, and a tree against the live parameters, are compared only for
@@ -1566,12 +1581,16 @@ fn the_iteration_hash_keys_what_is_accumulated() {
 fn a_tree_is_stale_only_for_what_is_accumulated() {
     use crate::render::same_aux_lanes;
     let (none, stripe, trap) = (StatSet::NONE, StatSet::of(Stat::Stripe), StatSet::of(Stat::Trap));
-    assert!(same_aux_lanes(none, (1.0, 0.0), Some(TrapType::Point), (5.0, 0.0), TrapType::Cross));
-    assert!(!same_aux_lanes(stripe, (1.0, 0.0), Some(TrapType::Point), (5.0, 0.0), TrapType::Point));
-    assert!(same_aux_lanes(stripe, (1.0, 0.0), Some(TrapType::Point), (1.0, 0.0), TrapType::Cross));
-    assert!(!same_aux_lanes(trap, (1.0, 0.0), Some(TrapType::Point), (1.0, 0.0), TrapType::Cross));
-    assert!(!same_aux_lanes(trap, (1.0, 0.0), None, (1.0, 0.0), TrapType::Point), "a tree built for no trap is not the trap's");
-    assert!(same_aux_lanes(trap, (1.0, 0.0), Some(TrapType::Cross), (5.0, 0.0), TrapType::Cross));
+    assert!(same_aux_lanes(none, (1.0, 0.0), Some(crate::Trap::of(TrapType::Point)), (5.0, 0.0), crate::Trap::of(TrapType::Cross)));
+    assert!(!same_aux_lanes(stripe, (1.0, 0.0), Some(crate::Trap::of(TrapType::Point)), (5.0, 0.0), crate::Trap::of(TrapType::Point)));
+    assert!(same_aux_lanes(stripe, (1.0, 0.0), Some(crate::Trap::of(TrapType::Point)), (1.0, 0.0), crate::Trap::of(TrapType::Cross)));
+    assert!(!same_aux_lanes(trap, (1.0, 0.0), Some(crate::Trap::of(TrapType::Point)), (1.0, 0.0), crate::Trap::of(TrapType::Cross)));
+    assert!(!same_aux_lanes(trap, (1.0, 0.0), None, (1.0, 0.0), crate::Trap::of(TrapType::Point)), "a tree built for no trap is not the trap's");
+    assert!(same_aux_lanes(trap, (1.0, 0.0), Some(crate::Trap::of(TrapType::Cross)), (5.0, 0.0), crate::Trap::of(TrapType::Cross)));
+    // A moved trap's lane (F4) is another trap's, while the trap is accumulated.
+    let turned = crate::Trap::new(TrapType::Cross, crate::TrapPlace { rotation: 30.0, ..crate::TrapPlace::DEFAULT });
+    assert!(!same_aux_lanes(trap, (1.0, 0.0), Some(crate::Trap::of(TrapType::Cross)), (1.0, 0.0), turned));
+    assert!(same_aux_lanes(stripe, (1.0, 0.0), Some(crate::Trap::of(TrapType::Cross)), (1.0, 0.0), turned));
 }
 
 /// The exe's own icon (build.rs `link_windows_icon`, scripts/make_windows_icon.py): the icon and both

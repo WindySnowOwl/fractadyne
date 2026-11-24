@@ -3301,7 +3301,7 @@ pub(crate) fn accum_jitter_seq(i: u32) -> [f32; 2] {
 // also chose the palette rate, where the trap belongs with the unbounded methods: the live view
 // handed trap frames to the chunked walk and the band's BLA, which compute no trap, and every pixel
 // read the "no statistics" value (one flat color). The rate now asks `bounded_value`.
-pub(crate) use fractadyne_core::coloring::{Capability, ColorMethod, InteriorMode, InteriorShading, Stat, StatSet, TrapType};
+pub(crate) use fractadyne_core::coloring::{Capability, ColorMethod, InteriorMode, InteriorShading, Stat, StatSet, Trap, TrapPlace, TrapType};
 
 /// A coloring method's or trap shape's name in the language in use. The words are the app's; the
 /// table (`fractadyne_core::coloring`) has only the keys.
@@ -3364,6 +3364,11 @@ pub(crate) mod slider_range {
     pub(crate) const RELIEF_SHININESS: RangeInclusive<f32> = 4.0..=512.0;
     /// Stripe density (`--stripe-freq`).
     pub(crate) const STRIPE_FREQ: RangeInclusive<f32> = 1.0..=24.0;
+    /// The orbit trap's center (each coordinate), turn in degrees and size (`--trap-center`,
+    /// `--trap-rotation`, `--trap-size`; coloring plan F4). The size's slider is logarithmic.
+    pub(crate) const TRAP_CENTER: RangeInclusive<f32> = -4.0..=4.0;
+    pub(crate) const TRAP_ROTATION: RangeInclusive<f32> = -180.0..=180.0;
+    pub(crate) const TRAP_SIZE: RangeInclusive<f32> = 0.01..=10.0;
     /// The palette's brightness, contrast and saturation (`--palette-brightness`, ...;
     /// `fractadyne_color::adjust`).
     pub(crate) const PALETTE_BRIGHTNESS: RangeInclusive<f32> = fractadyne_color::adjust::BRIGHTNESS_RANGE;
@@ -3380,6 +3385,17 @@ pub(crate) mod slider_range {
 /// is not a number.
 pub(crate) fn equalize_of(v: f32) -> f32 {
     if v.is_finite() { v.clamp(*slider_range::EQUALIZE.start(), *slider_range::EQUALIZE.end()) } else { 0.0 }
+}
+
+/// The trap's placement a spec carries (coloring plan F4), clamped into the panel's ranges; an
+/// unreadable number takes its default.
+pub(crate) fn trap_place_of(s: &fractadyne_state::ColoringSpec) -> TrapPlace {
+    let clamp = |v: f32, r: std::ops::RangeInclusive<f32>, d: f32| if v.is_finite() { v.clamp(*r.start(), *r.end()) } else { d };
+    TrapPlace {
+        center: [clamp(s.trap_x, slider_range::TRAP_CENTER, 0.0), clamp(s.trap_y, slider_range::TRAP_CENTER, 0.0)],
+        rotation: clamp(s.trap_rotation, slider_range::TRAP_ROTATION, 0.0),
+        size: clamp(s.trap_size, slider_range::TRAP_SIZE, 1.0),
+    }
 }
 
 /// The palette map's curve a spec names (coloring plan C2): its `transfer`, or, for a file written
@@ -6059,10 +6075,10 @@ struct RefCache {
     /// Stripe tail's α the cached tree's `agg_stripe` lane was built with (0 = the plain sum, see
     /// `fractadyne_core::merge_stripe`): rebuilt or patched when the tail or its length changes.
     bla_stripe_tail: f64,
-    /// Trap type the cached BLA tree's `agg_trap` lane was built with. The trap aggregate is
-    /// trap-type-specific, so the tree is rebuilt when the live trap type changes (only while the
-    /// orbit-trap method is active). `None` = never built / unknown.
-    bla_trap_type: Option<TrapType>,
+    /// The trap (shape and placement) the cached BLA tree's `agg_trap` lane was built with. The
+    /// trap aggregate is the trap's own, so the tree is patched when the live trap changes (only
+    /// while the trap is accumulated). `None` = never built / unknown.
+    bla_trap: Option<Trap>,
     /// View (center + log2 magnification) the current iteration texture was rendered at. A freeze
     /// uses this to zoom-reproject the frozen frame — scaling/panning it to follow the dive until a
     /// fresh reference lands (see `build_params`). `None` until the first real render.
@@ -6124,7 +6140,7 @@ impl Default for RefCache {
             bla_dc_max_log2: f64::NEG_INFINITY,
             bla_stripe_freq: f64::NEG_INFINITY,
             bla_stripe_tail: f64::NEG_INFINITY,
-            bla_trap_type: None,
+            bla_trap: None,
             frozen_center: None,
             frozen_l2: 0.0,
             frozen_at: None,
@@ -6840,6 +6856,10 @@ struct ColoringConfig {
     stripe_tail: bool,
     stripe_tail_len: u32,
     trap_type: TrapType,
+    /// Where the trap sits, turned and sized (coloring plan F4), as set: the panel's rows edit it.
+    /// What the iteration measures is [`ColoringConfig::trap`], which drops what the shape ignores.
+    /// Persisted.
+    trap_place: TrapPlace,
     /// What colors the inside of the set (coloring plan B5); `None`: the method's own
     /// (`InteriorMode::of_method`: the orbit trap its trap, every other method one color), so a view
     /// that never chose keeps its look whichever method it takes. Persisted.
@@ -6903,6 +6923,12 @@ struct ColoringConfig {
 }
 
 impl ColoringConfig {
+    /// The orbit trap the iteration measures: the shape and its placement as the shape uses it
+    /// (coloring plan F4). Every key, BLA lane and GPU request takes this, never the raw setting, so
+    /// a turn or size the shape ignores re-iterates nothing.
+    fn trap(&self) -> Trap {
+        Trap::new(self.trap_type, self.trap_place)
+    }
     /// The orbit statistics a frame's iteration accumulates in a band, live and in exports: every
     /// rule about the iteration asks this, never the method (see the note at [`ColorMethod`]'s
     /// import). In floatexp a stripe, triangle or trap frame carries the whole G-buffer, so a switch
@@ -8687,6 +8713,7 @@ impl FractadyneApp {
                 stripe_tail: s.coloring.stripe_tail,
                 stripe_tail_len: s.coloring.stripe_tail_len.clamp(4, 1 << 20),
                 trap_type: TrapType::from_key(&s.coloring.trap_type),
+                trap_place: trap_place_of(&s.coloring),
                 interior: InteriorMode::parse_key(&s.coloring.interior),
                 interior_palette: fractadyne_color::preset_by_id(&s.coloring.interior_palette),
                 interior_color: s.coloring.interior_color,
@@ -9541,6 +9568,29 @@ impl FractadyneApp {
             }
             self.coloring.trap_type = picked;
         }
+        // The trap's placement (coloring plan F4): its center, turn and size, each clamped into the
+        // panel's range as a view file's are.
+        if let Some(text) = val("--trap-center") {
+            let parts: Vec<Option<f32>> = text.split(',').map(|t| t.trim().parse::<f32>().ok().filter(|v| v.is_finite())).collect();
+            match parts.as_slice() {
+                [Some(x), Some(y)] => {
+                    let r = slider_range::TRAP_CENTER;
+                    self.coloring.trap_place.center = [x.clamp(*r.start(), *r.end()), y.clamp(*r.start(), *r.end())];
+                }
+                _ => {
+                    eprintln!("fractadyne: --trap-center: \"{text}\" is not two numbers, such as 0.25,-0.5.");
+                    crate::exit(2)
+                }
+            }
+        }
+        if let Some(d) = val("--trap-rotation").map(|s| arg_parse::<f32>("--trap-rotation", s, "a number of degrees")) {
+            let r = slider_range::TRAP_ROTATION;
+            self.coloring.trap_place.rotation = d.clamp(*r.start(), *r.end());
+        }
+        if let Some(v) = val("--trap-size").map(|s| arg_parse::<f32>("--trap-size", s, "a number")) {
+            let r = slider_range::TRAP_SIZE;
+            self.coloring.trap_place.size = v.clamp(*r.start(), *r.end());
+        }
         // The inside (coloring plan B5, C1): what colors it, the trap's palette, a solid color.
         if let Some(m) = val("--interior") {
             match crate::InteriorMode::parse_key(m) {
@@ -9889,6 +9939,10 @@ impl FractadyneApp {
             stripe_tail: self.coloring.stripe_tail,
             stripe_tail_len: self.coloring.stripe_tail_len,
             trap_type: self.coloring.trap_type.key().to_string(),
+            trap_x: self.coloring.trap_place.center[0],
+            trap_y: self.coloring.trap_place.center[1],
+            trap_rotation: self.coloring.trap_place.rotation,
+            trap_size: self.coloring.trap_place.size,
             custom_palette: self.coloring.custom_palette.clone(),
             custom_palette_flat: self.coloring.custom_palette_flat,
             custom_segments: self.coloring.custom_segments.clone(),
@@ -9948,6 +10002,7 @@ impl FractadyneApp {
         c.stripe_tail = s.stripe_tail;
         c.stripe_tail_len = s.stripe_tail_len.clamp(4, 1 << 20);
         c.trap_type = TrapType::from_key(&s.trap_type);
+        c.trap_place = trap_place_of(s);
         c.custom_palette = s.custom_palette.clone();
         c.custom_palette_flat = s.custom_palette_flat;
         c.custom_segments = s.custom_segments.clone();
@@ -17946,7 +18001,7 @@ impl FractadyneApp {
         c.stripe_freq.to_bits().hash(&mut h);
         c.stripe_tail.hash(&mut h);
         c.stripe_tail_len.hash(&mut h);
-        c.trap_type.gpu_id().hash(&mut h);
+        c.trap().key_bits().hash(&mut h);
         c.normalize_live.hash(&mut h);
         c.normalize_fit.hash(&mut h); // or ticking the box would change no pixel until something else did
         c.transfer.hash(&mut h);

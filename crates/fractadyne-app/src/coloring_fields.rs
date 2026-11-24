@@ -100,7 +100,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 47] = [
+pub(crate) const FIELDS: [Field; 51] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -182,6 +182,58 @@ pub(crate) const FIELDS: [Field; 47] = [
         }),
         parents: &["method", "interior"],
         shows: interior_trap,
+    },
+    Field {
+        key: "trap_x",
+        name: "trap center",
+        doc: "Where the orbit trap sits in the orbit's plane, its real coordinate (with the trap).",
+        access: Access::Real(
+            |s| s.trap_x,
+            |s, v| s.trap_x = v,
+            *slider_range::TRAP_CENTER.start(),
+            *slider_range::TRAP_CENTER.end(),
+        ),
+        parents: &["method", "interior"],
+        shows: interior_trap,
+    },
+    Field {
+        key: "trap_y",
+        name: "trap center",
+        doc: "Where the orbit trap sits in the orbit's plane, its imaginary coordinate (with the trap).",
+        access: Access::Real(
+            |s| s.trap_y,
+            |s, v| s.trap_y = v,
+            *slider_range::TRAP_CENTER.start(),
+            *slider_range::TRAP_CENTER.end(),
+        ),
+        parents: &["method", "interior"],
+        shows: interior_trap,
+    },
+    Field {
+        key: "trap_rotation",
+        name: "trap rotation",
+        doc: "The cross trap's turn, in degrees counterclockwise (trap \"cross\").",
+        access: Access::Real(
+            |s| s.trap_rotation,
+            |s, v| s.trap_rotation = v,
+            *slider_range::TRAP_ROTATION.start(),
+            *slider_range::TRAP_ROTATION.end(),
+        ),
+        parents: &["method", "interior", "trap"],
+        shows: |s| interior_trap(s) && TrapType::from_key(&s.trap_type).spec().turns,
+    },
+    Field {
+        key: "trap_size",
+        name: "trap size",
+        doc: "The circle trap's radius (trap \"circle\").",
+        access: Access::Real(
+            |s| s.trap_size,
+            |s, v| s.trap_size = v,
+            *slider_range::TRAP_SIZE.start(),
+            *slider_range::TRAP_SIZE.end(),
+        ),
+        parents: &["method", "interior", "trap"],
+        shows: |s| interior_trap(s) && TrapType::from_key(&s.trap_type).spec().sized,
     },
     Field {
         key: "light",

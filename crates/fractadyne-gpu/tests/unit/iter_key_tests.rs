@@ -51,4 +51,13 @@ fn the_key_holds_what_is_accumulated_not_what_is_shown() {
         key(MandelbrotParams { stripe_tail: on, stripe_tail_len: 16, ..params(ColorMethod::Smooth, none, 1.0, point) })
     };
     assert!(tail(false) == tail(true), "the stripe tail counts only with the stripe accumulated");
+    // The trap's placement (F4) likewise: a moved trap re-iterates a frame that accumulates the
+    // trap, and changes nothing for one that does not.
+    let moved = fractadyne_core::coloring::TrapPlace { center: [0.25, 0.0], rotation: 0.0, size: 1.0 };
+    let placed = |stats, place| {
+        key(MandelbrotParams { trap_place: place, ..params(ColorMethod::Smooth, stats, 1.0, point) })
+    };
+    let at_origin = fractadyne_core::coloring::TrapPlace::DEFAULT;
+    assert!(placed(StatSet::of(Stat::Trap), at_origin) != placed(StatSet::of(Stat::Trap), moved));
+    assert!(placed(none, at_origin) == placed(none, moved), "the placement counts only with the trap accumulated");
 }

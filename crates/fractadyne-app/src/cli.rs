@@ -41,9 +41,16 @@ const SHORT_FLAGS: &[&str] = &["-h", "-?", "-V", "-o", "-y"];
 
 /// Options whose values are free-form text that may begin with a minus sign and still not read as
 /// one number — an expression (`--center -3/4 0`), a formula (`--formula "-z^2 + c"`), a parameter
-/// list (`--formula-params -0.5,0`) — with how many values follow. Those values are not options.
-const VALUE_FLAGS: &[(&str, usize)] =
-    &[("--center", 2), ("--julia-c", 2), ("--formula", 1), ("--formula-params", 1), ("--hook-params", 1)];
+/// list (`--formula-params -0.5,0`, `--trap-center -0.2,0.15`) — with how many values follow.
+/// Those values are not options.
+const VALUE_FLAGS: &[(&str, usize)] = &[
+    ("--center", 2),
+    ("--julia-c", 2),
+    ("--formula", 1),
+    ("--formula-params", 1),
+    ("--hook-params", 1),
+    ("--trap-center", 1),
+];
 
 /// What is wrong with a command line, if anything. Pure, so the rules are pinned by test —
 /// a mis-typed option must never silently launch the GUI (field case 2026-08-20: `-play tour`

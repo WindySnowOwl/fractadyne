@@ -241,6 +241,31 @@ fn iter_uniform_matches_the_shader() {
         std::mem::offset_of!(super::IterUniforms, fold),
         "IterU.fold_end and IterUniforms.fold start at different offsets",
     );
+    // The trap's placement (F4): its block of eight words, field for field.
+    let trap = std::mem::offset_of!(super::IterUniforms, trap);
+    for (wgsl, rust) in [
+        ("trap_c", std::mem::offset_of!(super::TrapU, center)),
+        ("trap_turn", std::mem::offset_of!(super::TrapU, turn)),
+        ("trap_size", std::mem::offset_of!(super::TrapU, size)),
+        ("trap_inv", std::mem::offset_of!(super::TrapU, inv_size)),
+        ("trap_on", std::mem::offset_of!(super::TrapU, on)),
+    ] {
+        assert_eq!(wgsl_field_offset(&fields, wgsl), trap + rust, "IterU.{wgsl} and IterUniforms.trap disagree");
+    }
+    assert_eq!(std::mem::size_of::<super::TrapU>(), 32, "TrapU is the shader's 8 words");
+}
+
+/// The trap uniform at the default placement is all zeros (`trap_on` 0: no transform in the
+/// shader), and a placed one carries the turn and both sizes.
+#[test]
+fn the_trap_uniform_is_off_at_the_default() {
+    use fractadyne_core::coloring::TrapPlace;
+    assert_eq!(super::trap_uniform(TrapPlace::DEFAULT), super::TrapU::default());
+    let u = super::trap_uniform(TrapPlace { center: [0.25, -0.5], rotation: 90.0, size: 0.5 });
+    assert_eq!(u.on, 1);
+    assert_eq!(u.center, [0.25, -0.5]);
+    assert!(u.turn[0].abs() < 1e-7 && (u.turn[1] - 1.0).abs() < 1e-7, "{:?}", u.turn);
+    assert_eq!((u.size, u.inv_size), (0.5, 2.0));
 }
 
 /// The zoom-video assembly module (`assemble.wgsl`) validates, and its uniform `AssembleU` lines up

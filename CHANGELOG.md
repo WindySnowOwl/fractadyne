@@ -12,6 +12,15 @@ detail is in the git history.
 
 ## 0.4.0 (unreleased)
 
+- **Move, turn and size the orbit trap.** Under Trap shape the panel now has the trap's center, x
+  and y, and a rotation for the cross and a size, its radius, for the circle. Where the trap sits
+  decides which orbits come near it, so moving it rearranges the bands and rings it draws, inside the
+  set and out: a different picture from the same place. The center is a point in the plane the
+  orbits move through, not a point of the picture, so it stays put as you zoom. It works at every
+  depth with the same shortcuts as before, and a double-click puts a slider back. A view file keeps
+  the placement (`trap_x`, `trap_y`, `trap_rotation`, `trap_size`, written only once moved), and on
+  the command line it is `--trap-center X,Y`, `--trap-rotation DEG` and `--trap-size R`. A trap left
+  where it was renders exactly as before.
 - **Decomposition coloring calculates as fast as the smooth count.** It used to calculate every
   step past 1e4× (no series approximation, no BLA), because the cells it draws were thought too
   sensitive for those shortcuts. Measured, the shortcuts change fewer of its pixels than shifting

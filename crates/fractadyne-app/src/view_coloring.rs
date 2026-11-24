@@ -27,7 +27,7 @@
 //! code that sets a coloring by hand: the harnesses and this module's tests.
 
 use crate::coloring_fields;
-use crate::{ColorMethod, InteriorMode, TrapType};
+use crate::{ColorMethod, InteriorMode, TrapPlace, TrapType};
 use fractadyne_state::ColoringSpec;
 
 /// Duotone or Binary: the two-color palettes, which win over the preset and the custom gradient
@@ -70,8 +70,9 @@ pub(crate) struct ViewColoring {
     pub(crate) stripe_freq: f32,
     pub(crate) stripe_tail: bool,
     pub(crate) stripe_tail_len: u32,
-    /// Orbit trap method: the shape.
+    /// Orbit trap method: the shape, and where it sits, turned and sized (F4).
     pub(crate) trap: TrapType,
+    pub(crate) trap_place: TrapPlace,
     /// Relief lighting: on, angle (radians), the "Relief" slider.
     pub(crate) light: bool,
     pub(crate) light_angle: f32,
@@ -152,6 +153,7 @@ impl ViewColoring {
             stripe_tail: s.stripe_tail,
             stripe_tail_len: s.stripe_tail_len,
             trap: TrapType::from_key(&s.trap_type),
+            trap_place: crate::trap_place_of(s),
             light: s.light,
             light_angle: s.light_angle,
             light_height: s.light_height,
@@ -213,6 +215,10 @@ impl ViewColoring {
             stripe_tail: self.stripe_tail,
             stripe_tail_len: self.stripe_tail_len,
             trap_type: self.trap.key().to_string(),
+            trap_x: self.trap_place.center[0],
+            trap_y: self.trap_place.center[1],
+            trap_rotation: self.trap_place.rotation,
+            trap_size: self.trap_place.size,
             light: self.light,
             light_angle: self.light_angle,
             light_height: self.light_height,
