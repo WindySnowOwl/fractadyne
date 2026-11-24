@@ -859,6 +859,14 @@ dlg-export-aspect = 縦横比
 dlg-export-aspect-window = ウィンドウに合わせる
 # Before the choices PNG and OpenEXR.
 dlg-export-format = 形式：
+dlg-export-jpeg-quality = 品質
+dlg-export-jpeg-quality-hover = JPGが保つ細部の量、1〜100：高いほど画像に近く、ファイルが大きくなります。90前後でフラクタルの細いフィラメントが保たれます。
+dlg-export-jpeg-note = JPGは非可逆です：細部を捨ててファイルを小さく保つため、最も細いフィラメントがぼやけ、なめらかなグラデーションにブロックが出ることがあります。正確なコピーにはPNGを選んでください。
+dlg-export-gif-colors = 色数
+dlg-export-gif-colors-hover = GIFが持つ色の数、2〜256。画像自身の色から選ばれます。
+dlg-export-gif-dither = ディザ
+dlg-export-gif-dither-hover = パレットの近い色を混ぜて、なめらかなグラデーションが平らな帯に割れないようにします。オフでは、画像はパレットの色にポスタライズされます。
+dlg-export-gif-note = GIFは最大256色なので、これも非可逆です：なめらかなグラデーションはパレットの色で作られます。正確なコピーにはPNGを選んでください。
 dlg-export-hud = 位置HUD
 dlg-export-hud-hover = エクスポートする画像の左上に、ズームレベルと座標のパネルを焼き込みます（出力に合わせて拡大縮小され、地図/Mandelbrotビューのズームと中心を表示します）。
 dlg-export-glitch = グリッチ補正

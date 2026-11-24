@@ -862,6 +862,14 @@ dlg-export-aspect = Proporzioni
 dlg-export-aspect-window = Come la finestra
 # Before the choices PNG and OpenEXR.
 dlg-export-format = Formato:
+dlg-export-jpeg-quality = Qualità
+dlg-export-jpeg-quality-hover = Quanto dettaglio conserva il JPG, da 1 a 100: più alto è più vicino all’immagine e dà un file più grande. Intorno a 90 si conservano i filamenti sottili di un frattale.
+dlg-export-jpeg-note = Il JPG è con perdita: tiene piccolo il file scartando dettaglio, così i filamenti più sottili possono sfocarsi e le sfumature morbide mostrare blocchi. Scegli PNG per una copia esatta.
+dlg-export-gif-colors = Colori
+dlg-export-gif-colors-hover = Quanti colori contiene la GIF, da 2 a 256, scelti tra i colori dell’immagine stessa.
+dlg-export-gif-dither = Retinatura
+dlg-export-gif-dither-hover = Mescola colori vicini della tavolozza perché le sfumature morbide non si spezzino in bande piatte. Spenta, l’immagine è posterizzata nei colori della tavolozza.
+dlg-export-gif-note = La GIF contiene al massimo 256 colori, quindi anch’essa è con perdita: le sfumature morbide sono fatte dei colori della tavolozza. Scegli PNG per una copia esatta.
 dlg-export-hud = HUD della posizione
 dlg-export-hud-hover = Imprimere un pannello con livello di zoom + coordinate nell’angolo in alto a sinistra dell’immagine esportata (si adatta all’output; mostra zoom + centro della mappa/vista Mandelbrot).
 dlg-export-glitch = Correzione dei glitch

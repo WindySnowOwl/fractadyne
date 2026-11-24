@@ -406,6 +406,9 @@ fn every_session_field_survives_save_and_reload() {
         export_width: 7680,
         export_ss: 3,
         export_format: "exr".into(),
+        export_jpeg_quality: 55,
+        export_gif_colors: 17,
+        export_gif_dither: false,
         snapshot_mode: "render".into(),
         mpfr_warning_suppressed: true,
         mpfr_present_last: Some(false),
@@ -529,6 +532,9 @@ fn a_setting_survives_save_and_reload() {
         export_width: 3840,
         export_ss: 2,
         export_format: "exr".to_string(),
+        export_jpeg_quality: 61,
+        export_gif_colors: 9,
+        export_gif_dither: false,
         export_dir: Some("D:/renders".to_string()),
         welcome_seen: true,
         coloring: ColoringSpec {
@@ -568,6 +574,7 @@ fn a_setting_survives_save_and_reload() {
     assert_eq!(got.export_width, 3840, "export_width");
     assert_eq!(got.export_ss, 2, "export_ss");
     assert_eq!(got.export_format, "exr", "export_format");
+    assert_eq!((got.export_jpeg_quality, got.export_gif_colors, got.export_gif_dither), (61, 9, false), "the JPG and GIF settings");
     assert_eq!(got.export_dir.as_deref(), Some("D:/renders"), "export_dir");
     assert!(got.welcome_seen, "welcome_seen");
 

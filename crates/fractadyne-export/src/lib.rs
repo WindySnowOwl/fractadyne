@@ -19,6 +19,12 @@ pub use npy::{read_npy_f32, write_npy_f32};
 pub enum ExportError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// Encoding or reading a JPEG ([`write_jpeg`], [`read_jpeg_metadata`], [`read_jpeg_rgb8`]).
+    #[error("JPEG: {0}")]
+    Jpeg(String),
+    /// Encoding or reading a GIF ([`write_gif`], [`read_gif_metadata`], [`read_gif_rgba8`]).
+    #[error("GIF: {0}")]
+    Gif(String),
     #[error(transparent)]
     PngDecode(#[from] png::DecodingError),
     #[error(transparent)]
@@ -317,6 +323,14 @@ pub fn to_srgb8_dithered(rgba: &[f32], width: u32) -> Vec<u8> {
 #[cfg(test)]
 #[path = "../tests/unit/dither_tests.rs"]
 mod dither_tests;
+
+/// JPEG export and its reader (see the module note for the settings and why).
+mod jpeg;
+pub use jpeg::{read_jpeg_metadata, read_jpeg_rgb8, write_jpeg, JPEG_MAX_SIDE, JPEG_QUALITY_DEFAULT};
+
+/// GIF export and its reader (see the module note for the palette, the dither and why).
+mod gif;
+pub use gif::{read_gif_metadata, read_gif_rgba8, write_gif, GIF_COLORS_DEFAULT, GIF_COLORS_MAX, GIF_COLORS_MIN, GIF_MAX_SIDE};
 
 /// Decode an EXR at full resolution to `(width, height, rgba_f32)` (row-major, 4 floats
 /// per pixel). Used by the `--compare` tool to diff raw iteration data.
@@ -720,8 +734,8 @@ pub fn encode_png_rgba8(width: u32, height: u32, rgba8: &[u8]) -> Result<Vec<u8>
     Ok(out)
 }
 
-/// Decode a PNG and box-downsample it to a thumbnail (≤ `max` px on the long edge).
-/// Returns `(width, height, rgba8)`. Currently PNG only (EXR thumbnails: future).
+/// Decode an exported image (PNG, OpenEXR, JPEG or GIF) and box-downsample it to a thumbnail (≤ `max`
+/// px on the long edge). Returns `(width, height, rgba8)`.
 pub fn read_thumbnail(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>), ExportError> {
     let ext = path
         .extension()
@@ -730,6 +744,8 @@ pub fn read_thumbnail(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>), Expo
     match ext.as_deref() {
         Some("png") => thumbnail_png(path, max),
         Some("exr") => thumbnail_exr(path, max),
+        Some("jpg" | "jpeg") => jpeg::thumbnail_jpeg(path, max),
+        Some("gif") => gif::thumbnail_gif(path, max),
         other => Err(ExportError::UnsupportedFormat(other.unwrap_or("(none)").to_string())),
     }
 }
@@ -758,6 +774,12 @@ fn thumbnail_png(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>), ExportErr
         png::ColorType::Grayscale => 1,
         _ => return Err(ExportError::UnsupportedColorType),
     };
+    Ok(box_thumbnail(&buf, w, h, ch, max))
+}
+
+/// Box-downsample decoded 8-bit pixels (`ch` channels: RGBA, RGB, gray and alpha, or gray) to an
+/// RGBA thumbnail ≤ `max` px on the long edge.
+fn box_thumbnail(buf: &[u8], w: u32, h: u32, ch: usize, max: u32) -> (u32, u32, Vec<u8>) {
     let scale = (w.max(h).div_ceil(max)).max(1) as usize;
     let tw = (w as usize / scale).max(1);
     let th = (h as usize / scale).max(1);
@@ -799,7 +821,7 @@ fn thumbnail_png(path: &Path, max: u32) -> Result<(u32, u32, Vec<u8>), ExportErr
             out[di + 3] = (as_ / n) as u8;
         }
     }
-    Ok((tw as u32, th as u32, out))
+    (tw as u32, th as u32, out)
 }
 
 /// Decode an OpenEXR (linear f32) and box-downsample it to an sRGB thumbnail.

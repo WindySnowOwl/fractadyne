@@ -12,6 +12,16 @@ detail is in the git history.
 
 ## 0.4.0 (unreleased)
 
+- **Export to JPG and GIF.** The export dialog's Format row offers JPG and GIF beside PNG and
+  OpenEXR. A JPG has a Quality slider, 1 to 100 (90 to start), and a GIF a Colors slider, 2 to 256,
+  its palette chosen from the picture's own colors, with Dither on so smooth ramps don't break into
+  flat bands (off, the picture is posterized). Both are lossy, and the dialog says so: a JPG keeps
+  the file small by discarding detail, and a GIF has only its palette's colors; PNG remains the
+  exact copy. A JPG is about a tenth of the PNG's size at quality 90, and keeps full color
+  resolution, so the fine filaments keep their colors. Like a PNG, each carries the view inside, so
+  File ▸ Open reopens it and the gallery lists it. On the command line the format comes from
+  `--out`'s extension (`.jpg` or `.jpeg`, `.gif`), with `--jpeg-quality N`, `--gif-colors N` and
+  `--gif-no-dither`.
 - **A new coloring method, Fringe.** Listed under Distance in the method box, it draws dark lines
   along the set on a light field whose colors turn once around every feature, the look known as the
   rainbow fringe. The colors come from your palette, taken by the direction of the slope, at a

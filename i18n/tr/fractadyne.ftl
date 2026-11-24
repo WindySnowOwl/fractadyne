@@ -862,6 +862,14 @@ dlg-export-aspect = En-boy oranı
 dlg-export-aspect-window = Pencereye uy
 # Before the choices PNG and OpenEXR.
 dlg-export-format = Biçim:
+dlg-export-jpeg-quality = Kalite
+dlg-export-jpeg-quality-hover = JPG'nin ne kadar ayrıntı koruduğu, 1 ile 100 arası: yüksek değer resme daha yakındır ve dosyayı büyütür. 90 civarı bir fraktalın ince filamentlerini korur.
+dlg-export-jpeg-note = JPG kayıplıdır: ayrıntıyı atarak dosyayı küçük tutar, bu yüzden en ince filamentler bulanıklaşabilir ve yumuşak geçişlerde bloklar görülebilir. Tam bir kopya için PNG'yi seçin.
+dlg-export-gif-colors = Renkler
+dlg-export-gif-colors-hover = GIF'in kaç renk tuttuğu, 2 ile 256 arası, resmin kendi renklerinden seçilir.
+dlg-export-gif-dither = Titreklik
+dlg-export-gif-dither-hover = Yumuşak geçişler düz bantlara bölünmesin diye paletin komşu renklerini karıştırır. Kapalıyken resim paletin renklerine posterleştirilir.
+dlg-export-gif-note = GIF en fazla 256 renk tutar, bu yüzden o da kayıplıdır: yumuşak geçişler paletin renklerinden oluşur. Tam bir kopya için PNG'yi seçin.
 dlg-export-hud = Konum göstergesi
 dlg-export-hud-hover = Dışa aktarılan görüntünün sol üst köşesine kalıcı olarak bir yakınlaştırma düzeyi + koordinat paneli ekler (çıktıyla birlikte ölçeklenir; harita/Mandelbrot görünümünün yakınlaştırmasını + merkezini gösterir).
 dlg-export-glitch = Bozulma düzeltme

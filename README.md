@@ -55,7 +55,7 @@ A fractal explorer for Windows and Linux in Rust (wgpu + egui/eframe), built for
   grammar — examples, every constant and function, what is refused and why — is the "Coordinate
   expressions" section of the in-app Help (the `?` in the dialog opens it), and a coordinate that
   does not parse says which field, which character, and what to type instead.
-- **High-res export** — tiled PNG / OpenEXR with reloadable view metadata, a gallery
+- **High-res export** — tiled PNG / JPG / GIF / OpenEXR with reloadable view metadata, a gallery
   browser, background rendering with progress + cancel.
 - **Bookmarks** — save and instantly return to favorite (deep) locations.
 - **Shareable locations** — copy/paste or save/load a self-contained `.fdn` location
@@ -316,7 +316,7 @@ or internal cross-checks):
 
 Cargo workspace under `crates/` (6 crates): `fractadyne-core` (numerics / viewport),
 `fractadyne-gpu` (wgpu pipelines + WGSL shaders), `fractadyne-color` (palettes),
-`fractadyne-state` (session / bookmarks), `fractadyne-export` (PNG/EXR + reloadable metadata), and
+`fractadyne-state` (session / bookmarks), `fractadyne-export` (PNG/JPG/GIF/EXR + reloadable metadata), and
 `fractadyne-app` (the binary — app logic, UI split under `src/ui/`, scripting, CLI, all in modules).
 Render orchestration (tile scheduler / cache) is planned to become its own crate one day; that logic
 currently lives in `fractadyne-app`. (The earlier stub crates were retired rather than left empty.)
