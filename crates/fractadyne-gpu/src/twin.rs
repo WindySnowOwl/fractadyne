@@ -189,17 +189,18 @@ impl AdoptFrame {
 
 /// ⭐Whether [`LiveTwin::walk`] may spread `base` over chunked passes (`chunk_ok`: the device has the
 /// resumable pipelines for its mode). A custom formula only with resumable passes, and ⭐(2026-11-19)
-/// NO frame that accumulates orbit statistics (stripe, triangle inequality, orbit trap,
-/// decomposition): the chunk state carries no aux, so a walk's `fs_resolve` writes `AUX_NONE`
-/// (`(0, 0, 1e30, 0)`) into every pixel of the aux plane. The window never chunks such a frame
-/// (`!coloring.accumulates_any()` at `walk_possible` / `chunk_over`) and nor does an export
-/// (`chunk_scope`'s `iter_stats().is_empty()`); the twin did, and the window adopted its frames —
+/// NO frame that accumulates orbit statistics as the orbit runs (stripe, triangle inequality, orbit
+/// trap): the chunk state carries no aux, so a walk's `fs_resolve` writes `AUX_NONE`
+/// (`(0, 0, 1e30, 0)`) into those lanes of every pixel. The window never chunks such a frame
+/// (`!coloring.accumulates_as_it_runs()` at `walk_possible` / `chunk_over`) and nor does an export
+/// (`chunk_scope`'s `iter_stats().accumulates()`); the twin did, and the window adopted its frames —
 /// under the maintainer's stripe-average coloring a deep zoom with the default same-card worker
 /// showed ONE FLAT COLOR for most of its frames, the real picture only between adoptions
 /// (2026-11-18, screen captures at 2^60–2^70). Such a frame renders in one pass where it fits, and
-/// otherwise is not the twin's to render.
+/// otherwise is not the twin's to render. Decomposition's final angle alone walks: the resolve
+/// writes it from the state's z (coloring plan B8).
 pub fn walkable(base: &MandelbrotParams, chunk_ok: bool) -> bool {
-    chunk_ok && base.custom.as_ref().is_none_or(|c| c.resumable) && base.iter_stats().is_empty()
+    chunk_ok && base.custom.as_ref().is_none_or(|c| c.resumable) && !base.iter_stats().accumulates()
 }
 
 /// The live renderer on a device of its own, driven without a window: each [`Self::frame`] is one

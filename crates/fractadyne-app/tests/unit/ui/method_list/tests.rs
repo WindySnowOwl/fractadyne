@@ -19,8 +19,9 @@ fn every_capability_is_noted_or_told_elsewhere() {
 /// Where everything is offered (a Mandelbrot view with the skips on), the notes are the ones the
 /// renderer's established rules give: the count and the distance give up nothing; stripe, triangle
 /// and the trap are calculated step by step between 1e4x and 1e28x (no series, no band BLA) and
-/// take BLA past it; decomposition takes neither at any depth (its angle has no BLA aggregate);
-/// every statistics method is refused by glitch correction and by zoom videos' strips.
+/// take BLA past it; decomposition skips as the count does (its final angle is read at escape,
+/// coloring plan B8); every statistics method is refused by glitch correction and by zoom videos'
+/// strips.
 #[test]
 fn the_notes_are_the_established_ones() {
     use MethodNote::*;
@@ -31,7 +32,7 @@ fn the_notes_are_the_established_ones() {
     for m in [ColorMethod::Stripe, ColorMethod::TriangleIneq, ColorMethod::OrbitTrap] {
         assert_eq!(notes(m), [NoSkipShallow, NoGlitchCorrection, NoZoomVideo], "{m:?}");
     }
-    assert_eq!(notes(ColorMethod::Decomposition), [NoSkip, NoGlitchCorrection, NoZoomVideo]);
+    assert_eq!(notes(ColorMethod::Decomposition), [NoGlitchCorrection, NoZoomVideo]);
 }
 
 /// A note says a method gives something up only where the view would otherwise give it: on a
@@ -44,7 +45,7 @@ fn a_note_only_where_the_view_would_give_it() {
     }
     let deep_only = Offered { skip_deep: true, ..Offered::default() };
     assert_eq!(method_notes(ColorMethod::Stripe, deep_only), [], "stripe takes BLA where only that is offered");
-    assert_eq!(method_notes(ColorMethod::Decomposition, deep_only), [MethodNote::NoSkip]);
+    assert_eq!(method_notes(ColorMethod::Decomposition, deep_only), []);
     let videos = Offered { zoom_video: true, ..Offered::default() };
     assert_eq!(method_notes(ColorMethod::OrbitTrap, videos), [MethodNote::NoZoomVideo]);
     assert_eq!(method_notes(ColorMethod::Distance, videos), []);

@@ -430,13 +430,14 @@ impl crate::FractadyneApp {
         resolution: Resolution,
     ) -> MovingScale {
         let vb = (view_id as usize).min(1);
-        // Only a frame the chunk path can serve is spread over passes (the pin); an aux coloring,
-        // a formula past the chunk shaders' scope or a device without the state targets renders
-        // each refresh as ONE dispatch, and then one pass is all there is.
+        // Only a frame the chunk path can serve is spread over passes (the pin); a coloring that
+        // accumulates statistics as the orbit runs, a formula past the chunk shaders' scope or a
+        // device without the state targets renders each refresh as ONE dispatch, and then one pass
+        // is all there is.
         let chunk_mode = self.live_render_mode(fractal, julia, magnification);
         let can_chunk = super::actuators::can_chunk(self.perf.actuators.as_ref(), chunk_mode)
             && self.resumable(fractal)
-            && !self.coloring.accumulates_any();
+            && !self.coloring.accumulates_as_it_runs();
         let c = crate::tunables::cost();
         // W5: every value the decision reads, gathered — the decision itself is the pure
         // `decide::decide_moving`, so a recording of these inputs replays it exactly.

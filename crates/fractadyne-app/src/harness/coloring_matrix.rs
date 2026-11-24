@@ -1171,12 +1171,13 @@ impl crate::FractadyneApp {
         // The full G-buffer (coloring plan B3): the same cell accumulating every statistic BLA
         // folds as well, built as the session builds it (`current_export_request_for`, so the
         // series, BLA and the walk follow the set by the app's own rules). Where both renders
-        // accumulate something, their rules are the same (`StatSet::GBUFFER`), so the channels must
-        // be too, and the time between them is the bundle's operations alone. Where the cell
-        // accumulates nothing (Smooth, Distance), the other runs without the series and the walk: it
-        // is judged against the plain render as the cell is, and its time is what carrying the
-        // G-buffer always would cost. A cell that already carries it is compared with its method's
-        // own statistic alone.
+        // accumulate something as the orbit runs, their rules are the same (`StatSet::GBUFFER`), so
+        // the channels must be too, and the time between them is the bundle's operations alone.
+        // Where the cell accumulates nothing as it runs (Smooth, Distance; Decomposition, whose
+        // final angle is read at escape, B8), the other runs without the series, the walk and the
+        // renormalized step: it is judged against the plain render as the cell is, and its time is
+        // what carrying the G-buffer always would cost. A cell that already carries it is compared
+        // with its method's own statistic alone.
         if let (Some(req_g), Some(g1), Some(g2)) = (&req_g, g1, g2) {
             m.gbuffer_set = Some(req_g.orbit_stats.to_string());
             match g1.and_then(|g| g2.map(|g2| (g, g2))) {
@@ -1190,7 +1191,7 @@ impl crate::FractadyneApp {
                         m.fails.push(("determinism", format!("the {} render: {d2} channels differ between two renders", req_g.orbit_stats)));
                         dump("determinism", &g.px, &g2.px);
                     }
-                    if !shown.is_empty() && !other.is_empty() {
+                    if shown.accumulates() && other.accumulates() {
                         let d = differ(&a.px, &g.px);
                         m.gbuffer_diff = Some(d);
                         if d > 0 {
@@ -1198,9 +1199,9 @@ impl crate::FractadyneApp {
                             dump("gbuffer", &a.px, &g.px);
                         }
                     } else {
-                        // One side accumulates nothing: the other is a different render, judged as
-                        // the cell is (against the plain one when the cell had any, else against
-                        // the cell itself, which then is plain too).
+                        // One side accumulates nothing as the orbit runs: the other is a different
+                        // render, judged as the cell is (against the plain one when the cell had
+                        // any, else against the cell itself, which then is plain too).
                         let (truth, excused, floor) = match &plain_ref {
                             Some((p, e, f)) => (p.as_slice(), e.as_slice(), *f),
                             None => (a.px.as_slice(), steep, 0.0),

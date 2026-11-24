@@ -45,7 +45,8 @@ pub(crate) struct Offered {
 /// One thing a method gives up, as its tooltip says it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum MethodNote {
-    /// Past 1e4×, every step is calculated: no series approximation, no BLA.
+    /// Past 1e4×, every step is calculated: no series approximation, no BLA. No built-in method
+    /// since decomposition's final angle took both (coloring plan B8); kept for one that would.
     NoSkip,
     /// Between 1e4× and 1e28×, every step is calculated (BLA joins past 1e28×).
     NoSkipShallow,
@@ -81,7 +82,7 @@ pub(crate) fn method_notes(m: ColorMethod, o: Offered) -> Vec<MethodNote> {
         .into_iter()
         .filter(|n| n.reads().iter().all(|c| !m.can(*c)))
         .filter(|n| match n {
-            // Neither skip at any depth (decomposition: its final angle has no BLA aggregate).
+            // Neither skip at any depth (no built-in method since B8).
             MethodNote::NoSkip => o.skip_shallow || o.skip_deep,
             // No series, and the live view's band BLA refuses it, but BLA takes it past 1e28×:
             // only the band between is calculated step by step. Without BLA, NoSkip says it all.

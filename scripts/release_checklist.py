@@ -782,6 +782,7 @@ ENFORCERS = [
     ("Coloring", "selftest:colour methods are all different"),
     ("Coloring", "selftest:colour methods are all different"),
     ("Coloring", "selftest:colour methods are all different"),
+    ("Coloring", "selftest:colour methods are all different"),
     ("Coloring", "selftest:palettes are all different and coherent"),
     ("Coloring", "selftest:control changes the image"),
     ("Coloring", "selftest:control changes the image"),

@@ -81,15 +81,28 @@ fn a_set_of_statistics() {
     assert_eq!(both.bits(), Stripe.bit() | Trap.bit());
     assert_eq!(both.to_string(), "stripe+trap");
     assert_eq!(StatSet::NONE.to_string(), "none");
-    // Every statistic blocks the series; only the angle has no BLA aggregate.
-    assert!(!StatSet::NONE.blocks_iter_skip() && StatSet::NONE.bla_aggregate());
+    // Every running statistic blocks the series and is folded by BLA; the final angle, read off
+    // the final z at escape (B8), does neither and needs neither: it rides both and walks.
+    assert!(!StatSet::NONE.blocks_iter_skip() && StatSet::NONE.rides_bla() && !StatSet::NONE.accumulates());
     for s in Stat::ALL {
-        assert!(StatSet::of(s).blocks_iter_skip(), "{s:?}");
-        assert_eq!(StatSet::of(s).bla_aggregate(), s != Angle, "{s:?}");
+        let one = StatSet::of(s);
+        assert_eq!(one.blocks_iter_skip(), s != Angle, "{s:?}");
+        assert!(one.rides_bla(), "{s:?}");
+        assert_eq!(one.accumulates(), s != Angle, "{s:?}");
+        assert_eq!(s.spec().at_escape, s == Angle, "{s:?}");
+        assert_eq!(s.spec().bla_aggregate, s != Angle, "{s:?}: only a running statistic has a node aggregate");
     }
     let every = Stat::ALL.into_iter().fold(StatSet::NONE, StatSet::with);
-    assert!(every.blocks_iter_skip() && !every.bla_aggregate());
-    assert!(StatSet::of(Stripe).with(Triangle).with(Trap).bla_aggregate());
+    assert!(every.blocks_iter_skip() && every.rides_bla() && every.accumulates());
+    // The angle beside a running statistic changes none of its rules.
+    for s in [Stripe, Triangle, Trap] {
+        let with = StatSet::of(s).with(Angle);
+        assert_eq!(
+            (with.blocks_iter_skip(), with.rides_bla(), with.accumulates()),
+            (true, true, true),
+            "{s:?} and the angle"
+        );
+    }
 }
 
 /// The full G-buffer (B3) is what BLA folds, and adding it to a frame that accumulates anything
@@ -102,9 +115,14 @@ fn the_gbuffer_changes_no_rule_of_a_frame_that_accumulates() {
     assert_eq!(StatSet::GBUFFER, StatSet::of(Stripe).with(Triangle).with(Trap));
     for bits in 1u32..(1 << Stat::ALL.len()) {
         let s = Stat::ALL.into_iter().filter(|x| bits & x.bit() != 0).fold(StatSet::NONE, StatSet::with);
+        if !s.accumulates() {
+            // The angle alone: the G-buffer would add the running statistics' rules (below).
+            continue;
+        }
         let g = s.union(StatSet::GBUFFER);
         assert_eq!(g.blocks_iter_skip(), s.blocks_iter_skip(), "{s}");
-        assert_eq!(g.bla_aggregate(), s.bla_aggregate(), "{s}");
+        assert_eq!(g.rides_bla(), s.rides_bla(), "{s}");
+        assert_eq!(g.accumulates(), s.accumulates(), "{s}");
     }
     // Every method that reads a statistic reads one in the G-buffer, or the angle.
     for m in ColorMethod::ALL {
@@ -112,8 +130,14 @@ fn the_gbuffer_changes_no_rule_of_a_frame_that_accumulates() {
             assert!(StatSet::GBUFFER.has(r) || r == Angle, "{m:?}");
         }
     }
-    // For a frame that accumulates nothing it is not free: it turns the series off.
-    assert!(StatSet::GBUFFER.blocks_iter_skip() && !StatSet::NONE.blocks_iter_skip());
+    // For a frame that accumulates nothing as it runs it is not free: it turns the series and the
+    // walk off, for the angle alone too (which is why Decomposition does not carry it, B8).
+    for s in [StatSet::NONE, StatSet::of(Angle)] {
+        assert!(!s.blocks_iter_skip() && !s.accumulates(), "{s}");
+        let g = s.union(StatSet::GBUFFER);
+        assert!(g.blocks_iter_skip() && g.accumulates(), "{s}");
+    }
+    assert!(!StatSet::GBUFFER.has(Angle));
 }
 
 /// Where a frame carries the G-buffer: in floatexp, for the methods that read one of its
@@ -131,7 +155,8 @@ fn a_deep_frame_of_a_gbuffer_method_carries_the_gbuffer() {
         }
         // It changes none of the frame's rules (see the test above).
         assert_eq!(deep.blocks_iter_skip(), m.orbit_stats().blocks_iter_skip(), "{m:?}");
-        assert_eq!(deep.bla_aggregate(), m.orbit_stats().bla_aggregate(), "{m:?}");
+        assert_eq!(deep.rides_bla(), m.orbit_stats().rides_bla(), "{m:?}");
+        assert_eq!(deep.accumulates(), m.orbit_stats().accumulates(), "{m:?}");
         assert!(deep.has(m.reads().unwrap_or(Stat::Angle)) || m.reads().is_none(), "{m:?}");
     }
 }
@@ -157,12 +182,14 @@ fn the_predicate_sets_are_the_established_ones() {
     // needs_aux
     assert_eq!(set(ColorMethod::reads_aux), [Stripe, TriangleIneq, OrbitTrap, Decomposition]);
     assert_eq!(set(|m| !m.orbit_stats().is_empty()), [Stripe, TriangleIneq, OrbitTrap, Decomposition]);
-    // blocks_iter_skip
-    assert_eq!(set(|m| m.orbit_stats().blocks_iter_skip()), [Stripe, TriangleIneq, OrbitTrap, Decomposition]);
+    // blocks_iter_skip: the running statistics (the final angle rides the series since B8)
+    assert_eq!(set(|m| m.orbit_stats().blocks_iter_skip()), [Stripe, TriangleIneq, OrbitTrap]);
+    // accumulated as the orbit runs (the aux machinery, no walk in passes)
+    assert_eq!(set(|m| m.orbit_stats().accumulates()), [Stripe, TriangleIneq, OrbitTrap]);
     assert_eq!(set(ColorMethod::bounded_value), [Stripe, TriangleIneq, Fringe, Decomposition]);
     assert_eq!(set(ColorMethod::needs_distance_estimate), [Distance, Fringe]);
-    // bla_aggregate (only ever asked of a method that reads the aux lane)
-    assert_eq!(set(|m| m.reads_aux() && m.orbit_stats().bla_aggregate()), [Stripe, TriangleIneq, OrbitTrap]);
+    // rides BLA: every method since B8 (the final angle needs no fold)
+    assert_eq!(set(|m| m.orbit_stats().rides_bla()), ColorMethod::ALL);
     // Each reads its own statistic, and accumulates exactly it.
     assert_eq!(Stripe.reads(), Some(Stat::Stripe));
     assert_eq!(TriangleIneq.reads(), Some(Stat::Triangle));
@@ -225,9 +252,10 @@ fn the_shader_constants_are_the_table() {
 }
 
 /// The capability table as it stands (coloring plan B4): the methods colored from the main lane go
-/// everywhere; the statistics keep BLA but lose the series, the walk, glitch correction, the
-/// normalized export and strips; decomposition's final angle loses BLA too. A change here changes
-/// what a menu or a dialog offers, so it should be deliberate.
+/// everywhere; the running statistics keep BLA but lose the series, the walk, glitch correction,
+/// the normalized export and strips; decomposition's final angle, read at escape, keeps BLA, the
+/// series and the walk (B8) and loses what reads or patches the main lane only. A change here
+/// changes what a menu or a dialog offers, so it should be deliberate.
 #[test]
 fn the_capability_table_is_the_established_one() {
     use Capability::*;
@@ -237,15 +265,15 @@ fn the_capability_table_is_the_established_one() {
         let want: &[Capability] = match m {
             Smooth | Distance | Fringe => &Capability::ALL,
             Stripe | TriangleIneq | OrbitTrap => &[Bla],
-            Decomposition => &[],
+            Decomposition => &[LiveWalk, Series, Bla],
         };
         assert_eq!(can, want, "{m:?}");
         // The deep G-buffer changes none of it: the iteration's answers read the same off the
         // deep frame's statistics.
         let deep = m.orbit_stats_at(true);
         assert_eq!(m.can(Series), !deep.blocks_iter_skip(), "{m:?}");
-        assert_eq!(m.can(Bla), deep.bla_aggregate(), "{m:?}");
-        assert_eq!(m.can(LiveWalk), deep.is_empty(), "{m:?}");
+        assert_eq!(m.can(Bla), deep.rides_bla(), "{m:?}");
+        assert_eq!(m.can(LiveWalk), !deep.accumulates(), "{m:?}");
     }
     let keys: Vec<&str> = Capability::ALL.iter().map(|c| c.key()).collect();
     let mut unique = keys.clone();

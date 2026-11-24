@@ -2991,7 +2991,9 @@ impl FractadyneApp {
             Screen::MinimapPanVerify => {
                 self.perf.view_gen = [self.perf.frame_idx + 1, self.perf.frame_idx + 1];
             }
-            // The maintainer's settings: Decomposition (orbit statistics: no chunked walk), AUTO
+            // The maintainer's settings, but Stripe where the maintainer had Decomposition (orbit
+            // statistics: no chunked walk; Decomposition walks since coloring plan B8, and then the
+            // settle needs no grid and the step tests nothing), AUTO
             // iterations; 8× AA where the maintainer had 4×. ⚠Auto, as the maintainer's were: an explicit count bounds every
             // dispatch by its own ceiling (`EXPLICIT_STEPS_CEIL`), the held texture's too, and a
             // build with the defect passed under it. ⚠Seahorse valley at the period-2 cusp, not the
@@ -3017,7 +3019,7 @@ impl FractadyneApp {
                 self.render_cfg.auto_iter = true;
                 self.render_cfg.max_iter = 20_000;
                 self.render_cfg.aa = 8;
-                self.coloring.color_method = crate::ColorMethod::Decomposition;
+                self.coloring.color_method = crate::ColorMethod::Stripe;
                 // `palette-aa` left its map fixed (the default is live).
                 self.coloring.normalize_live = true;
                 self.viewport.set_center_mag(

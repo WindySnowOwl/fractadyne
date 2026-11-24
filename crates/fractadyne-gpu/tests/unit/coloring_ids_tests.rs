@@ -99,8 +99,9 @@ fn the_shader_masks_the_set_only_by_name() {
         assert!(!wgsl.contains(&format!("const {}", s.spec().wgsl)), "{} defined by hand", s.spec().wgsl);
     }
     // aux_step and aux_fold_run each test the three running statistics; the tail and the
-    // histogram test theirs.
-    for (name, at_least) in [("STAT_STRIPE", 3), ("STAT_TRIANGLE", 2), ("STAT_TRAP", 3)] {
+    // histogram test theirs; the final angle is written at escape where the frame carries it alone
+    // (`aux_angle`, coloring plan B8).
+    for (name, at_least) in [("STAT_STRIPE", 3), ("STAT_TRIANGLE", 2), ("STAT_TRAP", 3), ("STAT_ANGLE", 1)] {
         let n = wgsl.lines().filter(|l| l.split("//").next().unwrap_or("").contains(name)).count();
         assert!(n >= at_least, "{name} read on {n} lines, expected at least {at_least}");
     }

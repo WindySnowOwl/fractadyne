@@ -12,6 +12,13 @@ detail is in the git history.
 
 ## 0.4.0 (unreleased)
 
+- **Decomposition coloring calculates as fast as the smooth count.** It used to calculate every
+  step past 1e4× (no series approximation, no BLA), because the cells it draws were thought too
+  sensitive for those shortcuts. Measured, the shortcuts change fewer of its pixels than shifting
+  the view by a thousandth of a pixel does, so Decomposition now takes the same shortcuts as the
+  smooth count, and the live view's step-by-step passes at depth too. Deep Mandelbrot views
+  calculate many times faster (a 1280×720 export of a minibrot at 9.3e78×: a minute down to a third
+  of a second), and everywhere it now takes the smooth count's time.
 - **Export to JPG, AVIF and GIF.** The export dialog's Format row offers JPG, AVIF and GIF beside
   PNG and OpenEXR. A JPG and an AVIF each have a Quality slider, 1 to 100 (90 and 85 to start), and a
   GIF a Colors slider, 2 to 256, its palette chosen from the picture's own colors, with Dither on so

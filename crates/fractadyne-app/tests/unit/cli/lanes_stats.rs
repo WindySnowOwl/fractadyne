@@ -21,7 +21,7 @@ fn lists_and_shorthands() {
     assert_eq!(lanes_stat_set("all"), Ok(StatSet::GBUFFER.with(Stat::Angle)));
     assert_eq!(lanes_stat_set("gbuffer,angle"), lanes_stat_set("all"));
     assert_eq!(lanes_stat_set("none"), Ok(StatSet::NONE));
-    // `gbuffer` is what BLA folds: the angle is not in it.
+    // `gbuffer` is what BLA folds: the angle, which needs no fold, is not in it.
     assert!(!StatSet::GBUFFER.has(Stat::Angle));
 }
 
