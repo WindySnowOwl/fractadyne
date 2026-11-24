@@ -2297,6 +2297,18 @@ impl FractadyneApp {
                         });
                         note(ui, tr!(dlg_export_jpeg_note));
                     }
+                    ExportFormat::Avif => {
+                        ui.horizontal(|ui| {
+                            ui.add_space(ui.spacing().indent * 0.5);
+                            ui.label(tr!(dlg_export_avif_quality));
+                            let r = ui.add(egui::Slider::new(&mut self.export.avif_quality, 1..=100));
+                            if crate::ui::panels::slider_double_clicked(&r) {
+                                self.export.avif_quality = fractadyne_export::AVIF_QUALITY_DEFAULT;
+                            }
+                            r.on_hover_text(format!("{}\n\n{}", tr!(dlg_export_avif_quality_hover), tr!(panel_double_click_reset)));
+                        });
+                        note(ui, tr!(dlg_export_avif_note));
+                    }
                     ExportFormat::Gif => {
                         ui.horizontal(|ui| {
                             ui.add_space(ui.spacing().indent * 0.5);

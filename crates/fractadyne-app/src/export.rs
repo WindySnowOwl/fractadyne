@@ -1749,8 +1749,8 @@ impl FractadyneApp {
 
     pub(crate) fn open_view(&mut self, ctx: &egui::Context) {
         let path = crate::diag::modal(|| rfd::FileDialog::new()
-            .add_filter(tr!(export_filter_view), &["png", "jpg", "jpeg", "gif", "exr", "fdn", "kfr", "txt"])
-            .add_filter(tr!(export_filter_image), &["png", "jpg", "jpeg", "gif", "exr"])
+            .add_filter(tr!(export_filter_view), &["png", "jpg", "jpeg", "avif", "gif", "exr", "fdn", "kfr", "txt"])
+            .add_filter(tr!(export_filter_image), &["png", "jpg", "jpeg", "avif", "gif", "exr"])
             .add_filter(tr!(export_filter_location), &["fdn", "kfr", "txt"])
             .set_directory(self.dialog_dir(Self::pictures_dir))
             .pick_file());
@@ -1771,11 +1771,12 @@ impl FractadyneApp {
                 Ok(m) => self.set_toast(m, ctx),
                 Err(e) => self.set_toast(tr!(export_import_failed, error = e.to_string()), ctx),
             },
-            // Exported image: restore the view from its embedded metadata (PNG, JPG, GIF or EXR).
+            // Exported image: restore the view from its embedded metadata (PNG, JPG, AVIF, GIF or EXR).
             _ => {
                 let meta = match ext.as_str() {
                     "exr" => fractadyne_export::read_exr_metadata(&path),
                     "jpg" | "jpeg" => fractadyne_export::read_jpeg_metadata(&path),
+                    "avif" => fractadyne_export::read_avif_metadata(&path),
                     "gif" => fractadyne_export::read_gif_metadata(&path),
                     _ => fractadyne_export::read_png_metadata(&path),
                 };
@@ -1819,11 +1820,12 @@ impl FractadyneApp {
         self.export.format.ext()
     }
 
-    /// How an export is written now: the format, and a JPG's quality and a GIF's palette.
+    /// How an export is written now: the format, a JPG's or an AVIF's quality, and a GIF's palette.
     pub(crate) fn export_encoding(&self) -> ExportEncoding {
         ExportEncoding {
             format: self.export.format,
             jpeg_quality: self.export.jpeg_quality,
+            avif_quality: self.export.avif_quality,
             gif_colors: self.export.gif_colors,
             gif_dither: self.export.gif_dither,
         }
@@ -3085,12 +3087,13 @@ pub(crate) fn log_split(names: &[String], shares: &[fractadyne_gpu::DeviceShare]
     );
 }
 
-/// How an export is written: its format, and the settings a JPG and a GIF take
+/// How an export is written: its format, and the settings a JPG, an AVIF and a GIF take
 /// (`FractadyneApp::export_encoding`), copied into the worker that writes it.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ExportEncoding {
     pub(crate) format: ExportFormat,
     pub(crate) jpeg_quality: u8,
+    pub(crate) avif_quality: u8,
     pub(crate) gif_colors: u16,
     pub(crate) gif_dither: bool,
 }
@@ -3103,6 +3106,7 @@ impl ExportEncoding {
             ExportFormat::Png => fractadyne_export::write_png(p, w, h, px, Some(meta)),
             ExportFormat::Exr => fractadyne_export::write_exr(p, w, h, px, Some(meta)),
             ExportFormat::Jpeg => fractadyne_export::write_jpeg(p, w, h, px, Some(meta), self.jpeg_quality),
+            ExportFormat::Avif => fractadyne_export::write_avif(p, w, h, px, Some(meta), self.avif_quality),
             ExportFormat::Gif => fractadyne_export::write_gif(p, w, h, px, Some(meta), self.gif_colors, self.gif_dither),
         }
     }

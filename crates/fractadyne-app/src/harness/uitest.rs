@@ -83,6 +83,8 @@ enum Screen {
     Export,
     /// The export dialog with JPG chosen: its Quality slider and the note that it is lossy.
     ExportJpg,
+    /// ...with AVIF: its Quality slider and note.
+    ExportAvif,
     /// ...and with GIF: its Colors slider, Dither box and note.
     ExportGif,
     ScriptExport,
@@ -1237,6 +1239,7 @@ fn build_steps() -> Vec<Step> {
         screen("diagnostics", Screen::Diagnostics),
         screen("export", Screen::Export),
         screen("export-jpg", Screen::ExportJpg),
+        screen("export-avif", Screen::ExportAvif),
         screen("export-gif", Screen::ExportGif),
         screen("script-to-view", Screen::ScriptExport),
         screen("tour-render", Screen::TourRender),
@@ -2852,10 +2855,11 @@ impl FractadyneApp {
             // would contend for the same GPU the walk is rendering with, and turn a UI check into
             // a flaky performance test.
             Screen::Diagnostics => self.diagnostics.open = true,
-            Screen::Export | Screen::ExportJpg | Screen::ExportGif => {
+            Screen::Export | Screen::ExportJpg | Screen::ExportAvif | Screen::ExportGif => {
                 self.export.open = true;
                 self.export.format = match s {
                     Screen::ExportJpg => crate::ExportFormat::Jpeg,
+                    Screen::ExportAvif => crate::ExportFormat::Avif,
                     Screen::ExportGif => crate::ExportFormat::Gif,
                     _ => crate::ExportFormat::Png,
                 };

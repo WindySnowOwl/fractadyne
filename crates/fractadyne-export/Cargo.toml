@@ -3,7 +3,7 @@ name = "fractadyne-export"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Tiled high-res export, PNG/OpenEXR/JPEG/GIF encoders (planned — DESIGN.md §12)."
+description = "Tiled high-res export, PNG/OpenEXR/JPEG/AVIF/GIF encoders (planned — DESIGN.md §12)."
 
 [dependencies]
 png = "0.17"
@@ -13,6 +13,8 @@ zune-jpeg = "0.5"
 zune-core = "0.5"
 gif = "0.14"
 color_quant = "1.1"
+# AVIF (rav1e): without its assembly, which needs nasm to build.
+ravif = { version = "0.13", default-features = false, features = ["threading"] }
 thiserror.workspace = true
 
 [lints]

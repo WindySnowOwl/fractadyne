@@ -25,6 +25,9 @@ pub enum ExportError {
     /// Encoding or reading a GIF ([`write_gif`], [`read_gif_metadata`], [`read_gif_rgba8`]).
     #[error("GIF: {0}")]
     Gif(String),
+    /// Encoding an AVIF or reading its metadata ([`write_avif`], [`read_avif_metadata`]).
+    #[error("AVIF: {0}")]
+    Avif(String),
     #[error(transparent)]
     PngDecode(#[from] png::DecodingError),
     #[error(transparent)]
@@ -327,6 +330,10 @@ mod dither_tests;
 /// JPEG export and its reader (see the module note for the settings and why).
 mod jpeg;
 pub use jpeg::{read_jpeg_metadata, read_jpeg_rgb8, write_jpeg, JPEG_MAX_SIDE, JPEG_QUALITY_DEFAULT};
+
+/// AVIF export and its metadata reader (see the module note for the settings and why).
+mod avif;
+pub use avif::{read_avif_metadata, write_avif, AVIF_MAX_SIDE, AVIF_QUALITY_DEFAULT, AVIF_SPEED};
 
 /// GIF export and its reader (see the module note for the palette, the dither and why).
 mod gif;

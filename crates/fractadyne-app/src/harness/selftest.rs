@@ -10371,11 +10371,13 @@ zoom = \"1e94\"
                     && restores(self, fractadyne_export::read_png_metadata(&png).ok().flatten());
                 let exr_ok = fractadyne_export::write_exr(&exr, 4, 4, &pixels, Some(&blob)).is_ok()
                     && restores(self, fractadyne_export::read_exr_metadata(&exr).ok().flatten());
-                let (jpg, gif) = (dir.join("custom.jpg"), dir.join("custom.gif"));
+                let (jpg, gif, avif) = (dir.join("custom.jpg"), dir.join("custom.gif"), dir.join("custom.avif"));
                 let jpg_ok = fractadyne_export::write_jpeg(&jpg, 4, 4, &pixels, Some(&blob), 90).is_ok()
                     && restores(self, fractadyne_export::read_jpeg_metadata(&jpg).ok().flatten());
                 let gif_ok = fractadyne_export::write_gif(&gif, 4, 4, &pixels, Some(&blob), 16, true).is_ok()
                     && restores(self, fractadyne_export::read_gif_metadata(&gif).ok().flatten());
+                let avif_ok = fractadyne_export::write_avif(&avif, 4, 4, &pixels, Some(&blob), 85).is_ok()
+                    && restores(self, fractadyne_export::read_avif_metadata(&avif).ok().flatten());
                 let _ = std::fs::remove_dir_all(&dir);
                 // The tour: "Tour from current view", parsed back by the tour reader.
                 let tour_ok = restores(self, Some(blob.clone())) && {
@@ -10397,12 +10399,12 @@ zoom = \"1e94\"
                 push_check(&mut checks, &mut last_check_t, SelfCheck {
                     category: "View format",
                     name: "a_custom_view_travels_in_every_format".into(),
-                    params: "formula with a √ / é / emoji comment: view text, PNG, EXR, JPG, GIF, tour".into(),
+                    params: "formula with a √ / é / emoji comment: view text, PNG, EXR, JPG, AVIF, GIF, tour".into(),
                     result: format!(
-                        "ASCII {ascii}, format 2 {format2}; PNG {png_ok}, EXR {exr_ok}, JPG {jpg_ok}, GIF {gif_ok}, tour {tour_ok}; built-in view format 1 {plain1}"
+                        "ASCII {ascii}, format 2 {format2}; PNG {png_ok}, EXR {exr_ok}, JPG {jpg_ok}, AVIF {avif_ok}, GIF {gif_ok}, tour {tour_ok}; built-in view format 1 {plain1}"
                     ),
                     threshold: "all true",
-                    pass: ascii && format2 && png_ok && exr_ok && jpg_ok && gif_ok && tour_ok && plain1,
+                    pass: ascii && format2 && png_ok && exr_ok && jpg_ok && avif_ok && gif_ok && tour_ok && plain1,
                 });
             }
 
@@ -12769,7 +12771,7 @@ zoom = \"1e94\"
             });
         }
 
-        // ---- JPG and GIF exports: the picture, within what each setting keeps ----
+        // ---- JPG, GIF and AVIF exports: the picture, within what each setting keeps ----
         // One render of a real view (the seahorse at 20x, 480x270), written through the app's own
         // encoding (`ExportEncoding::write`, what every export path calls) as JPG at quality 90 and
         // 40 and GIF at 256 and 16 colors, read back and compared with the 8-bit picture: each
@@ -12810,7 +12812,7 @@ zoom = \"1e94\"
                     }
                     10.0 * (255.0f64 * 255.0 / (se / (3 * want8.len() / 4) as f64).max(1.0e-12)).log10()
                 };
-                let enc = |format, jpeg_quality, gif_colors| crate::export::ExportEncoding { format, jpeg_quality, gif_colors, gif_dither: true };
+                let enc = |format, jpeg_quality, gif_colors| crate::export::ExportEncoding { format, jpeg_quality, avif_quality: 85, gif_colors, gif_dither: true };
                 let mut db = Vec::new();
                 for (name, e, ext) in [
                     ("JPG 90", enc(crate::ExportFormat::Jpeg, 90, 256), "jpg"),
@@ -12851,15 +12853,31 @@ zoom = \"1e94\"
                 }
                 // At quality 90 and 256 colors close; fewer keep less (else the settings do nothing).
                 ok &= db.len() == 4 && db[0] >= 35.0 && db[2] >= 38.0 && db[1] < db[0] && db[3] < db[2];
+                // AVIF: no AV1 decoder ships, so its pixels are scored outside the app (Pillow's
+                // libavif); here it is written through the same encoding, smaller at a lower
+                // quality, under the JPG at 90, and it reopens its view.
+                let mut avif = Vec::new();
+                for q in [85u8, 50] {
+                    let path = dir.join(format!("AVIF_{q}.avif"));
+                    let e = crate::export::ExportEncoding { avif_quality: q, ..enc(crate::ExportFormat::Avif, 90, 256) };
+                    let written = e.write(&path, w, h, &r.pixels, &blob).is_ok();
+                    let view = fractadyne_export::read_avif_metadata(&path).ok().flatten().as_deref() == Some(blob.as_str());
+                    let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+                    ok &= written && view;
+                    avif.push(size);
+                    lines.push(format!("AVIF {q}: {:.0} KB{}", size as f64 / 1024.0, if view { ", reopens the view" } else { ", NOT the view" }));
+                }
+                let jpg90 = std::fs::metadata(dir.join("JPG_90.jpg")).map_or(0, |m| m.len());
+                ok &= avif.len() == 2 && avif[1] < avif[0] && avif[0] < jpg90;
             }
             let _ = std::fs::remove_dir_all(&dir);
             (self.fractal, self.julia_mode, self.dual, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.export.format) = saved;
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "export",
-                name: "JPG and GIF exports are the picture within what their settings keep".into(),
-                params: "the seahorse at 20x, 480x270, 5,000 iterations; written through ExportEncoding::write as JPG 90 and 40, GIF 256 and 16 colors (dithered); read back with the view's metadata".into(),
+                name: "JPG, AVIF and GIF exports are the picture within what their settings keep".into(),
+                params: "the seahorse at 20x, 480x270, 5,000 iterations; written through ExportEncoding::write as JPG 90 and 40, GIF 256 and 16 colors (dithered), AVIF 85 and 50; read back with the view's metadata (an AVIF's pixels are scored outside the app: no AV1 decoder ships)".into(),
                 result: if lines.is_empty() { format!("could not render: {:?}", render.err().map(|e| e.to_string())) } else { lines.join("; ") },
-                threshold: "JPG 90 at least 35 dB and GIF 256 at least 38 dB against the 8-bit picture; JPG 40 and GIF 16 below them; a GIF's colors no more than asked; each reopens its view".into(),
+                threshold: "JPG 90 at least 35 dB and GIF 256 at least 38 dB against the 8-bit picture; JPG 40 and GIF 16 below them; a GIF's colors no more than asked; AVIF 85 smaller than the JPG at 90, AVIF 50 smaller still; each reopens its view".into(),
                 pass: ok,
             });
         }

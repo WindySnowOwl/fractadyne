@@ -4833,13 +4833,15 @@ pub(crate) enum ExportFormat {
     Exr,
     /// Lossy, at `ExportState::jpeg_quality`.
     Jpeg,
+    /// Lossy, at `ExportState::avif_quality`.
+    Avif,
     /// A palette of `ExportState::gif_colors` colors, dithered or not.
     Gif,
 }
 
 impl ExportFormat {
     /// Every format, in the order the export dialog offers them.
-    pub(crate) const ALL: [ExportFormat; 4] = [ExportFormat::Png, ExportFormat::Jpeg, ExportFormat::Gif, ExportFormat::Exr];
+    pub(crate) const ALL: [ExportFormat; 5] = [ExportFormat::Png, ExportFormat::Jpeg, ExportFormat::Avif, ExportFormat::Gif, ExportFormat::Exr];
 
     /// The file extension, and the session's key for it.
     pub(crate) fn ext(self) -> &'static str {
@@ -4847,6 +4849,7 @@ impl ExportFormat {
             ExportFormat::Png => "png",
             ExportFormat::Exr => "exr",
             ExportFormat::Jpeg => "jpg",
+            ExportFormat::Avif => "avif",
             ExportFormat::Gif => "gif",
         }
     }
@@ -4857,6 +4860,7 @@ impl ExportFormat {
             ExportFormat::Png => "PNG",
             ExportFormat::Exr => "OpenEXR",
             ExportFormat::Jpeg => "JPG",
+            ExportFormat::Avif => "AVIF",
             ExportFormat::Gif => "GIF",
         }
     }
@@ -4866,6 +4870,7 @@ impl ExportFormat {
         match ext.to_ascii_lowercase().as_str() {
             "exr" => ExportFormat::Exr,
             "jpg" | "jpeg" => ExportFormat::Jpeg,
+            "avif" => ExportFormat::Avif,
             "gif" => ExportFormat::Gif,
             _ => ExportFormat::Png,
         }
@@ -5014,6 +5019,7 @@ pub(crate) fn scan_gallery_dir(dir: &std::path::Path) -> Vec<(std::path::PathBuf
             "png" => fractadyne_export::read_png_metadata(&path).ok().flatten(),
             "exr" => fractadyne_export::read_exr_metadata(&path).ok().flatten(),
             "jpg" | "jpeg" => fractadyne_export::read_jpeg_metadata(&path).ok().flatten(),
+            "avif" => fractadyne_export::read_avif_metadata(&path).ok().flatten(),
             "gif" => fractadyne_export::read_gif_metadata(&path).ok().flatten(),
             // ⭐⭐**A saved view IS its own metadata.** Until this, the gallery listed only
             // exported images, so a folder of `.fdn` locations — the deep ones, the ones worth
@@ -6408,6 +6414,8 @@ struct ExportState {
     format: ExportFormat,
     /// A JPG's quality, 1 to 100 (persisted; `--jpeg-quality`).
     jpeg_quality: u8,
+    /// An AVIF's quality, 1 to 100 (persisted; `--avif-quality`).
+    avif_quality: u8,
     /// A GIF's palette size, 2 to 256, and its dither (persisted; `--gif-colors`, `--gif-no-dither`).
     gif_colors: u16,
     gif_dither: bool,
@@ -8533,6 +8541,7 @@ impl FractadyneApp {
                 ss: s.export_ss,
                 format: ExportFormat::from_ext(&s.export_format),
                 jpeg_quality: s.export_jpeg_quality.clamp(1, 100),
+                avif_quality: s.export_avif_quality.clamp(1, 100),
                 gif_colors: s.export_gif_colors.clamp(fractadyne_export::GIF_COLORS_MIN, fractadyne_export::GIF_COLORS_MAX),
                 gif_dither: s.export_gif_dither,
                 dual_mode: match s.export_dual_mode.as_str() {
@@ -9693,6 +9702,12 @@ impl FractadyneApp {
                 eprintln!("fractadyne: --jpeg-quality has no effect: the output is not a .jpg file.");
             }
         }
+        if let Some(q) = ranged("--avif-quality", 1.0..=100.0) {
+            self.export.avif_quality = q.round() as u8;
+            if fmt != ExportFormat::Avif {
+                eprintln!("fractadyne: --avif-quality has no effect: the output is not an .avif file.");
+            }
+        }
         if let Some(n) = ranged("--gif-colors", fractadyne_export::GIF_COLORS_MIN as f32..=fractadyne_export::GIF_COLORS_MAX as f32) {
             self.export.gif_colors = n.round() as u16;
             if fmt != ExportFormat::Gif {
@@ -10062,6 +10077,7 @@ impl FractadyneApp {
             export_ss: self.export.ss,
             export_format: self.export.format.ext().to_string(),
             export_jpeg_quality: self.export.jpeg_quality,
+            export_avif_quality: self.export.avif_quality,
             export_gif_colors: self.export.gif_colors,
             export_gif_dither: self.export.gif_dither,
             export_dir: self
