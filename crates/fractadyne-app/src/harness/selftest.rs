@@ -8020,6 +8020,129 @@ impl FractadyneApp {
                     }),
                 }
             }
+            // ---- the trap placed on the cycle (coloring plan F4, part 2) ----
+            // At the trap-shape study's view U, the edge of the period-2 bulb (multiplier 0.976): the
+            // app finds the closed form's cycle {z+, z−} from the view's center in f64, and three
+            // presses walk z+, z−, z+; the point trap on z+ brings out the inside (the CLI measured
+            // the picture's luma spread 5.7 at the origin, 13.2 on z+). A Julia view's cycle is its
+            // c's; past 2^40x the cycle comes from view 0's reference (one built here at a center
+            // inside the bulb, in the cache the app reads); Burning Ship has none to find, nor has a
+            // center outside the set.
+            {
+                let saved_vp = self.viewport.clone();
+                let saved_dual = self.dual;
+                let saved_jc = self.julia_c;
+                let saved_ref = (self.ref_cache[0].orbit.clone(), self.ref_cache[0].orbit_len, self.ref_cache[0].orbit_tail.clone());
+                // z± = (−1 ± √(−3 − 4c)) / 2, the one nearer 0 first.
+                let bulb2 = |c: [f64; 2]| {
+                    let w = [-3.0 - 4.0 * c[0], -4.0 * c[1]];
+                    let r = w[0].hypot(w[1]);
+                    let s = [((r + w[0]) / 2.0).sqrt(), ((r - w[0]) / 2.0).sqrt().copysign(w[1])];
+                    let (a, b) = ([(-1.0 + s[0]) / 2.0, s[1] / 2.0], [(-1.0 - s[0]) / 2.0, -s[1] / 2.0]);
+                    if a[0].hypot(a[1]) <= b[0].hypot(b[1]) { (a, b) } else { (b, a) }
+                };
+                let near32 = |p: [f32; 2], z: [f64; 2]| (f64::from(p[0]) - z[0]).hypot(f64::from(p[1]) - z[1]) < 1e-6;
+                self.dual = false;
+                self.julia_mode = false;
+                self.fractal = FractalKind::Mandelbrot;
+                self.coloring.trap_type = T::Point;
+                self.coloring.trap_place = P::DEFAULT;
+                self.render_cfg.max_iter = 3000;
+                let (cu, wu) = ([-0.9173735445860097f64, 0.22966943698602013f64], 480u32);
+                let hu = 300u32;
+                let mag_u = 3.0 / (0.105 * f64::from(hu) / f64::from(wu));
+                let at_f = |v: f64| fractadyne_core::BigFloat::from_f64(v, 128);
+                let mut vu = Viewport::new(f64::from(wu), f64::from(hu));
+                vu.set_center_mag(at_f(cu[0]), at_f(cu[1]), mag_u);
+                self.viewport = vu.clone();
+                let (zp, zm) = bulb2(cu);
+                let walk: Vec<_> = (0..3).map(|_| (self.place_trap_on_cycle(), self.coloring.trap_place.center)).collect();
+                let walked = matches!(walk[0].0, Ok((2, 1)))
+                    && matches!(walk[1].0, Ok((2, 2)))
+                    && matches!(walk[2].0, Ok((2, 1)))
+                    && near32(walk[0].1, zp)
+                    && near32(walk[1].1, zm)
+                    && near32(walk[2].1, zp);
+                // The picture: the point at the origin, and on z+.
+                let luma_std = |px: &[f32]| {
+                    let l: Vec<f64> = px.chunks_exact(4).map(|v| 0.2126 * f64::from(v[0]) + 0.7152 * f64::from(v[1]) + 0.0722 * f64::from(v[2])).collect();
+                    let m = l.iter().sum::<f64>() / l.len().max(1) as f64;
+                    (l.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / l.len().max(1) as f64).sqrt()
+                };
+                let render_u = |app: &mut Self, place: P| {
+                    app.coloring.trap_place = place;
+                    let mut req = app.current_export_request_for(&vu, false);
+                    req.width = wu;
+                    req.height = hu;
+                    req.ss = 1;
+                    req.aa_palette = fractadyne_gpu::PaletteAa::Off;
+                    px(&req).map(|p| luma_std(&p))
+                };
+                let on_zp = P { center: [zp[0] as f32, zp[1] as f32], ..P::DEFAULT };
+                let (s0, s1) = (render_u(self, P::DEFAULT), render_u(self, on_zp));
+                let brought_out = matches!((s0, s1), (Some(a), Some(b)) if b >= 1.5 * a && a > 0.0);
+                // A Julia view: its c's cycle (c = −1 + 0.1i, multiplier 0.4).
+                self.julia_mode = true;
+                self.julia_c = (-1.0, 0.1);
+                self.coloring.trap_place = P::DEFAULT;
+                let jul = self.place_trap_on_cycle();
+                let (jp, _) = bulb2([-1.0, 0.1]);
+                let julia_ok = matches!(jul, Ok((2, 1))) && near32(self.coloring.trap_place.center, jp);
+                self.julia_mode = false;
+                // Past 2^40x: view 0's reference, built here inside the bulb (c = −1 + 0.1i).
+                let mut deep_vp = Viewport::new(f64::from(wu), f64::from(hu));
+                deep_vp.set_center_mag(at_f(-1.0), at_f(0.1), 2f64.powf(crate::trap_cycle::F64_LOG2_MAG + 4.0));
+                self.viewport = deep_vp;
+                let zero = fractadyne_core::BigFloat::from_f64(0.0, 192);
+                let (orbit, len, tail) = fractadyne_core::reference_orbit_t(
+                    &zero,
+                    &zero,
+                    &fractadyne_core::BigFloat::from_f64(-1.0, 192),
+                    &fractadyne_core::BigFloat::from_f64(0.1, 192),
+                    0,
+                    20_000,
+                    192,
+                );
+                self.ref_cache[0].orbit = std::sync::Arc::new(orbit);
+                self.ref_cache[0].orbit_len = len;
+                self.ref_cache[0].orbit_tail = Some(tail);
+                self.coloring.trap_place = P::DEFAULT;
+                let deep = self.place_trap_on_cycle();
+                let deep_ok = matches!(deep, Ok((2, 1))) && near32(self.coloring.trap_place.center, jp);
+                (self.ref_cache[0].orbit, self.ref_cache[0].orbit_len, self.ref_cache[0].orbit_tail) = saved_ref;
+                // None to find: Burning Ship; a center outside the set. The trap stays where it was.
+                self.viewport = vu.clone();
+                self.fractal = FractalKind::from_name("Burning Ship").unwrap_or(FractalKind::Mandelbrot);
+                self.coloring.trap_place = P::DEFAULT;
+                let ship = self.place_trap_on_cycle();
+                self.fractal = FractalKind::Mandelbrot;
+                let mut out_vp = Viewport::new(f64::from(wu), f64::from(hu));
+                out_vp.set_center_mag(at_f(0.3), at_f(0.0), 4.0);
+                self.viewport = out_vp;
+                let outside = self.place_trap_on_cycle();
+                let none_ok = ship == Err(crate::trap_cycle::NoCycle::Family)
+                    && outside == Err(crate::trap_cycle::NoCycle::Outside)
+                    && self.coloring.trap_place == P::DEFAULT;
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Trap",
+                    name: "the trap placed on the cycle at the view's center".into(),
+                    params: format!(
+                        "view U (period-2 bulb edge) f64; Julia c = -1+0.1i; 2^{}x from the reference; Burning Ship; c = 0.3",
+                        crate::trap_cycle::F64_LOG2_MAG + 4.0
+                    ),
+                    result: format!(
+                        "walk {:?}; luma spread {} at the origin, {} on z+; Julia {jul:?}; deep {deep:?}; Burning Ship {ship:?}; outside {outside:?}",
+                        walk.iter().map(|w| w.0).collect::<Vec<_>>(),
+                        s0.map_or("-".into(), |v| format!("{v:.4}")),
+                        s1.map_or("-".into(), |v| format!("{v:.4}"))
+                    ),
+                    threshold: "the closed form's cycle, walked z+, z-, z+; the spread x1.5 on z+; Julia's and the reference's cycles; none for Burning Ship or outside".into(),
+                    pass: walked && brought_out && julia_ok && deep_ok && none_ok,
+                });
+                self.viewport = saved_vp;
+                self.dual = saved_dual;
+                self.julia_c = saved_jc;
+            }
             (
                 self.fractal,
                 self.julia_mode,

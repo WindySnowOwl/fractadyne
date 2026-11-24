@@ -20,7 +20,12 @@ detail is in the git history.
   depth with the same shortcuts as before, and a double-click puts a slider back. A view file keeps
   the placement (`trap_x`, `trap_y`, `trap_rotation`, `trap_size`, written only once moved), and on
   the command line it is `--trap-center X,Y`, `--trap-rotation DEG` and `--trap-size R`. A trap left
-  where it was renders exactly as before.
+  where it was renders exactly as before. Place on the cycle moves the trap onto the cycle that
+  orbits inside the set settle on, at the view's center: inside a bulb, where the trap at the origin
+  leaves the inside one color, it brings out a field of rays and dots. A point or a cross is
+  centered on a point of the cycle, a circle passes through one, and each press moves on to the
+  cycle's next point. It works for Mandelbrot and Multibrot, and in a Julia view takes the cycle of
+  its c.
 - **Decomposition coloring calculates as fast as the smooth count.** It used to calculate every
   step past 1e4× (no series approximation, no BLA), because the cells it draws were thought too
   sensitive for those shortcuts. Measured, the shortcuts change fewer of its pixels than shifting

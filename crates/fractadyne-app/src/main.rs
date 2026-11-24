@@ -96,6 +96,7 @@ mod update;
 mod video_pipe;
 mod coloring_fields;
 mod coloring_hook;
+mod trap_cycle;
 mod view_coloring;
 mod scripting;
 mod session_outcome;

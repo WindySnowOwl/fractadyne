@@ -430,9 +430,13 @@ enum Screen {
     /// The trap placed (coloring plan F4), the same view with Equalize off: the cross moved and
     /// turned, for the panel's center and rotation rows (no size row: the cross has none)...
     TrapPlaceCross,
-    /// ...then the circle moved and sized: the center and size rows, no rotation row. Leaves the
-    /// trap placed; no later screen uses the trap (one that does sets its own).
+    /// ...then the circle moved and sized: the center and size rows, no rotation row...
     TrapPlaceCircle,
+    /// ...then Place on the cycle (F4 part 2) pressed once at the trap-shape study's view U, the edge
+    /// of the period-2 bulb, with the point trap and the inside colored by it: the trap on z+, the
+    /// inside a field of rays, and the message naming period 2, point 1. Leaves the trap placed; no
+    /// later screen uses the trap (one that does sets its own).
+    TrapOnCycle,
     /// Edge shading (coloring plan C3): the Julia-link point in Smooth, point sampled, the shading
     /// off (the base)...
     EdgeShadeOff,
@@ -1434,6 +1438,7 @@ fn build_steps() -> Vec<Step> {
         screen("equalize-trap", Screen::EqualizeTrap),
         screen("trap-place-cross", Screen::TrapPlaceCross),
         screen("trap-place-circle", Screen::TrapPlaceCircle),
+        screen("trap-on-cycle", Screen::TrapOnCycle),
         screen("edge-shade-off", Screen::EdgeShadeOff),
         screen("edge-shade", Screen::EdgeShade),
         screen("edge-shade-inside", Screen::EdgeShadeInside),
@@ -3363,6 +3368,23 @@ impl FractadyneApp {
                 } else {
                     (crate::TrapType::Circle, crate::TrapPlace { center: [0.1, 0.4], size: 0.3, ..d })
                 };
+                self.dialogs.right_panel_open = true;
+            }
+            // F4 part 2: view U, the point trap coloring the inside, Place on the cycle pressed once.
+            Screen::TrapOnCycle => {
+                let at = |v: f64| fractadyne_core::BigFloat::from_f64(v, 64);
+                self.set_show_mode(crate::ShowMode::Set);
+                self.set_fractal(crate::FractalKind::Mandelbrot);
+                self.viewport.set_center_mag(at(-0.9173735445860097), at(0.22966943698602013), 45.7);
+                self.render_cfg.auto_iter = false;
+                self.render_cfg.max_iter = 3_000;
+                self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+                self.coloring.interior = None;
+                self.coloring.trap_type = crate::TrapType::Point;
+                self.coloring.trap_place = crate::TrapPlace::DEFAULT;
+                let placed = self.place_trap_on_cycle();
+                let msg = self.trap_cycle_message(placed);
+                self.queue_toast(msg);
                 self.dialogs.right_panel_open = true;
             }
             // C3: the Julia-link point again (filaments enough to shade), Smooth, point sampled; the

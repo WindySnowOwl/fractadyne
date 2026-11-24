@@ -373,3 +373,37 @@ fn a_placement_for_a_shape_is_finite_and_clamped() {
     // A placement the shape ignores entirely is the default, so it computes as before.
     assert!(TrapPlace { rotation: 45.0, size: 2.0, ..TrapPlace::DEFAULT }.for_shape(TrapType::Point).is_default());
 }
+
+/// Placing the trap on a cycle (F4 part 2): its outline through a cycle point, the nearest first,
+/// then each next one in orbit order, round the cycle. The period-2 bulb's cycle at the study's
+/// view U: z+ near 0, z− at |z−| = 1.0047.
+#[test]
+fn the_trap_walks_the_cycle_it_is_placed_on() {
+    let zp = [-0.02483685875720304, -0.2416742977846682];
+    let zm = [-0.975163141242797, 0.2416742977846682];
+    let cycle = [zp, zm];
+    let f = |z: [f64; 2]| [z[0] as f32, z[1] as f32];
+    // The point from the origin: z+ is nearer; then z−; then z+ again.
+    let (p1, k1) = TrapPlace::DEFAULT.on_cycle(TrapType::Point, &cycle);
+    assert_eq!((k1, p1.center), (0, f(zp)));
+    let (p2, k2) = p1.on_cycle(TrapType::Point, &cycle);
+    assert_eq!((k2, p2.center), (1, f(zm)));
+    let (p3, k3) = p2.on_cycle(TrapType::Point, &cycle);
+    assert_eq!((k3, p3.center), (0, f(zp)));
+    // The cross is centered the same way and keeps its turn.
+    let turned = TrapPlace { rotation: 30.0, ..TrapPlace::DEFAULT };
+    let (x, _) = turned.on_cycle(TrapType::Cross, &cycle);
+    assert_eq!((x.center, x.rotation), (f(zp), 30.0));
+    // The circle keeps its center and passes through a cycle point: the unit circle is nearest z−
+    // (|z−| − 1 = 0.0047 against 1 − |z+| = 0.757), then z+.
+    let (c1, j1) = TrapPlace::DEFAULT.on_cycle(TrapType::Circle, &cycle);
+    assert_eq!((j1, c1.center), (1, [0.0, 0.0]));
+    assert!((f64::from(c1.size) - zm[0].hypot(zm[1])).abs() < 1e-6, "{}", c1.size);
+    let (c2, j2) = c1.on_cycle(TrapType::Circle, &cycle);
+    assert_eq!(j2, 0);
+    assert!((f64::from(c2.size) - zp[0].hypot(zp[1])).abs() < 1e-6, "{}", c2.size);
+    // Each placed trap passes through the point it took.
+    assert!(p1.dist(TrapType::Point, zp[0], zp[1]) < 1e-7);
+    assert!(x.dist(TrapType::Cross, zp[0], zp[1]) < 1e-7);
+    assert!(c1.dist(TrapType::Circle, zm[0], zm[1]) < 1e-6);
+}

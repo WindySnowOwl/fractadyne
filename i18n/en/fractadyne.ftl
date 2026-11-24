@@ -3056,6 +3056,15 @@ panel-trap-rotation = Trap rotation
 panel-trap-rotation-hover = Turn the cross counterclockwise, in degrees. Also --trap-rotation for --render.
 panel-trap-size = Trap size
 panel-trap-size-hover = The circle's radius. Also --trap-size for --render.
+# The button that moves the orbit trap onto the attracting cycle at the view's center (coloring plan F4).
+panel-trap-on-cycle = Place on the cycle
+panel-trap-on-cycle-hover = Move the trap onto the cycle that orbits inside the set settle on, at the view's center, so the inside of the set shows the trap's structure instead of one color. A point or a cross is centered on a point of the cycle; a circle keeps its center and passes through one. Press again for the cycle's next point.
+# After the button: the cycle's period and which of its points the trap is on (from 1).
+trap-on-cycle-done = The trap is on the cycle: period { $period }, point { $point } of { $period }.
+trap-on-cycle-outside = No cycle to place the trap on: the view's center is outside the set, or at the very edge of its part of the set.
+# $family = the fractal's name.
+trap-on-cycle-family = { $family } has no cycle the trap can be placed on here; Mandelbrot and Multibrot do.
+trap-on-cycle-not-ready = The view's reference orbit is still being calculated. Try again when it is done.
 # The panel's Inside rows (coloring plan B5): what colors the inside of the set.
 panel-inside = Inside
 panel-inside-hover = What colors the inside of the set.
