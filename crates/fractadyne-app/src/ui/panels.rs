@@ -262,11 +262,14 @@ impl FractadyneApp {
 
     /// Equalize (coloring plan C6): how much histogram coloring is mixed into the fitted palette, a
     /// slider indented under the Scale, drawn the same in the panel and the Color menu. Grayed where
-    /// it would change no pixel, with the reason: no normalization (the Scale's), or a method other
-    /// than Smooth (it spreads the escape count).
+    /// it would change no pixel, with the reason: no normalization (the Scale's), a method other
+    /// than Smooth and the orbit trap (it spreads the escape count, or the trap's values: C6c), or
+    /// the orbit trap without "Always fit range" (the trap's only fit, `live_norm_window`).
     pub(crate) fn equalize_row(&mut self, ui: &mut egui::Ui) {
-        let smooth = self.coloring.color_method == ColorMethod::Smooth;
-        let live = self.scale_applies() && smooth;
+        let method = self.coloring.color_method;
+        let trap = method == ColorMethod::OrbitTrap;
+        let fitted = if trap { self.coloring.normalize_fit } else { self.scale_applies() };
+        let live = (method == ColorMethod::Smooth || trap) && fitted;
         ui.add_enabled_ui(live, |ui| {
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent * 0.5);
@@ -280,7 +283,11 @@ impl FractadyneApp {
                     self.coloring.equalize = fractadyne_state::ColoringSpec::default().equalize;
                 }
                 r.on_hover_text(format!("{}\n\n{}", tr!(panel_equalize_hover), tr!(panel_double_click_reset)))
-                    .on_disabled_hover_text(if smooth { tr!(panel_scale_off_hover) } else { tr!(panel_equalize_method_hover) });
+                    .on_disabled_hover_text(match method {
+                        ColorMethod::Smooth => tr!(panel_scale_off_hover),
+                        ColorMethod::OrbitTrap => tr!(panel_equalize_trap_off_hover),
+                        _ => tr!(panel_equalize_method_hover),
+                    });
             });
         });
     }

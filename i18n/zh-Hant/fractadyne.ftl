@@ -2811,7 +2811,8 @@ panel-equalize-hover =
     依逃逸次數的各個區間佔畫面的多少來鋪開調色盤，使每種顏色涵蓋畫面中大致相同的份額（直方圖著色）。當一種顏色淹沒畫面、細節擠在其他顏色的一條窄帶裡時使用。
 
     0% 時只由刻度曲線安放顏色。100% 時，集合旁像素很少的細絲可能變成同一種顏色；稍低一些可保留它們。
-panel-equalize-method-hover = 均衡鋪開的是逃逸次數，因此適用於平滑疊代。
+panel-equalize-method-hover = 均衡鋪開的是逃逸次數或軌道陷阱的值，因此適用於平滑疊代和軌道陷阱。
+panel-equalize-trap-off-hover = 使用軌道陷阱時，「一律貼合範圍」將調色盤貼合到陷阱的值後，均衡才生效。
 # The curves the Scale list offers.
 transfer-linear = 線性
 transfer-sqrt = 平方根

@@ -2189,6 +2189,13 @@ struct Perf {
     /// The view (`norm_sig`: center, depth and iteration ask) `trap_pal` was last taken at. At
     /// rest on that same view the window is held (`render::trap_window_feed`'s `at_rest`).
     trap_sig: [u64; 2],
+    /// Equalize colors for the orbit trap (coloring plan C6c): the distribution of the trap's values
+    /// per view, from the GPU (`fractadyne_gpu::trap_quantiles`, published with the window), fed
+    /// under the window's own decision (taken with a window taken, kept with one kept) and the one
+    /// SHOWN, gliding to it as `trap_shown` does (`render::eq_glide`). Boxed: a kilobyte each.
+    trap_dist_sink: [fractadyne_gpu::TrapDistSink; 2],
+    trap_eq_fed: [Option<Box<fractadyne_core::coloring::Quantiles>>; 2],
+    trap_eq_shown: [Option<Box<fractadyne_core::coloring::Quantiles>>; 2],
     /// The INSIDE's trap window per view (C4): its sink (`fractadyne_gpu::CTR_TRAP_HIST_IN`), the
     /// window fed and the one shown, and the view it was taken at, exactly as the trap's above.
     inside_sink: [std::sync::Arc<std::sync::atomic::AtomicU64>; 2],
@@ -2950,6 +2957,9 @@ impl Default for Perf {
             trap_pal: [None, None],
             trap_shown: [None, None],
             trap_sig: [0, 0],
+            trap_dist_sink: [Default::default(), Default::default()],
+            trap_eq_fed: [None, None],
+            trap_eq_shown: [None, None],
             inside_sink: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
@@ -10646,6 +10656,7 @@ impl FractadyneApp {
         self.perf.trap_pal = [None, None];
         self.perf.trap_shown = [None, None];
         self.perf.trap_sig = [0, 0];
+        self.perf.trap_eq_fed = [None, None];
         self.perf.inside_pal = [None, None];
         self.perf.inside_shown = [None, None];
         self.perf.inside_sig = [0, 0];
@@ -16490,8 +16501,8 @@ impl FractadyneApp {
             || p.palette_phase[v].debt() != 0.0
             || p.norm_drawn[v].is_some_and(|d| !d.arrived())
             || (p.norm_shown[v].is_some() && p.norm_shown[v] != p.norm_pal[v])
-            // Equalize colors' distribution gliding to the fed one (C6).
-            || (self.coloring.equalize > 0.0 && p.eq_shown[v] != p.eq_fed[v])
+            // Equalize colors' distribution gliding to the fed one (C6; the trap's own, C6c).
+            || { let [fed, shown] = self.eq_dists(v); fed != shown }
             // A linked Julia pane moves with the set's map (C11).
             || (v == 1 && self.julia_linked() && self.palette_moving(0))
     }
@@ -17906,6 +17917,25 @@ impl FractadyneApp {
     /// The palette windows, fed and shown, that color view `view`'s frame — the ones an average
     /// must restart for ([`accum_color_sig`](Self::accum_color_sig)); the rule is
     /// [`render::coloring_windows`].
+    /// The distributions Equalize colors maps view `view` by, fed and shown (coloring plan C6,
+    /// C6c): the escape count's, or under the orbit trap its own values' while "Always fit range"
+    /// fits them, as [`accum_windows`](Self::accum_windows) picks the windows; none when nothing is
+    /// equalized. (The escape count's distribution goes on being measured under the trap: counted,
+    /// it would restart the average of a picture it does not color.)
+    pub(crate) fn eq_dists(&self, view: usize) -> [Option<&fractadyne_core::coloring::Quantiles>; 2] {
+        let p = &self.perf;
+        if !(self.coloring.equalize > 0.0) {
+            return [None, None];
+        }
+        if self.shown_method() == ColorMethod::OrbitTrap {
+            if !self.coloring.normalize_fit {
+                return [None, None];
+            }
+            return [p.trap_eq_fed[view].as_deref(), p.trap_eq_shown[view].as_deref()];
+        }
+        [p.eq_fed[view].as_deref(), p.eq_shown[view].as_deref()]
+    }
+
     fn accum_windows(&self, view: usize) -> [Option<(f32, f32)>; 2] {
         let p = &self.perf;
         render::coloring_windows(
@@ -17954,11 +17984,9 @@ impl FractadyneApp {
         for r in [fed, shown, self.perf.norm_drawn[view].map(|d| d.win), in_fed, in_shown] {
             r.map(|(lo, hi)| (lo.to_bits(), hi.to_bits())).hash(&mut h);
         }
-        // Equalize colors (C6): the distribution the remap is built from, fed and shown.
-        if self.coloring.equalize > 0.0 {
-            for q in [&self.perf.eq_fed[view], &self.perf.eq_shown[view]] {
-                q.as_ref().map(|q| q.iter().map(|k| k.to_bits()).collect::<Vec<u32>>()).hash(&mut h);
-            }
+        // Equalize colors (C6, C6c): the distribution the remap is built from, fed and shown.
+        for q in self.eq_dists(view) {
+            q.map(|q| q.iter().map(|k| k.to_bits()).collect::<Vec<u32>>()).hash(&mut h);
         }
         self.perf.palette_fade[view].weight().to_bits().hash(&mut h);
         self.perf.palette_phase[view].debt().to_bits().hash(&mut h);

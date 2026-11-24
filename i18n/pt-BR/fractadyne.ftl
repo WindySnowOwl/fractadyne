@@ -2891,7 +2891,8 @@ panel-equalize-hover =
     Distribui a paleta para que cada cor cubra mais ou menos a mesma parte da imagem, conforme quanto da imagem cada faixa de contagens de escape preenche (coloração por histograma). Use quando uma cor inunda a vista e o detalhe fica espremido numa faixa estreita das outras.
 
     Em 0% a curva da Escala posiciona as cores sozinha. Em 100% os filamentos finos junto ao conjunto, que cobrem poucos pixels, podem ficar de uma só cor; um pouco menos os mantém.
-panel-equalize-method-hover = Equalizar distribui a contagem de escape, então vale com Iteração suave.
+panel-equalize-method-hover = Equalizar distribui a contagem de escape ou os valores da armadilha de órbita, então vale com Iteração suave e Armadilha de órbita.
+panel-equalize-trap-off-hover = Com Armadilha de órbita, Equalizar vale depois que "Sempre ajustar a faixa" ajusta a paleta aos valores da armadilha.
 # The curves the Scale list offers.
 transfer-linear = Linear
 transfer-sqrt = Raiz quadrada

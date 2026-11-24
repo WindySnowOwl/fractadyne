@@ -417,6 +417,10 @@ enum Screen {
     /// Equalize colors (coloring plan C6): the PaletteScaleLinear view with Equalize at 75%, against
     /// it: another picture, and no pass (a recolor from the distribution already held).
     Equalize,
+    /// The same view under the orbit trap, its values fitted by "Always fit range" (C6c's base)...
+    TrapFit,
+    /// ...then Equalize at 75% (coloring plan C6c): another picture, no pass, a table on the map.
+    EqualizeTrap,
     /// Edge shading (coloring plan C3): the Julia-link point in Smooth, point sampled, the shading
     /// off (the base)...
     EdgeShadeOff,
@@ -1411,6 +1415,8 @@ fn build_steps() -> Vec<Step> {
         screen("palette-scale", Screen::PaletteScale),
         screen("palette-wrap-steps", Screen::PaletteWrapSteps),
         screen("equalize", Screen::Equalize),
+        screen("trap-fit", Screen::TrapFit),
+        screen("equalize-trap", Screen::EqualizeTrap),
         screen("edge-shade-off", Screen::EdgeShadeOff),
         screen("edge-shade", Screen::EdgeShade),
         screen("edge-shade-inside", Screen::EdgeShadeInside),
@@ -1854,6 +1860,44 @@ impl FractadyneApp {
     /// The Equalize step (C6) against palette-scale-linear, the same view and map without it: another
     /// picture (mean difference 4 levels or more, the control that it ran), no pass (a recolor: the
     /// distribution was fed while the view settled, whatever the share), and a table on the map.
+    /// The trap-fit step (C6c, the base): the equalize step's view under the orbit trap, its values
+    /// fitted ("Always fit range"), not equalized: the drawn map is the trap's window, no table.
+    fn uitest_trap_fit_checks(&self, checks: &mut Vec<Check>) {
+        let window = self.live_norm_window(0);
+        let table = self.perf.view_map[0].is_some_and(|(m, _)| m.eq.is_some());
+        let ok = self.shown_method() == crate::ColorMethod::OrbitTrap && window.is_some() && !table;
+        checks.push(Check {
+            name: "trap-fit-engaged".into(),
+            verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+            detail: format!("the trap's fitted window {window:?}; the drawn map has a table: {table}"),
+        });
+    }
+
+    /// The equalize-trap step (C6c) against trap-fit, the same view and fitted map without it:
+    /// another picture (mean difference 4 levels or more, the control that it ran), no pass (a
+    /// recolor: the trap's distribution was fed with its window while the view settled), a table
+    /// on the drawn map, and the trap's own distribution held.
+    fn uitest_equalize_trap_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
+        let before = "trap-fit";
+        let b = ut.results.iter().rev().find(|r| r.name == before);
+        let r = view.zip(b).and_then(|((px, _), b)| {
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            let s: f64 = px.chunks_exact(4).zip(prev.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            Some((s / (3 * (px.len() / 4)).max(1) as f64, (ran_why[0] - b.ran_why[0]) + (ran_why[1] - b.ran_why[1])))
+        });
+        let table = self.perf.view_map[0].is_some_and(|(m, _)| m.eq.is_some());
+        let held = self.perf.trap_eq_shown[0].is_some();
+        let ok = r.is_some_and(|(d, ran)| d >= 4.0 && ran == 0) && table && held;
+        checks.push(Check {
+            name: "equalize-trap-recolors".into(),
+            verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+            detail: format!(
+                "against {before} (mean difference in levels, passes caused): {r:?}; the drawn map has a table: {table}; the trap's distribution held: {held}; share {}",
+                self.coloring.equalize
+            ),
+        });
+    }
+
     fn uitest_equalize_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
         let before = "palette-scale-linear";
         let b = ut.results.iter().rev().find(|r| r.name == before);
@@ -3268,6 +3312,18 @@ impl FractadyneApp {
                     self.coloring.steps = 6;
                 }
             }
+            // C6c: the equalize step's view under the orbit trap, its values fitted by "Always fit
+            // range", point sampled, linear; then Equalize colors at 75%.
+            Screen::TrapFit | Screen::EqualizeTrap => {
+                self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+                self.coloring.interior = Some(crate::InteriorMode::Solid);
+                self.coloring.normalize_live = false;
+                self.coloring.normalize_fit = true;
+                self.coloring.palette_aa = false;
+                self.coloring.transfer = fractadyne_core::coloring::Transfer::Linear;
+                self.coloring.equalize = if matches!(s, Screen::EqualizeTrap) { 0.75 } else { 0.0 };
+                self.dialogs.right_panel_open = true;
+            }
             // C3: the Julia-link point again (filaments enough to shade), Smooth, point sampled; the
             // shading off, on toward white, then toward the inside's near-black, one change a step.
             Screen::EdgeShadeOff | Screen::EdgeShade | Screen::EdgeShadeInside | Screen::EdgeShadePanel => {
@@ -4019,6 +4075,8 @@ impl FractadyneApp {
                     | Screen::PaletteScale
                     | Screen::PaletteWrapSteps
                     | Screen::Equalize
+                    | Screen::TrapFit
+                    | Screen::EqualizeTrap
                     | Screen::EdgeShadeOff
                     | Screen::EdgeShade
                     | Screen::EdgeShadeInside
@@ -4955,6 +5013,13 @@ impl FractadyneApp {
         // ---- Equalize colors (coloring plan C6) ----
         if let StepKind::Screen(Screen::Equalize) = step.kind {
             self.uitest_equalize_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
+        }
+        // ...for the orbit trap's fitted values (C6c).
+        if let StepKind::Screen(Screen::TrapFit) = step.kind {
+            self.uitest_trap_fit_checks(&mut checks);
+        }
+        if let StepKind::Screen(Screen::EqualizeTrap) = step.kind {
+            self.uitest_equalize_trap_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
         }
 
         // ---- edge shading (coloring plan C3) ----

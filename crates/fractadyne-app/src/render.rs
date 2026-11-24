@@ -2470,16 +2470,23 @@ impl FractadyneApp {
             self.perf.trap_pal[vb] = None;
             self.perf.trap_shown[vb] = None;
             self.perf.trap_sig[vb] = 0;
+            self.perf.trap_eq_fed[vb] = None;
+            self.perf.trap_eq_shown[vb] = None;
             return;
         }
         if r != u64::MAX {
             let (lo, hi) = (f32::from_bits((r >> 32) as u32), f32::from_bits(r as u32));
+            // The distribution published with this window, just before it (coloring plan C6c).
+            let dist = self.perf.trap_dist_sink[vb].lock().ok().and_then(|mut g| g.take());
             if lo.is_finite() && hi.is_finite() && hi > lo {
                 let before = self.perf.trap_pal[vb];
                 let sig = self.perf.norm_sig[vb];
                 let held = at_rest && self.perf.trap_sig[vb] == sig;
-                self.perf.trap_pal[vb] = Some(trap_window_feed(before, (lo, hi), held));
+                let fed = trap_window_feed(before, (lo, hi), held);
+                self.perf.trap_pal[vb] = Some(fed);
                 self.perf.trap_sig[vb] = sig;
+                // Equalize colors' distribution, under the window's decision (C6c).
+                self.perf.trap_eq_fed[vb] = trap_dist_feed(self.perf.trap_eq_fed[vb].take(), dist, Some(fed) != before);
                 if crate::diag::trace_on("accum") {
                     crate::diag::trace(
                         "accum",
@@ -2493,8 +2500,12 @@ impl FractadyneApp {
                 }
             }
         }
+        // The distribution jumps with the window when the window takes another picture outright.
+        let snap = matches!((self.perf.trap_shown[vb], self.perf.trap_pal[vb]), (Some(s), Some(t)) if norm_glide_is_reacquire(s, t));
         self.perf.trap_shown[vb] =
             self.perf.trap_pal[vb].map(|target| norm_glide_step(self.perf.trap_shown[vb], target, false, self.norm_pace(vb)));
+        self.perf.trap_eq_shown[vb] =
+            eq_glide(self.perf.trap_eq_shown[vb].take(), self.perf.trap_eq_fed[vb].as_deref(), snap, (self.perf.last_dt_ms / 1000.0) as f32);
     }
 
     /// Feed view `vb`'s INSIDE window (C4) from the GPU's latest reading (`Perf::inside_sink`) and
@@ -2598,19 +2609,23 @@ impl FractadyneApp {
     }
 
     /// [`Self::norm_map_for`] with view `vi`'s Equalize colors (coloring plan C6): its held
-    /// distribution (`Perf::eq_shown`) remapped over the window, when one is held.
+    /// distribution remapped over the window, when one is held: the escape count's
+    /// (`Perf::eq_shown`), or under the orbit trap its values' (`Perf::trap_eq_shown`, C6c).
     pub(crate) fn norm_map_view(&self, vi: usize, mn: f32, mx: f32) -> NormMap {
-        self.equalized_map(self.norm_map_for(mn, mx), mn, mx, self.perf.eq_shown[vi.min(1)].as_deref())
+        let q = if self.shown_method() == crate::ColorMethod::OrbitTrap { &self.perf.trap_eq_shown } else { &self.perf.eq_shown };
+        self.equalized_map(self.norm_map_for(mn, mx), mn, mx, q[vi.min(1)].as_deref())
     }
 
     /// `m`, the normalized map of the window `[mn, mx]`, with Equalize colors mixed in (coloring
     /// plan C6): the share asked for, of the remap of the escape values' distribution `q` over the
     /// window's fitted coordinate (`fractadyne_core::coloring::eq_knots`). As it is for a share of
-    /// 0, a method other than Smooth (the trap's fit has its own window), or no distribution. A
-    /// linear map is rewritten about its floor (the same colors), which an equalized map needs.
+    /// 0, a method other than Smooth and the orbit trap (C6c: `q` its values' distribution, the
+    /// window its fit's), or no distribution. A linear map is rewritten about its floor (the same
+    /// colors), which an equalized map needs.
     pub(crate) fn equalized_map(&self, m: NormMap, mn: f32, mx: f32, q: Option<&fractadyne_core::coloring::Quantiles>) -> NormMap {
         let share = self.coloring.equalize;
-        let Some(q) = q.filter(|_| share > 0.0 && mx > mn && self.shown_method() == crate::ColorMethod::Smooth) else {
+        let equalizes = matches!(self.shown_method(), crate::ColorMethod::Smooth | crate::ColorMethod::OrbitTrap);
+        let Some(q) = q.filter(|_| share > 0.0 && mx > mn && equalizes) else {
             return m;
         };
         let t = norm_map_transfer(mn, mx, self.coloring.transfer);
@@ -7669,6 +7684,7 @@ impl FractadyneApp {
             norm_base: self.perf.norm_base[vs.min(1)],
             norm_hist_out: Some(self.perf.norm_hist_sink[vs.min(1)].clone()),
             trap_window_out: Some(self.perf.trap_sink[vs.min(1)].clone()),
+            trap_dist_out: Some(self.perf.trap_dist_sink[vs.min(1)].clone()),
             inside_window_out: Some(self.perf.inside_sink[vs.min(1)].clone()),
             content_tag,
             content_out: Some(self.perf.content_sink[vs.min(1)].clone()),
@@ -13079,6 +13095,22 @@ pub(crate) fn trap_window_feed(old: Option<(f32, f32)>, new: (f32, f32), held: b
             }
         }
         None => new,
+    }
+}
+
+/// The orbit trap's distribution Equalize colors holds after a reading (coloring plan C6c), under
+/// its window's decision ([`trap_window_feed`]): the reading's when the window was taken with it
+/// (`window_taken`) or none is held yet; else the one held (a held window's picture is decided, and
+/// so is its spread of colors). A reading without a distribution changes nothing.
+pub(crate) fn trap_dist_feed(
+    held: Option<Box<fractadyne_core::coloring::Quantiles>>,
+    reading: Option<fractadyne_core::coloring::Quantiles>,
+    window_taken: bool,
+) -> Option<Box<fractadyne_core::coloring::Quantiles>> {
+    match (reading, held) {
+        (Some(q), None) => Some(Box::new(q)),
+        (Some(q), Some(_)) if window_taken => Some(Box::new(q)),
+        (_, held) => held,
     }
 }
 

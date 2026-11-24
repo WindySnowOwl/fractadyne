@@ -2891,7 +2891,8 @@ panel-equalize-hover =
     Distribuisce la tavolozza perché ogni colore copra all'incirca la stessa parte dell'immagine, secondo quanta parte dell'immagine riempie ciascun intervallo di conteggi di fuga (colorazione a istogramma). Utile quando un colore invade la vista e il dettaglio è stretto in una sottile fascia degli altri.
 
     Allo 0% la curva della Scala colloca da sola i colori. Al 100% i filamenti sottili vicino all'insieme, che coprono pochi pixel, possono diventare di un solo colore; un po' meno li conserva.
-panel-equalize-method-hover = Equalizza distribuisce il conteggio di fuga, quindi vale con Iterazione continua.
+panel-equalize-method-hover = Equalizza distribuisce il conteggio di fuga o i valori della trappola orbitale, quindi vale con Iterazione continua e Trappola orbitale.
+panel-equalize-trap-off-hover = Con Trappola orbitale, Equalizza vale una volta che «Adatta sempre l’intervallo» adatta la tavolozza ai valori della trappola.
 # The curves the Scale list offers.
 transfer-linear = Lineare
 transfer-sqrt = Radice quadrata

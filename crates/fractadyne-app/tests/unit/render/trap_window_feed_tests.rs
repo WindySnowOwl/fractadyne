@@ -1,4 +1,4 @@
-use super::{inside_fit_map, trap_window_feed, INSIDE_FIT_CYCLES, TRAP_WINDOW_BREAK, TRAP_WINDOW_HOLD};
+use super::{inside_fit_map, trap_dist_feed, trap_window_feed, INSIDE_FIT_CYCLES, TRAP_WINDOW_BREAK, TRAP_WINDOW_HOLD};
 
 /// The first reading is taken as it is, held or not.
 #[test]
@@ -73,4 +73,27 @@ fn the_inside_fit_spans_its_window_in_one_and_a_half_sweeps() {
     // A window narrower than a histogram bucket is taken as one bucket: no division by ~0.
     let (cycle, _) = inside_fit_map(2.0, 2.0, 0.0);
     assert!(cycle.is_finite() && (cycle - INSIDE_FIT_CYCLES * 16.0).abs() < 1e-3);
+}
+
+/// The trap's distribution for Equalize colors (coloring plan C6c) follows its window: taken with a
+/// window taken, kept with a window kept, the first taken whatever; a reading without one changes
+/// nothing.
+#[test]
+fn the_trap_distribution_is_taken_with_its_window() {
+    use fractadyne_core::coloring::{Quantiles, EQ_QUANTILES};
+    let q = |base: f32| -> Quantiles {
+        let mut k = [0.0f32; EQ_QUANTILES + 1];
+        for (i, x) in k.iter_mut().enumerate() {
+            *x = base + i as f32 * 0.01;
+        }
+        k
+    };
+    let first = trap_dist_feed(None, Some(q(1.0)), false);
+    assert_eq!(first.as_deref(), Some(&q(1.0)), "the first is taken whatever the window did");
+    let kept = trap_dist_feed(first.clone(), Some(q(2.0)), false);
+    assert_eq!(kept.as_deref(), Some(&q(1.0)), "a window kept keeps its distribution");
+    let taken = trap_dist_feed(first.clone(), Some(q(2.0)), true);
+    assert_eq!(taken.as_deref(), Some(&q(2.0)), "a window taken takes the reading's");
+    assert_eq!(trap_dist_feed(first.clone(), None, true).as_deref(), Some(&q(1.0)), "no distribution: nothing changes");
+    assert_eq!(trap_dist_feed(None, None, true), None);
 }

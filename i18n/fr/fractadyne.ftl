@@ -2892,7 +2892,8 @@ panel-equalize-hover =
     Répartit la palette pour que chaque couleur couvre à peu près la même part de l'image, selon la part de l'image qu'occupe chaque plage de comptes d'échappement (coloration par histogramme). Utile quand une couleur envahit la vue et que le détail est serré dans une mince bande des autres.
 
     À 0 % la courbe de l'Échelle place seule les couleurs. À 100 % les filaments fins près de l'ensemble, que peu de pixels couvrent, peuvent prendre une seule couleur ; un peu moins les conserve.
-panel-equalize-method-hover = Égaliser répartit le compte d'échappement : il s'applique avec Itération lissée.
+panel-equalize-method-hover = Égaliser répartit le compte d'échappement ou les valeurs du piège orbital : il s'applique avec Itération lissée et Piège orbital.
+panel-equalize-trap-off-hover = Avec Piège orbital, Égaliser s’applique une fois que « Toujours ajuster la plage » ajuste la palette aux valeurs du piège.
 # The curves the Scale list offers.
 transfer-linear = Linéaire
 transfer-sqrt = Racine carrée

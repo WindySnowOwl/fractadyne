@@ -499,7 +499,7 @@ pub(crate) const FIELDS: [Field; 47] = [
     Field {
         key: "equalize",
         name: "equalize colors",
-        doc: "Equalize colors, 0 to 1: the share of histogram coloring mixed into the palette map wherever it is normalized, so each color takes about the same area of the picture (method \"smooth\"; 0: the fitted map alone).",
+        doc: "Equalize colors, 0 to 1: the share of histogram coloring mixed into the palette map wherever it is normalized, so each color takes about the same area of the picture (method \"smooth\", and \"trap\" with normalize_fit; 0: the fitted map alone).",
         access: Access::Real(
             |s| s.equalize,
             |s, v| s.equalize = v,
@@ -507,7 +507,7 @@ pub(crate) const FIELDS: [Field; 47] = [
             *slider_range::EQUALIZE.end(),
         ),
         parents: &["method"],
-        shows: escape_count,
+        shows: uses_fit,
     },
     Field {
         key: "wrap",

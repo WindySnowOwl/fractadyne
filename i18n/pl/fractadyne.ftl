@@ -2983,7 +2983,8 @@ panel-equalize-hover =
     Rozkłada paletę tak, by każdy kolor pokrywał mniej więcej tę samą część obrazu, zależnie od tego, ile obrazu wypełnia każdy zakres liczby ucieczek (barwienie histogramem). Przydaje się, gdy jeden kolor zalewa widok, a szczegóły są ściśnięte w wąskim pasie pozostałych.
 
     Przy 0% kolory rozmieszcza sama krzywa Skali. Przy 100% cienkie włókna przy zbiorze, które pokrywa niewiele pikseli, mogą przybrać jeden kolor; nieco mniej je zachowuje.
-panel-equalize-method-hover = Wyrównanie rozkłada liczbę ucieczek, więc działa z Gładką iteracją.
+panel-equalize-method-hover = Wyrównanie rozkłada liczbę ucieczek lub wartości pułapki orbity, więc działa z Gładką iteracją i Pułapką orbity.
+panel-equalize-trap-off-hover = Przy Pułapce orbity wyrównanie działa, gdy „Zawsze dopasuj zakres” dopasuje paletę do wartości pułapki.
 # The curves the Scale list offers.
 transfer-linear = Liniowa
 transfer-sqrt = Pierwiastek kwadratowy

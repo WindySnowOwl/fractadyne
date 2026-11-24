@@ -3099,13 +3099,14 @@ panel-scale-hover =
 
     A heavily skewed range takes Log even under Linear.
 panel-scale-off-hover = Applies once the palette is fitted to the view's range: turn on 'Normalize deep colors' or 'Always fit range'.
-# Equalize (coloring plan C6): a slider indented under Scale (also in the Color menu), from 0% to 100%: how much histogram coloring is mixed into the fitted palette. Its tooltip, and its tooltip while grayed because the method is not Smooth (grayed for no normalization, it shows panel-scale-off-hover).
+# Equalize (coloring plan C6): a slider indented under Scale (also in the Color menu), from 0% to 100%: how much histogram coloring is mixed into the fitted palette. Its tooltip, its tooltip while grayed because the method is neither Smooth nor Orbit trap, and (coloring plan C6c) while grayed under Orbit trap because 'Always fit range' is off (grayed for no normalization under Smooth, it shows panel-scale-off-hover).
 panel-equalize = Equalize
 panel-equalize-hover =
     Spread the palette so each color covers about the same share of the picture, by how much of the picture each range of escape counts fills (histogram coloring). Use it when one color floods the view and the detail is squeezed into a thin band of the others.
 
     At 0% the Scale's curve places the colors alone. At 100% the fine filaments next to the set, which few pixels cover, can turn to one color; somewhat less keeps them.
-panel-equalize-method-hover = Equalize spreads the escape count, so it applies with Smooth iteration.
+panel-equalize-method-hover = Equalize spreads the escape count or the orbit trap's values, so it applies with Smooth iteration and Orbit trap.
+panel-equalize-trap-off-hover = With Orbit trap, Equalize applies once 'Always fit range' fits the palette to the trap's values.
 # The curves the Scale list offers.
 transfer-linear = Linear
 transfer-sqrt = Square root

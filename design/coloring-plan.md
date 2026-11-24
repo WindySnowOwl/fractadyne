@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1 to C11 done (a solid inside in any color; the palette map's curves, wraps and steps; edge shading by the distance; the relief light's slope from the distance and a highlight; the inside's palette fitted to its range; Equalize, histogram coloring mixed into the fitted map, in tours and zoom videos too; palettes blended in OKLab; the palette anti-aliased over a footprint from the distance estimate; the fringe method; equipotential lines at an even spacing at every depth; the dual view's Julia pane on the set's palette map); B8 and C6c not started; see §10 (2026-11-23).** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1 to C11 done (a solid inside in any color; the palette map's curves, wraps and steps; edge shading by the distance; the relief light's slope from the distance and a highlight; the inside's palette fitted to its range; Equalize, histogram coloring mixed into the fitted map, in tours and zoom videos too and on the orbit trap's fit; palettes blended in OKLab; the palette anti-aliased over a footprint from the distance estimate; the fringe method; equipotential lines at an even spacing at every depth; the dual view's Julia pane on the set's palette map); B8 not started; see §10 (2026-11-23).** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -1128,6 +1128,44 @@ UI rows, `.fdn`/farm/CLI through B4, B1 cells, a selftest appearance check, uite
 Order: C1, C4, C8, C9, C11 (smallest), then C2, C3, C10, then C5, C6, C7. (2026-11-20: B9 and B10,
 the prototyping aids, come before C2.)
 
+**C6c, done 2026-11-23** (branch `feat/color-c6c-trap-equalize`): Equalize colors for the orbit
+trap's fitted values. The shader already equalized whatever value a method colors by
+(`coord_under`'s early branch), so no GPU shader change: the trap needed its own distribution. The
+GPU's trap-value histogram (`CTR_TRAP_HIST`, buckets of 1/16 from −8 on the 4x4 grid, the inside
+counted) gives it (`fractadyne_gpu::trap_quantiles`, linear inside a bucket, its ends the outer
+edges of the lowest and highest buckets in use), published with the trap's window and just before
+it (`TrapDistSink`, `MandelbrotParams::trap_dist_out`). Prototype first (scratchpad `c6c/`, four
+views: the seahorse at 20x with the point and cross traps, the home view, the Multibrot 7 view at
+21,000x the histogram was built for): the remap from the histogram within 0.032 of a palette sweep
+of every pixel's exact one, 0.0035 on average; the fullest of 16 colors 6.3 to 7.6% equalized
+against 9.3 to 20.6% fitted. The live view holds it as the escape count's is held (`trap_eq_fed`,
+`trap_eq_shown`), fed under the trap window's own decision (`trap_dist_feed`: taken with a window
+taken, kept with one kept, so a held window's colors are decided too) and glided with the window,
+jumping when the window takes another picture outright (`norm_glide_is_reacquire`);
+`norm_map_view` equalizes the trap's map by it (`equalized_map` now takes Smooth and the trap). The
+average's signature and `palette_moving` read the distribution that colors the frame
+(`eq_dists`): the trap's under the trap, as `accum_windows` picks the windows. The slider applies
+to the trap once "Always fit range" fits its values (its only fit), grayed otherwise with that
+reason (`panel-equalize-trap-off-hover`; the method tooltip names the trap; 15 languages, 14
+drafts); the `equalize` field shows for the trap. Inside's own fitted window (C4) is not equalized.
+**The research's "detail at the high end" needs nothing more:** rank order (each pixel its exact
+share) is said to keep more of it than histogram coloring, but Equalize's held distribution is
+continuous, not binned, and over the top fifth of the window, where the counts are sparse, its
+remap is within 0.005 of a sweep of exact rank order on the six C6 views from 1x to 9.3e78x, both
+an export's (exact quantiles) and the live view's (the fine histogram), its neighbor-to-neighbor
+detail there 95 to 103% of rank order's. (The control, whole-iteration bins with the smooth count
+inside, came out equal too: the flat high end the research describes comes from bins coarser than
+these or from integer counts, neither of which Equalize uses.) A core test holds it: the remap is
+rank order at the high end within a thousandth of the picture. Tests: gpu `trap_quantiles` (its
+ends, its shares, under 16 samples nothing); `trap_dist_feed`; core rank order at the high end.
+Self-test `trap-equalize` (the seahorse at 20x, point and cross, one render's trap lane and the
+GPU's histogram of it: the remap from the histogram within 0.015 of a sweep of the exact, 0.006 on
+average; the equalized colors against the CPU's over the trap lane, linear and sqrt, shares 0.5 and
+1: 0.00% apart, controls 98 to 100%; the fullest of 16 colors 6.6 and 6.8% equalized, 19.5 and
+12.2% fitted); uitest `trap-fit` (the equalize step's view under the trap, fitted, no table) and
+`equalize-trap` (75%: 63.6 levels from it, no pass, a table on the drawn map, the trap's
+distribution held).
+
 **C6b, done 2026-11-23** (branch `feat/color-c6b-tours`): Equalize colors in tours and zoom
 videos, each frame equalized by distributions measured along the way and blended to its time or
 depth, never by its own (a distribution measured frame by frame would flicker). **Tours:** each
@@ -1802,7 +1840,7 @@ coloring in these places, so sequence the two with care:
 | C10        | done, merged                                              | `43368601` (merge `cc471188`)                                                             |
 | C5         | done, merged                                              | `ed36a532` (merge `2eb22119`)                                                             |
 | C6         | done, merged (after the C2 map fix, merge `c44d9d35`)     | `2674cffe` (merge `61325df2`)                                                             |
-| C6b        | done, on `feat/color-c6b-tours` (tours, zoom videos)      | merge recorded with the next step                                                         |
-| C6c        | not started (the trap's fit; rank-order high-end detail)  |                                                                                           |
+| C6b        | done, merged (tours, zoom videos)                         | `5d53ce76` (merge `9d08ac0d`)                                                             |
+| C6c        | done, on `feat/color-c6c-trap-equalize`                   | merge recorded with the next step                                                         |
 | C7         | done, merged                                              | `3535dd38` (merge `e472c5ce`)                                                             |
 | D, E, F, G | not started                                               |                                                                                           |

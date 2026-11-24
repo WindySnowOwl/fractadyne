@@ -56,7 +56,8 @@ detail is in the git history.
   crowds into a thin band of the others comes out with every color in its share. At 100% the fine
   filaments next to the set, which few pixels cover, can turn to one color; around 75% keeps them.
   It works wherever the palette is fitted to the view (Normalize deep colors, Always fit range, or
-  `--normalize` on an export), with Smooth iteration. The live view measures the picture once it
+  `--normalize` on an export), with Smooth iteration, and on the orbit trap's colors once Always fit
+  range fits them to its values. The live view measures the picture once it
   settles and holds that, so the colors stay put while supersampling refines it, and while you zoom
   they ease from one picture's spread to the next. Moving the slider recolors the view at once,
   with no recalculation. Views, bookmarks, Share text and render-farm jobs carry it, and it has a

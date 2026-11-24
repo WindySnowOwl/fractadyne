@@ -157,6 +157,29 @@ fn share_zero_is_the_fitted_map_exactly() {
     }
 }
 
+/// "Detail at the high end" (coloring plan C6c): rank order, each value its exact share of the
+/// picture, is said to keep more of it than histogram coloring. The remap from a held distribution
+/// IS rank order there too: over the top fifth of the window, where the values are sparse, the
+/// share it gives each value is the exact one within a thousandth (a knot's resolution).
+#[test]
+fn the_remap_is_rank_order_at_the_high_end_too() {
+    let mut v = sample(40_000, 277.0);
+    v.sort_by(f32::total_cmp);
+    let q = quantiles_of_sorted(&v).unwrap();
+    let (lo, top) = (v[0] as f64, q[EQ_QUANTILES * 98 / 100] as f64);
+    let k = eq_knots(&q, lo, top, Transfer::Linear);
+    let rank = |x: f64| v.partition_point(|&y| (y as f64) <= x) as f64 / v.len() as f64;
+    let rank_top = rank(top);
+    let mut checked = 0;
+    for &x in v.iter().filter(|&&x| (x as f64 - lo) / (top - lo) >= 0.8 && (x as f64) <= top) {
+        let u = (x as f64 - lo) / (top - lo);
+        let d = (eq_remap(&k, u) - rank(x as f64) / rank_top).abs();
+        assert!(d <= 1.0e-3, "at {x}: the remap {} against rank order {}", eq_remap(&k, u), rank(x as f64) / rank_top);
+        checked += 1;
+    }
+    assert!(checked > 50, "only {checked} values in the window's top fifth");
+}
+
 // ---- Weighted atoms and blends (coloring plan C6b: tours and zoom videos) ----
 
 #[test]
