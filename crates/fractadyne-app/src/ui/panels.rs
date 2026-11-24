@@ -17,8 +17,7 @@ const PANEL_LABEL_W: f32 = 104.0;
 /// and the panel's seventeen already read correctly.
 impl crate::FractadyneApp {
     /// The trap's shape (the orbit trap method's, or the inside's when the trap colors it, B5) and
-    /// where it sits (F4): drawn with whichever uses it. The turn only for a shape that turns and
-    /// the size only for one that has a size (`TrapSpec::turns`, `sized`), so no row does nothing.
+    /// where it sits (F4): drawn with whichever uses it.
     fn trap_shape_row(&mut self, ui: &mut egui::Ui) {
         labelled(ui, &tr!(panel_trap_shape), |ui| {
             egui::ComboBox::from_id_salt("panel_trap_shape")
@@ -29,42 +28,40 @@ impl crate::FractadyneApp {
                     }
                 });
         });
-        let reset = TrapPlace::DEFAULT;
-        let spec = self.coloring.trap_type.spec();
-        let place = &mut self.coloring.trap_place;
-        let center_hover = format!("{}\n\n{}", tr!(panel_trap_center_hover), tr!(panel_double_click_reset));
-        let [cx, cy] = &mut place.center;
-        for (label, value, d) in [
-            (tr!(panel_trap_center_x), cx, reset.center[0]),
-            (tr!(panel_trap_center_y), cy, reset.center[1]),
-        ] {
-            let r = labelled(ui, &label, |ui| ui.add(egui::Slider::new(value, crate::slider_range::TRAP_CENTER).fixed_decimals(3)));
-            if slider_double_clicked(&r) {
-                *value = d;
+        trap_place_rows(ui, self.coloring.trap_type, &mut self.coloring.trap_place);
+        self.trap_on_cycle_button(ui, false);
+    }
+
+    /// The trap method's inside, when the trap colors it: a trap of its own, or the method's (the
+    /// default). Its own has the same placement rows as the method's.
+    fn inside_trap_rows(&mut self, ui: &mut egui::Ui) {
+        let same = tr!(panel_inside_trap_same);
+        labelled(ui, &tr!(panel_inside_trap), |ui| {
+            egui::ComboBox::from_id_salt("panel_inside_trap")
+                .selected_text(self.coloring.interior_trap.map_or(same.clone(), |t| t.label()))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.coloring.interior_trap, None, same.as_str());
+                    for t in TrapType::ALL {
+                        ui.selectable_value(&mut self.coloring.interior_trap, Some(t), t.label());
+                    }
+                })
+                .response
+                .on_hover_text(tr!(panel_inside_trap_hover));
+            if self.dialogs.uitest_inside_trap_scroll {
+                ui.scroll_to_cursor(Some(egui::Align::Min));
             }
-            r.on_hover_text(&center_hover);
+        });
+        if let Some(shape) = self.coloring.interior_trap {
+            trap_place_rows(ui, shape, &mut self.coloring.interior_trap_place);
+            self.trap_on_cycle_button(ui, true);
         }
-        if spec.turns {
-            let r = labelled(ui, &tr!(panel_trap_rotation), |ui| {
-                ui.add(egui::Slider::new(&mut place.rotation, crate::slider_range::TRAP_ROTATION).suffix("°").fixed_decimals(1))
-            });
-            if slider_double_clicked(&r) {
-                place.rotation = reset.rotation;
-            }
-            r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_rotation_hover), tr!(panel_double_click_reset)));
-        }
-        if spec.sized {
-            let r = labelled(ui, &tr!(panel_trap_size), |ui| {
-                ui.add(egui::Slider::new(&mut place.size, crate::slider_range::TRAP_SIZE).logarithmic(true))
-            });
-            if slider_double_clicked(&r) {
-                place.size = reset.size;
-            }
-            r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_size_hover), tr!(panel_double_click_reset)));
-        }
-        // F4 part 2: onto the attracting cycle at the view's center, the next point each press.
+    }
+
+    /// Place on the cycle (F4 part 2): onto the attracting cycle at the view's center, the next point
+    /// each press; `inside`, the inside's own trap.
+    fn trap_on_cycle_button(&mut self, ui: &mut egui::Ui, inside: bool) {
         if ui.button(tr!(panel_trap_on_cycle)).on_hover_text(tr!(panel_trap_on_cycle_hover)).clicked() {
-            let placed = self.place_trap_on_cycle();
+            let placed = self.place_trap_on_cycle_for(inside);
             let msg = self.trap_cycle_message(placed);
             let ctx = ui.ctx().clone();
             self.set_toast(msg, &ctx);
@@ -88,6 +85,44 @@ impl crate::FractadyneApp {
             }
             r.on_hover_text(hover);
         }
+    }
+}
+
+/// A trap's placement rows (F4): its center, and the turn only for a shape that turns and the size
+/// only for one that has a size (`TrapSpec::turns`, `sized`), so no row does nothing. Double-click
+/// puts a slider back.
+fn trap_place_rows(ui: &mut egui::Ui, shape: TrapType, place: &mut TrapPlace) {
+    let reset = TrapPlace::DEFAULT;
+    let spec = shape.spec();
+    let center_hover = format!("{}\n\n{}", tr!(panel_trap_center_hover), tr!(panel_double_click_reset));
+    let [cx, cy] = &mut place.center;
+    for (label, value, d) in [
+        (tr!(panel_trap_center_x), cx, reset.center[0]),
+        (tr!(panel_trap_center_y), cy, reset.center[1]),
+    ] {
+        let r = labelled(ui, &label, |ui| ui.add(egui::Slider::new(value, crate::slider_range::TRAP_CENTER).fixed_decimals(3)));
+        if slider_double_clicked(&r) {
+            *value = d;
+        }
+        r.on_hover_text(&center_hover);
+    }
+    if spec.turns {
+        let r = labelled(ui, &tr!(panel_trap_rotation), |ui| {
+            ui.add(egui::Slider::new(&mut place.rotation, crate::slider_range::TRAP_ROTATION).suffix("°").fixed_decimals(1))
+        });
+        if slider_double_clicked(&r) {
+            place.rotation = reset.rotation;
+        }
+        r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_rotation_hover), tr!(panel_double_click_reset)));
+    }
+    if spec.sized {
+        let r = labelled(ui, &tr!(panel_trap_size), |ui| {
+            ui.add(egui::Slider::new(&mut place.size, crate::slider_range::TRAP_SIZE).logarithmic(true))
+        });
+        if slider_double_clicked(&r) {
+            place.size = reset.size;
+        }
+        r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_size_hover), tr!(panel_double_click_reset)));
     }
 }
 
@@ -823,6 +858,11 @@ impl FractadyneApp {
                     && self.coloring.interior_of(self.coloring.color_method) == crate::InteriorMode::Trap
                 {
                     self.trap_shape_row(ui);
+                } else if self.coloring.color_method == ColorMethod::OrbitTrap
+                    && self.coloring.interior_of(ColorMethod::OrbitTrap) == crate::InteriorMode::Trap
+                {
+                    // The trap method colors the inside by its trap: the same, or one of the inside's own.
+                    self.inside_trap_rows(ui);
                 }
                 self.inside_palette_rows(ui);
                 });

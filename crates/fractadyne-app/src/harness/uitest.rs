@@ -434,9 +434,12 @@ enum Screen {
     TrapPlaceCircle,
     /// ...then Place on the cycle (F4 part 2) pressed once at the trap-shape study's view U, the edge
     /// of the period-2 bulb, with the point trap and the inside colored by it: the trap on z+, the
-    /// inside a field of rays, and the message naming period 2, point 1. Leaves the trap placed; no
-    /// later screen uses the trap (one that does sets its own).
+    /// inside a field of rays, and the message naming period 2, point 1...
     TrapOnCycle,
+    /// ...then the inside's own trap: the method's trap a cross at the origin colors the outside, the
+    /// inside a point of its own placed on the cycle; the panel's Inside trap rows. Leaves the traps
+    /// placed; no later screen uses the trap (one that does sets its own).
+    InsideOwnTrap,
     /// Edge shading (coloring plan C3): the Julia-link point in Smooth, point sampled, the shading
     /// off (the base)...
     EdgeShadeOff,
@@ -1439,6 +1442,7 @@ fn build_steps() -> Vec<Step> {
         screen("trap-place-cross", Screen::TrapPlaceCross),
         screen("trap-place-circle", Screen::TrapPlaceCircle),
         screen("trap-on-cycle", Screen::TrapOnCycle),
+        screen("inside-own-trap", Screen::InsideOwnTrap),
         screen("edge-shade-off", Screen::EdgeShadeOff),
         screen("edge-shade", Screen::EdgeShade),
         screen("edge-shade-inside", Screen::EdgeShadeInside),
@@ -2669,6 +2673,7 @@ impl FractadyneApp {
         // The no-derivative screen's Effects section and the coloring it set, ONCE as the walk
         // leaves it: a later step pair carries its coloring from one step to the next.
         self.dialogs.uitest_effects_scroll = false;
+        self.dialogs.uitest_inside_trap_scroll = false;
         if self.dialogs.uitest_effects_open == Some(true) {
             self.dialogs.uitest_effects_open = Some(false);
             self.coloring.color_method = crate::ColorMethod::Smooth;
@@ -3383,6 +3388,20 @@ impl FractadyneApp {
                 self.coloring.trap_type = crate::TrapType::Point;
                 self.coloring.trap_place = crate::TrapPlace::DEFAULT;
                 let placed = self.place_trap_on_cycle();
+                let msg = self.trap_cycle_message(placed);
+                self.queue_toast(msg);
+                self.dialogs.right_panel_open = true;
+            }
+            // The same view: the method's trap a cross at the origin, the inside's own a point placed
+            // on the cycle.
+            Screen::InsideOwnTrap => {
+                self.coloring.trap_type = crate::TrapType::Cross;
+                self.coloring.trap_place = crate::TrapPlace::DEFAULT;
+                self.coloring.interior = None;
+                self.coloring.interior_trap = Some(crate::TrapType::Point);
+                self.coloring.interior_trap_place = crate::TrapPlace::DEFAULT;
+                let placed = self.place_trap_on_cycle_for(true);
+                self.dialogs.uitest_inside_trap_scroll = true;
                 let msg = self.trap_cycle_message(placed);
                 self.queue_toast(msg);
                 self.dialogs.right_panel_open = true;

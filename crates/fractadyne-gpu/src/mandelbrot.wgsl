@@ -1057,6 +1057,19 @@ struct IterU {
     trap_inv: f32,         // 1 / trap_size
     trap_on: u32,
     trap_pad: u32,
+    // THE INSIDE'S OWN TRAP (lib.rs `trap_in_uniform`): its placement as the trap's above, then
+    // whether it is on and its shape. On, the iteration measures both traps and an interior pixel's
+    // trap lane holds this one (`aux_interior`); off (zeros), the inside measures the trap above.
+    trap_in_c: vec2<f32>,
+    trap_in_turn: vec2<f32>,
+    trap_in_size: f32,
+    trap_in_inv: f32,
+    trap_in_on: u32,
+    trap_in_pad: u32,
+    trap_in_enabled: u32,
+    trap_in_type: u32,
+    trap_in_pad1: u32,
+    trap_in_pad2: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -1131,12 +1144,20 @@ const TRAP_HIST_BUCKETS: u32 = 1216u;
 // The same histogram over the INTERIOR pixels alone (`inside`), in the next 1216 slots (lib.rs
 // `CTR_TRAP_HIST_IN`, coloring plan C4): the window the inside's fitted palette spans.
 const CTR_TRAP_HIST_IN: u32 = 1689u;
+fn trap_hist_bucket(t: f32) -> u32 {
+    let pv = -log2(max(t, 1.0e-20));
+    return u32(clamp((pv - TRAP_HIST_LO) * TRAP_HIST_PER_UNIT, 0.0, f32(TRAP_HIST_BUCKETS - 1u)));
+}
 fn trap_hist_commit(a: Aux, gx: f32, gy: f32, inside: bool) {
     if ((iu.aux_on & 1u) == 1u && (iu.orbit_stats & STAT_TRAP) != 0u && (i32(gx) & 3) == 0 && (i32(gy) & 3) == 0) {
-        let pv = -log2(max(a.trap, 1.0e-20));
-        let k = u32(clamp((pv - TRAP_HIST_LO) * TRAP_HIST_PER_UNIT, 0.0, f32(TRAP_HIST_BUCKETS - 1u)));
+        let k = trap_hist_bucket(a.trap);
         atomicAdd(&counters[CTR_TRAP_HIST + k], 1u);
-        if (inside) { atomicAdd(&counters[CTR_TRAP_HIST_IN + k], 1u); }
+        // The inside's fit spans what colors the inside: its own trap, when it has one.
+        if (inside) {
+            var ki = k;
+            if (iu.trap_in_enabled != 0u) { ki = trap_hist_bucket(a.trap_in); }
+            atomicAdd(&counters[CTR_TRAP_HIST_IN + ki], 1u);
+        }
     }
 }
 // On the 4x4 grid of the escape-range commit; called where a whole frame's escapes are seen once
@@ -1466,6 +1487,7 @@ struct Aux {
     n: f32,        // term count
     prev_abs: f32, // |z| of the previous iteration (TIA needs it)
     trap: f32,     // min orbit-trap distance so far
+    trap_in: f32,  // the inside's own trap's, when it has one (`trap_in_enabled`)
 };
 // ---- stripe average over the TAIL only ------------------------------------------------------
 // At extreme depth every pixel's orbit shadows the reference for all but its last few hundred
@@ -1492,7 +1514,7 @@ fn aux_init(z0: vec2<f32>) -> Aux {
     var a: Aux;
     a.sac_sum = 0.0; a.sac_prev = 0.0;
     a.tia_sum = 0.0; a.tia_prev = 0.0;
-    a.n = 0.0; a.prev_abs = length(z0); a.trap = 1.0e30;
+    a.n = 0.0; a.prev_abs = length(z0); a.trap = 1.0e30; a.trap_in = 1.0e30;
     return a;
 }
 // Fold one orbit point z into the running statistics — only those the frame ACCUMULATES (the
@@ -1507,25 +1529,32 @@ fn aux_init(z0: vec2<f32>) -> Aux {
 // sized (coloring plan F4; `trap_c` .. `trap_on`), measured in the shape's coordinates and scaled
 // back, so it stays a distance in the orbit's plane. Mirrors core `TrapPlace::dist`, whose f64 the
 // BLA aggregates fold. `trap_on` 0: the unit shape exactly as before F4, with no transform.
-fn trap_dist(zf: vec2<f32>) -> f32 {
+fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, size: f32, inv: f32) -> f32 {
     var w = zf;
-    if (iu.trap_on != 0u) {
-        let d = zf - iu.trap_c;
-        let t = iu.trap_turn;
-        w = vec2<f32>(t.x * d.x + t.y * d.y, t.x * d.y - t.y * d.x) * iu.trap_inv;
+    if (on != 0u) {
+        let d = zf - c;
+        w = vec2<f32>(t.x * d.x + t.y * d.y, t.x * d.y - t.y * d.x) * inv;
     }
     var s: f32;
-    if (iu.trap_type == TRAP_CROSS) { s = min(abs(w.x), abs(w.y)); }
-    else if (iu.trap_type == TRAP_CIRCLE) { s = abs(length(w) - 1.0); }
+    if (ty == TRAP_CROSS) { s = min(abs(w.x), abs(w.y)); }
+    else if (ty == TRAP_CIRCLE) { s = abs(length(w) - 1.0); }
     else { s = length(w); }
-    if (iu.trap_on != 0u) { s = s * iu.trap_size; }
+    if (on != 0u) { s = s * size; }
     return s;
+}
+fn trap_dist(zf: vec2<f32>) -> f32 {
+    return trap_dist_of(zf, iu.trap_type, iu.trap_on, iu.trap_c, iu.trap_turn, iu.trap_size, iu.trap_inv);
+}
+// The inside's own trap's distance (`trap_in_*`), measured as `trap_dist` measures the trap's.
+fn trap_in_dist(zf: vec2<f32>) -> f32 {
+    return trap_dist_of(zf, iu.trap_in_type, iu.trap_in_on, iu.trap_in_c, iu.trap_in_turn, iu.trap_in_size, iu.trap_in_inv);
 }
 fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
     let st = iu.orbit_stats;
     if ((st & STAT_TRAP) != 0u) {
         // Orbit trap: nearest approach to its shape (`trap_dist`).
         (*a).trap = min((*a).trap, trap_dist(zf));
+        if (iu.trap_in_enabled != 0u) { (*a).trap_in = min((*a).trap_in, trap_in_dist(zf)); }
     }
     if ((st & STAT_STRIPE) != 0u) {
         // Stripe average: smooth orbit average of a sinusoid of the argument.
@@ -1559,9 +1588,12 @@ fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
 // z ≈ Z): what a BLA skip folds, and what the series seed folds for the prefix it skips — for the
 // statistics the frame accumulates, as `aux_step` does. The caller sets `prev_abs` (|z| where the
 // run lands).
-fn aux_fold_run(a: ptr<function, Aux>, agg: vec4<f32>, span: u32, window: f32, exact: bool) {
+fn aux_fold_run(a: ptr<function, Aux>, agg: vec4<f32>, span: u32, extra: vec4<f32>, exact: bool) {
     let st = iu.orbit_stats;
-    if ((st & STAT_TRAP) != 0u) { (*a).trap = min((*a).trap, agg.y); }
+    if ((st & STAT_TRAP) != 0u) {
+        (*a).trap = min((*a).trap, agg.y);
+        if (iu.trap_in_enabled != 0u) { (*a).trap_in = min((*a).trap_in, extra.y); }
+    }
     if ((st & STAT_TRIANGLE) != 0u) { (*a).tia_sum = (*a).tia_sum + agg.z; }
     if ((st & STAT_STRIPE) != 0u) {
         if (stripe_tail_on()) {
@@ -1578,7 +1610,7 @@ fn aux_fold_run(a: ptr<function, Aux>, agg: vec4<f32>, span: u32, window: f32, e
             let d = tail_decay(al, f32(span));
             (*a).sac_prev = (*a).sac_sum;
             if (exact) {
-                (*a).sac_sum = (*a).sac_sum * d + al * window;
+                (*a).sac_sum = (*a).sac_sum * d + al * extra.x;
             } else {
                 let m = agg.w / max(f32(span), 1.0);
                 (*a).sac_sum = m + ((*a).sac_sum - m) * d;
@@ -1638,7 +1670,12 @@ fn aux_angle(zf: vec2<f32>) -> vec4<f32> {
 // pass colors an interior texel by the interior mode, never by its angle, and the chunked resolve
 // writes none there either, so the two paths agree.
 fn aux_interior(a: Aux, zf: vec2<f32>) -> vec4<f32> {
-    if ((iu.aux_on & 1u) == 1u) { return aux_pack(a, 0.0, zf); }
+    if ((iu.aux_on & 1u) == 1u) {
+        // The inside's own trap, when it has one: an interior pixel's lane is its.
+        var b = a;
+        if (iu.trap_in_enabled != 0u) { b.trap = a.trap_in; }
+        return aux_pack(b, 0.0, zf);
+    }
     return AUX_NONE;
 }
 
@@ -1983,7 +2020,8 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     let agg = reference[iu.orbit_len + (bla_off[l] + j) * BLA_NODE + 3u];
                     let span = u32(agg.x);
                     if (span == 0u) { break; } // a corrupt node: fold no further, never spin
-                    aux_fold_run(&aux, agg, span, 0.0, false); // the tail's plain-mean fold: see above
+                    let extra = reference[iu.orbit_len + (bla_off[l] + j) * BLA_NODE + 4u];
+                    aux_fold_run(&aux, agg, span, extra, false); // the tail's plain-mean fold: see above
                     p = p + span;
                 }
                 let zs = orbit_cdf(reference[iu.sa_skip]);
@@ -2112,7 +2150,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
                     if ((iu.aux_on & 1u) == 1u) {
                         // [span, trap_min, ΣTIA, Σstripe] and [window, 0, 0, 0]: inside a skip each pixel
                         // stays within the node's radius of the reference, so the window folds exactly.
-                        aux_fold_run(&aux, reference[node + 3u], span, reference[node + 4u].x, true);
+                        aux_fold_run(&aux, reference[node + 3u], span, reference[node + 4u], true);
                         aux.prev_abs = length(zf);
                     }
                     n_bla = n_bla + 1u;

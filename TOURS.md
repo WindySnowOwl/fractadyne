@@ -67,6 +67,11 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `trap_y` | float, -4 to 4 | 0 | Where the orbit trap sits in the orbit's plane, its imaginary coordinate (with the trap). |
 | `trap_rotation` | float, -180 to 180 | 0 | The cross trap's turn, in degrees counterclockwise (trap "cross"). |
 | `trap_size` | float, 0.01 to 10 | 1 | The circle trap's radius (trap "circle"). |
+| `interior_trap` | string: point \| cross \| circle | (left out) | The inside's own trap shape, point, cross or circle, when the trap method colors the inside by a trap (the inside's own placement in the four keys after). Left out: the method's trap. |
+| `interior_trap_x` | float, -4 to 4 | 0 | The inside's own trap's center, its real coordinate (with `interior_trap`). |
+| `interior_trap_y` | float, -4 to 4 | 0 | The inside's own trap's center, its imaginary coordinate (with `interior_trap`). |
+| `interior_trap_rotation` | float, -180 to 180 | 0 | The inside's own cross's turn, in degrees counterclockwise (`interior_trap` "cross"). |
+| `interior_trap_size` | float, 0.01 to 10 | 1 | The inside's own circle's radius (`interior_trap` "circle"). |
 | `light` | bool | false | Relief lighting from the distance estimate. |
 | `light_angle` | float | 2.2 | The light's direction in radians (with `light`). |
 | `light_height` | float, 0.2 to 4 | 1.2 | Relief strength: smaller is sharper (with `light`). |

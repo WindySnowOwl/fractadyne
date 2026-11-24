@@ -95,12 +95,17 @@ fn interior_trap(s: &ColoringSpec) -> bool {
     InteriorMode::parse_key(&s.interior).unwrap_or(InteriorMode::of_method(method(s))) == InteriorMode::Trap
 }
 
+/// The trap method's inside has a trap of its own (`interior_trap`).
+fn inside_own_trap(s: &ColoringSpec) -> bool {
+    method(s) == ColorMethod::OrbitTrap && interior_trap(s) && TrapType::parse_key(&s.interior_trap).is_some()
+}
+
 fn two_color_on(s: &ColoringSpec) -> bool {
     s.use_binary || s.use_duotone
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 51] = [
+pub(crate) const FIELDS: [Field; 56] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -234,6 +239,48 @@ pub(crate) const FIELDS: [Field; 51] = [
         ),
         parents: &["method", "interior", "trap"],
         shows: |s| interior_trap(s) && TrapType::from_key(&s.trap_type).spec().sized,
+    },
+    Field {
+        key: "interior_trap",
+        name: "inside trap",
+        doc: "The inside's own trap shape, point, cross or circle, when the trap method colors the inside by a trap (the inside's own placement in the four keys after). Left out: the method's trap.",
+        access: Access::Choice(|s| &s.interior_trap, |s, v| s.interior_trap = v.to_string(), || {
+            TrapType::ALL.iter().map(|t| t.key()).collect()
+        }),
+        parents: &["method", "interior"],
+        shows: |s| method(s) == ColorMethod::OrbitTrap && interior_trap(s),
+    },
+    Field {
+        key: "interior_trap_x",
+        name: "inside trap center",
+        doc: "The inside's own trap's center, its real coordinate (with `interior_trap`).",
+        access: Access::Real(|s| s.interior_trap_x, |s, v| s.interior_trap_x = v, *slider_range::TRAP_CENTER.start(), *slider_range::TRAP_CENTER.end()),
+        parents: &["method", "interior", "interior_trap"],
+        shows: inside_own_trap,
+    },
+    Field {
+        key: "interior_trap_y",
+        name: "inside trap center",
+        doc: "The inside's own trap's center, its imaginary coordinate (with `interior_trap`).",
+        access: Access::Real(|s| s.interior_trap_y, |s, v| s.interior_trap_y = v, *slider_range::TRAP_CENTER.start(), *slider_range::TRAP_CENTER.end()),
+        parents: &["method", "interior", "interior_trap"],
+        shows: inside_own_trap,
+    },
+    Field {
+        key: "interior_trap_rotation",
+        name: "inside trap rotation",
+        doc: "The inside's own cross's turn, in degrees counterclockwise (`interior_trap` \"cross\").",
+        access: Access::Real(|s| s.interior_trap_rotation, |s, v| s.interior_trap_rotation = v, *slider_range::TRAP_ROTATION.start(), *slider_range::TRAP_ROTATION.end()),
+        parents: &["method", "interior", "interior_trap"],
+        shows: |s| inside_own_trap(s) && TrapType::from_key(&s.interior_trap).spec().turns,
+    },
+    Field {
+        key: "interior_trap_size",
+        name: "inside trap size",
+        doc: "The inside's own circle's radius (`interior_trap` \"circle\").",
+        access: Access::Real(|s| s.interior_trap_size, |s, v| s.interior_trap_size = v, *slider_range::TRAP_SIZE.start(), *slider_range::TRAP_SIZE.end()),
+        parents: &["method", "interior", "interior_trap"],
+        shows: |s| inside_own_trap(s) && TrapType::from_key(&s.interior_trap).spec().sized,
     },
     Field {
         key: "light",

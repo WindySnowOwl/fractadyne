@@ -32,6 +32,8 @@ fn scrambled() -> ViewColoring {
         stripe_tail_len: 900,
         trap: TrapType::Circle,
         trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6 },
+        interior_trap: Some(TrapType::Cross),
+        interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5 },
         light: true,
         light_angle: -1.25,
         light_height: 3.5,
@@ -95,6 +97,11 @@ fn variants() -> Vec<ViewColoring> {
         let place = crate::TrapPlace { center: [-0.75, 1.5], rotation: -40.0, size: 2.5 }.for_shape(t);
         v.push(ViewColoring { method: ColorMethod::OrbitTrap, trap: t, trap_place: place, ..d.clone() });
     }
+    // The trap method's inside with a trap of its own: a cross moved and turned, a circle sized.
+    let turned = crate::TrapPlace { center: [0.25, -0.5], rotation: 30.0, size: 1.0 };
+    let sized = crate::TrapPlace { center: [0.0, 0.125], rotation: 0.0, size: 0.5 };
+    v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_trap: Some(TrapType::Cross), interior_trap_place: turned, ..d.clone() });
+    v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_trap: Some(TrapType::Circle), interior_trap_place: sized, ..d.clone() });
     v.push(ViewColoring { light: true, ..d.clone() });
     v.push(ViewColoring { light: true, light_angle: 0.3, light_height: 0.2, ..d.clone() });
     v.push(ViewColoring { light: true, light_steep: true, ..d.clone() });

@@ -776,6 +776,9 @@ impl FractadyneApp {
         // A moved trap (F4) changes every trap check's colors: each shape at the origin, unturned
         // and of size 1, unless a check asks.
         self.coloring.trap_place = crate::TrapPlace::DEFAULT;
+        // ...and the inside measures the method's trap, unless a check gives it its own.
+        self.coloring.interior_trap = None;
+        self.coloring.interior_trap_place = crate::TrapPlace::DEFAULT;
         self.effects.de = false;
         self.effects.light = false;
         // D2.2: echo the effective config so any residual leak is visible in the report
@@ -8143,6 +8146,96 @@ impl FractadyneApp {
                 self.dual = saved_dual;
                 self.julia_c = saved_jc;
             }
+            // ---- the inside's own trap (the trap method's inside colored by a trap of its own) ----
+            // An exact claim on the raw lanes (`render_lanes`): with the inside's own trap on, an
+            // escaped pixel's trap lane is the method's trap's, bit for bit (the same frame without
+            // an inside trap), and an interior pixel's is the inside trap's (the frame with that trap
+            // as the method's: the same walk, the same distance). At view U (direct, a bulb's edge)
+            // and at the 9.3e78 minibrot (floatexp with BLA: the inside trap's aggregate lane, the
+            // nodes' fifth vec4 .y, against the method trap's lane .y of the fourth). The inside's
+            // lane must also differ from the method trap's inside, or the check proves nothing.
+            {
+                let saved_vp = self.viewport.clone();
+                let saved_cfg = (self.render_cfg.max_iter, self.render_cfg.auto_iter);
+                let saved_in = (self.coloring.interior, self.coloring.interior_trap, self.coloring.interior_trap_place);
+                self.coloring.interior = None; // the trap method's own inside: its trap
+                self.render_cfg.auto_iter = false;
+                let cross = (T::Cross, P { center: [-0.2, 0.15], rotation: 35.0, ..P::DEFAULT });
+                let circle = (T::Circle, P { center: [0.1, 0.4], size: 0.3, ..P::DEFAULT });
+                const MRE: &str = "-9.5615882490732676063982994499490578147935343195074805633443741253353130261608583401177598055702619474609439701446982e-2";
+                const MIM: &str = "9.2407201125877521262558092669605306283394020346180079142271967031202190501107148187554958943606565429410592657638281e-1";
+                let at = |s: &str| fractadyne_core::parse_bf_prec(s, 512).expect("a coordinate");
+                let (w, h) = (200u32, 125u32);
+                let mut u = Viewport::new(f64::from(w), f64::from(h));
+                u.set_center_mag(at("-0.9173735445860097"), at("0.22966943698602013"), 3.0 / (0.105 * f64::from(h) / f64::from(w)));
+                let mut m = Viewport::new(f64::from(w), f64::from(h));
+                m.set_center_mag(at(MRE), at(MIM), 3.0e79);
+                for (label, vp, iters, deep) in [("view U, direct", u, 3000u32, false), ("the 9.3e78 minibrot at 3e79x, BLA", m, 200_000, true)] {
+                    self.render_cfg.max_iter = iters;
+                    let lanes = |app: &mut Self, main: (T, P), inside: Option<(T, P)>| {
+                        app.coloring.trap_type = main.0;
+                        app.coloring.trap_place = main.1;
+                        app.coloring.interior_trap = inside.map(|i| i.0);
+                        app.coloring.interior_trap_place = inside.map_or(P::DEFAULT, |i| i.1);
+                        let mut req = app.lanes_request_for(&vp, false, None);
+                        req.width = w;
+                        req.height = h;
+                        let on = req.trap_in.is_some();
+                        fractadyne_gpu::render_lanes(device, queue, &req, crate::tunables::CORRECT_WORK_BUDGET)
+                            .ok()
+                            .map(|r| (r.pixels, r.aux, req.bla_on == 1 && req.mode == 2, on))
+                    };
+                    let both = lanes(self, cross, Some(circle));
+                    let outer = lanes(self, cross, None);
+                    let inner = lanes(self, circle, None);
+                    let name = format!("{label}: the inside's own trap colors the inside, the method's the outside");
+                    match (both, outer, inner) {
+                        (Some((tm, ta, bla, on)), Some((_, oa, ..)), Some((_, ia, ..)))
+                            if !tm.is_empty() && ta.len() == tm.len() && oa.len() == ta.len() && ia.len() == ta.len() =>
+                        {
+                            let n = tm.len() / 4;
+                            let (mut inside, mut esc_bad, mut in_bad, mut moved) = (0usize, 0usize, 0usize, 0usize);
+                            for k in 0..n {
+                                let z = ta[4 * k + 2];
+                                if tm[4 * k] == -1.0 {
+                                    inside += 1;
+                                    in_bad += usize::from(z.to_bits() != ia[4 * k + 2].to_bits());
+                                    moved += usize::from(z.to_bits() != oa[4 * k + 2].to_bits());
+                                } else {
+                                    esc_bad += usize::from(z.to_bits() != oa[4 * k + 2].to_bits());
+                                }
+                            }
+                            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                                category: "Trap",
+                                name,
+                                params: format!("{w}x{h}, {iters} iter, method's trap a turned cross, the inside's a circle; BLA {}", if bla { "engaged" } else { "off" }),
+                                result: format!(
+                                    "{inside} of {n} pixels inside; {esc_bad} escaped and {in_bad} interior lanes off; the inside's own differs from the method trap's on {moved}"
+                                ),
+                                threshold: "the inside trap on; 0 lanes off; 500+ pixels inside and 500+ escaped; it differs on half the inside or more; BLA engaged at depth".into(),
+                                pass: on
+                                    && esc_bad == 0
+                                    && in_bad == 0
+                                    && inside >= 500
+                                    && n - inside >= 500
+                                    && moved * 2 >= inside
+                                    && (!deep || bla),
+                            });
+                        }
+                        _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Trap",
+                            name,
+                            params: format!("{w}x{h}, {iters} iter"),
+                            result: "render failed".into(),
+                            threshold: "three renders".into(),
+                            pass: false,
+                        }),
+                    }
+                }
+                self.viewport = saved_vp;
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter) = saved_cfg;
+                (self.coloring.interior, self.coloring.interior_trap, self.coloring.interior_trap_place) = saved_in;
+            }
             (
                 self.fractal,
                 self.julia_mode,
@@ -11342,6 +11435,8 @@ zoom = \"1e94\"
                 stripe_tail_len: 900,
                 trap: TrapType::Circle,
                 trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6 },
+                interior_trap: Some(TrapType::Cross),
+                interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5 },
                 light: true,
                 light_angle: -1.25,
                 light_height: 3.5,
@@ -11604,6 +11699,11 @@ zoom = \"1e94\"
                 trap_y: -0.45,
                 trap_rotation: 25.0,
                 trap_size: 0.6,
+                interior_trap: TrapType::Cross.key().into(),
+                interior_trap_x: -0.15,
+                interior_trap_y: 0.35,
+                interior_trap_rotation: -20.0,
+                interior_trap_size: 1.5,
                 custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
                 custom_palette_flat: true,
                 custom_segments: vec![fractadyne_state::PaletteSegment {

@@ -272,7 +272,7 @@ fn analyze(label: &str, cx_str: &str, cy_str: &str, octaves: u64, dc_ext: f64) -
     let cmag = mag(to_f64(&cx), to_f64(&cy));
     let bailout2 = 1.0e10f64;
     let dc_max = FloatExp::from_f64(dc_ext * 1.5);
-    let aux_p = AuxAggParams { trap_type: crate::coloring::TrapType::Point, trap_place: crate::coloring::TrapPlace::DEFAULT, stripe_freq: FREQ, cmag, power: POWER, stripe_tail_alpha: 0.0 };
+    let aux_p = AuxAggParams { trap_type: crate::coloring::TrapType::Point, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, stripe_freq: FREQ, cmag, power: POWER, stripe_tail_alpha: 0.0 };
     let levels = build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_p);
 
     // Phase-1 precompute check: every node's seeded+merged aggregate must equal a brute-force
@@ -373,6 +373,7 @@ fn build_bla_parallel_matches_serial() {
     let aux_p = AuxAggParams {
         trap_type: crate::coloring::TrapType::Point,
         trap_place: crate::coloring::TrapPlace::DEFAULT,
+        trap_in: None,
         stripe_freq: FREQ,
         cmag: mag(to_f64(&cx), to_f64(&cy)),
         power: POWER,
@@ -411,10 +412,10 @@ fn apply_bla_aux_matches_full_rebuild() {
     let dc_max = FloatExp::from_f64(1.0e-6);
     let cmag = mag(to_f64(&cx), to_f64(&cy));
     // Coloring A: trap type 0 (|Z|), one stripe frequency.
-    let aux_a = AuxAggParams { trap_type: crate::coloring::TrapType::Point, trap_place: crate::coloring::TrapPlace::DEFAULT, stripe_freq: 5.0, cmag, power: POWER, stripe_tail_alpha: 0.0 };
+    let aux_a = AuxAggParams { trap_type: crate::coloring::TrapType::Point, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, stripe_freq: 5.0, cmag, power: POWER, stripe_tail_alpha: 0.0 };
     let mut buf = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_a));
     // Change to coloring B (trap type 2 + a different frequency) via the fast path.
-    let aux_b = AuxAggParams { trap_type: crate::coloring::TrapType::Circle, trap_place: crate::coloring::TrapPlace::DEFAULT, stripe_freq: 12.5, cmag, power: POWER, stripe_tail_alpha: 0.0 };
+    let aux_b = AuxAggParams { trap_type: crate::coloring::TrapType::Circle, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, stripe_freq: 12.5, cmag, power: POWER, stripe_tail_alpha: 0.0 };
     apply_bla_aux(&mut buf, &orbit, aux_b);
     // Ground truth: a full rebuild with B.
     let full_b = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_b));
@@ -446,8 +447,8 @@ fn aux_regen_speedup() {
     let nstep = orbit.len().saturating_sub(1);
     let dc_max = FloatExp::from_f64(1.0e-6);
     let cmag = mag(to_f64(&cx), to_f64(&cy));
-    let aux_a = AuxAggParams { trap_type: crate::coloring::TrapType::Point, trap_place: crate::coloring::TrapPlace::DEFAULT, stripe_freq: 5.0, cmag, power: POWER, stripe_tail_alpha: 0.0 };
-    let aux_b = AuxAggParams { trap_type: crate::coloring::TrapType::Circle, trap_place: crate::coloring::TrapPlace::DEFAULT, stripe_freq: 12.5, cmag, power: POWER, stripe_tail_alpha: 0.0 };
+    let aux_a = AuxAggParams { trap_type: crate::coloring::TrapType::Point, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, stripe_freq: 5.0, cmag, power: POWER, stripe_tail_alpha: 0.0 };
+    let aux_b = AuxAggParams { trap_type: crate::coloring::TrapType::Circle, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, stripe_freq: 12.5, cmag, power: POWER, stripe_tail_alpha: 0.0 };
     let mut base = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_a));
     let median = |mut v: Vec<f64>| {
         v.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -516,7 +517,7 @@ fn a_node_landing_on_an_extended_dip_keeps_its_trap_distance() {
     let cross = dip.0.abs().min(dip.1.abs()); // 3e-60
     for (trap, expect) in [(crate::coloring::TrapType::Point, want), (crate::coloring::TrapType::Cross, cross)] {
         let aux = AuxAggParams { trap_type: trap, ..AuxAggParams::default() };
-        let [t, _, _] = bla_level0_aux(0, &orbit, aux);
+        let [t, _, _, _] = bla_level0_aux(0, &orbit, aux);
         assert!((t / expect - 1.0).abs() < 1e-6, "{trap:?}: aux lane {t:e}, the dip is {expect:e}");
         let one = CFloatExp { re: FloatExp::from_f64(1.0), im: FloatExp::ZERO };
         let node = bla_level0_node(0, &orbit, 1e-6, aux, one, 2);
@@ -548,7 +549,7 @@ fn a_placed_traps_aggregates_measure_from_the_placed_trap() {
         }).collect();
         assert!(want.iter().zip(&unplaced).any(|(a, b)| (a - b).abs() > 1e-3), "{shape:?}: the placement must matter here");
         for n in 0..orbit.len() - 1 {
-            let [t, _, _] = bla_level0_aux(n, &orbit, aux);
+            let [t, _, _, _] = bla_level0_aux(n, &orbit, aux);
             assert_eq!(t, want[n], "{shape:?}: node {n}");
         }
         let lanes = bla_aux_lanes(&orbit, aux);
@@ -562,6 +563,41 @@ fn a_placed_traps_aggregates_measure_from_the_placed_trap() {
         let nearest = want.iter().copied().fold(f64::INFINITY, f64::min) as f32;
         assert_eq!(lanes.last().unwrap()[0], nearest, "{shape:?}: the root keeps the nearest approach");
     }
+}
+
+/// The inside's own trap (`AuxAggParams::trap_in`): the nodes' fifth vec4 `.y` measures from it,
+/// in the full tree and the aux-only rebuild alike, while the trap's own lane is untouched; with no
+/// inside trap that lane repeats the trap's.
+#[test]
+fn the_inside_trap_has_its_own_aggregate_lane() {
+    use crate::coloring::{TrapPlace, TrapType};
+    let orbit = vec![pack_sample(0.0, 0.0), pack_sample(0.25, 0.5), pack_sample(-0.6, 0.1), pack_sample(0.4, -0.3)];
+    let inside = (TrapType::Circle, TrapPlace { center: [0.1, 0.4], rotation: 0.0, size: 0.3 });
+    let plain = AuxAggParams { trap_type: TrapType::Cross, ..AuxAggParams::default() };
+    let with_in = AuxAggParams { trap_in: Some(inside), ..plain };
+    let want: Vec<f64> = (1..orbit.len()).map(|k| {
+        let (x, y) = sample_xy(&orbit[k]);
+        inside.1.dist(inside.0, x, y)
+    }).collect();
+    for n in 0..orbit.len() - 1 {
+        let [t, _, _, tin] = bla_level0_aux(n, &orbit, with_in);
+        let [t0, _, _, tin0] = bla_level0_aux(n, &orbit, plain);
+        assert_eq!(tin, want[n], "node {n}: the inside's own distance");
+        assert_eq!(t, t0, "node {n}: the trap's lane is the trap's, inside trap or not");
+        assert_eq!(tin0, t0, "node {n}: with no inside trap the lane repeats the trap's");
+    }
+    let gpu = bla_to_gpu(&build_bla_mandel(&orbit, FloatExp::from_f64(1.0e-12), 1.0e-6, with_in));
+    let lanes = bla_aux_lanes(&orbit, with_in);
+    assert_eq!(gpu.len(), lanes.len() * BLA_NODE_VEC4S);
+    for (i, l) in lanes.iter().enumerate() {
+        assert_eq!(gpu[BLA_NODE_VEC4S * i + 4][1], l[4], "node {i}: the rebuild's inside lane matches the tree's");
+    }
+    let nearest = want.iter().copied().fold(f64::INFINITY, f64::min) as f32;
+    assert_eq!(lanes.last().unwrap()[4], nearest, "the root keeps the inside trap's nearest approach");
+    // The aux-only patch writes the lane into a tree built without it.
+    let mut patched = bla_to_gpu(&build_bla_mandel(&orbit, FloatExp::from_f64(1.0e-12), 1.0e-6, plain));
+    apply_bla_aux(&mut patched, &orbit, with_in);
+    assert_eq!(patched, gpu, "patching the lanes gives the tree built with them");
 }
 
 /// With the stripe TAIL on, a node's window lane (`agg_window`) is the window-weighted sum of its landing range,

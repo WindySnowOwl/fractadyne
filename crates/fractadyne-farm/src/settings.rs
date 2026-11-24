@@ -139,6 +139,10 @@ impl RenderSettings {
             ("trap center", self.coloring.trap_y),
             ("trap rotation", self.coloring.trap_rotation),
             ("trap size", self.coloring.trap_size),
+            ("inside trap center", self.coloring.interior_trap_x),
+            ("inside trap center", self.coloring.interior_trap_y),
+            ("inside trap rotation", self.coloring.interior_trap_rotation),
+            ("inside trap size", self.coloring.interior_trap_size),
         ] {
             finite32(w, v)?;
         }
@@ -146,6 +150,7 @@ impl RenderSettings {
         finite64("Julia c", self.julia_c_im)?;
         word("coloring method", &self.coloring.color_method)?;
         word("trap", &self.coloring.trap_type)?;
+        word("inside trap", &self.coloring.interior_trap)?;
         word("edge curve", &self.coloring.edge_curve)?;
         word("fractal", &self.fractal)?;
         textual("custom formula", &self.custom_formula, 8 * 1024)?;

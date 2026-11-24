@@ -342,6 +342,11 @@ fn every_session_field_survives_save_and_reload() {
         trap_y: -0.5,
         trap_rotation: 30.0,
         trap_size: 0.75,
+        interior_trap: "circle".into(),
+        interior_trap_x: 0.1,
+        interior_trap_y: 0.4,
+        interior_trap_rotation: 15.0,
+        interior_trap_size: 0.3,
         custom_palette: vec![[0.0, 0.1, 0.2, 0.3], [1.0, 0.4, 0.5, 0.6]],
         custom_palette_flat: true,
         custom_segments: vec![PaletteSegment {
@@ -845,6 +850,7 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
         "light_steep", "light_steep_px", "light_highlight", "light_shininess", "light_highlight_color",
         "equalize", "palette_oklab",
         "trap_x", "trap_y", "trap_rotation", "trap_size",
+        "interior_trap", "interior_trap_x", "interior_trap_y", "interior_trap_rotation", "interior_trap_size",
     ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {

@@ -354,6 +354,8 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "interior_fit", "trap",
     // The trap's placement (coloring plan F4).
     "trap_x", "trap_y", "trap_rotation", "trap_size",
+    // The inside's own trap (the trap method's inside colored by a trap of its own).
+    "interior_trap", "interior_trap_x", "interior_trap_y", "interior_trap_rotation", "interior_trap_size",
     "light", "light_angle", "light_height", "light_steep", "light_steep_px", "light_highlight", "light_shininess", "light_highlight_color",
     "glow", "glow_strength", "glow_width",
     "palette_mode", "palette_lo", "palette_hi", "interior_color",
@@ -441,6 +443,11 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("trap_y", ValueKind::Float),
     ("trap_rotation", ValueKind::Float),
     ("trap_size", ValueKind::Float),
+    ("interior_trap", ValueKind::Trap),
+    ("interior_trap_x", ValueKind::Float),
+    ("interior_trap_y", ValueKind::Float),
+    ("interior_trap_rotation", ValueKind::Float),
+    ("interior_trap_size", ValueKind::Float),
     ("light", ValueKind::Flag),
     ("light_angle", ValueKind::Float),
     ("light_height", ValueKind::Float),
