@@ -60,4 +60,11 @@ fn the_key_holds_what_is_accumulated_not_what_is_shown() {
     let at_origin = fractadyne_core::coloring::TrapPlace::DEFAULT;
     assert!(placed(StatSet::of(Stat::Trap), at_origin) != placed(StatSet::of(Stat::Trap), moved));
     assert!(placed(none, at_origin) == placed(none, moved), "the placement counts only with the trap accumulated");
+    // The inside's own trap likewise.
+    let inside = |stats, t: Option<(TrapType, fractadyne_core::coloring::TrapPlace)>| {
+        key(MandelbrotParams { trap_in: t, ..params(ColorMethod::Smooth, stats, 1.0, point) })
+    };
+    let circle = Some((TrapType::Circle, at_origin));
+    assert!(inside(StatSet::of(Stat::Trap), None) != inside(StatSet::of(Stat::Trap), circle));
+    assert!(inside(none, None) == inside(none, circle), "the inside's trap counts only with the trap accumulated");
 }

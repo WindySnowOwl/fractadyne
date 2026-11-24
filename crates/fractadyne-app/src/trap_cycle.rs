@@ -57,17 +57,34 @@ impl crate::FractadyneApp {
     /// what the placing moves is written (the center of a point or a cross, a circle's size), clamped
     /// into the panel's ranges, so a turn or a size the shape ignores stays as it was set.
     pub(crate) fn place_trap_on_cycle(&mut self) -> Result<(usize, usize), NoCycle> {
+        self.place_trap_on_cycle_for(false)
+    }
+
+    /// [`Self::place_trap_on_cycle`] for the method's trap, or (`inside`) the inside's own; the
+    /// inside's without a shape of its own is left alone.
+    pub(crate) fn place_trap_on_cycle_for(&mut self, inside: bool) -> Result<(usize, usize), NoCycle> {
         let cycle = self.trap_cycle()?;
-        let shape = self.coloring.trap_type;
-        let (placed, k) = self.coloring.trap_place.on_cycle(shape, &cycle.points);
+        let (shape, at) = if inside {
+            match self.coloring.interior_trap {
+                Some(s) => (s, self.coloring.interior_trap_place),
+                None => return Ok((cycle.period(), 0)),
+            }
+        } else {
+            (self.coloring.trap_type, self.coloring.trap_place)
+        };
+        let (placed, k) = at.on_cycle(shape, &cycle.points);
         let clamp = |v: f32, r: std::ops::RangeInclusive<f32>| v.clamp(*r.start(), *r.end());
-        let mut place = self.coloring.trap_place;
+        let mut place = at;
         if shape.spec().sized {
             place.size = clamp(placed.size, slider_range::TRAP_SIZE);
         } else {
             place.center = placed.center.map(|v| clamp(v, slider_range::TRAP_CENTER));
         }
-        self.coloring.trap_place = place;
+        if inside {
+            self.coloring.interior_trap_place = place;
+        } else {
+            self.coloring.trap_place = place;
+        }
         Ok((cycle.period(), k + 1))
     }
 

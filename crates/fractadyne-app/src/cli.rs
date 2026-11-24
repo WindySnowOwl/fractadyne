@@ -50,6 +50,7 @@ const VALUE_FLAGS: &[(&str, usize)] = &[
     ("--formula-params", 1),
     ("--hook-params", 1),
     ("--trap-center", 1),
+    ("--interior-trap-center", 1),
 ];
 
 /// What is wrong with a command line, if anything. Pure, so the rules are pinned by test —

@@ -3056,6 +3056,10 @@ panel-trap-rotation = Trap rotation
 panel-trap-rotation-hover = Turn the cross counterclockwise, in degrees. Also --trap-rotation for --render.
 panel-trap-size = Trap size
 panel-trap-size-hover = The circle's radius. Also --trap-size for --render.
+# With the Orbit trap method and the inside colored by the trap: the inside's own trap, or the method's.
+panel-inside-trap = Inside trap
+panel-inside-trap-same = Same as the method
+panel-inside-trap-hover = Color the inside of the set by a trap of its own, with its own shape and place, while the method's trap colors the outside. Same as the method: one trap colors both.
 # The button that moves the orbit trap onto the attracting cycle at the view's center (coloring plan F4).
 panel-trap-on-cycle = Place on the cycle
 panel-trap-on-cycle-hover = Move the trap onto the cycle that orbits inside the set settle on, at the view's center, so the inside of the set shows the trap's structure instead of one color. A point or a cross is centered on a point of the cycle; a circle keeps its center and passes through one. Press again for the cycle's next point.

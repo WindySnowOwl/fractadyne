@@ -73,6 +73,10 @@ pub(crate) struct ViewColoring {
     /// Orbit trap method: the shape, and where it sits, turned and sized (F4).
     pub(crate) trap: TrapType,
     pub(crate) trap_place: TrapPlace,
+    /// The inside's own trap (the trap method's inside colored by a trap of its own), `None` for
+    /// the method's, and its placement.
+    pub(crate) interior_trap: Option<TrapType>,
+    pub(crate) interior_trap_place: TrapPlace,
     /// Relief lighting: on, angle (radians), the "Relief" slider.
     pub(crate) light: bool,
     pub(crate) light_angle: f32,
@@ -154,6 +158,8 @@ impl ViewColoring {
             stripe_tail_len: s.stripe_tail_len,
             trap: TrapType::from_key(&s.trap_type),
             trap_place: crate::trap_place_of(s),
+            interior_trap: TrapType::parse_key(&s.interior_trap),
+            interior_trap_place: crate::interior_trap_place_of(s),
             light: s.light,
             light_angle: s.light_angle,
             light_height: s.light_height,
@@ -219,6 +225,11 @@ impl ViewColoring {
             trap_y: self.trap_place.center[1],
             trap_rotation: self.trap_place.rotation,
             trap_size: self.trap_place.size,
+            interior_trap: self.interior_trap.map_or(String::new(), |t| t.key().to_string()),
+            interior_trap_x: self.interior_trap_place.center[0],
+            interior_trap_y: self.interior_trap_place.center[1],
+            interior_trap_rotation: self.interior_trap_place.rotation,
+            interior_trap_size: self.interior_trap_place.size,
             light: self.light,
             light_angle: self.light_angle,
             light_height: self.light_height,

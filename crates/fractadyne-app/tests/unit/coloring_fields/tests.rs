@@ -32,6 +32,7 @@ fn other_value(f: &Field) -> &'static str {
         Access::Choice(..) => match f.key {
             "method" => "stripe",
             "trap" => "circle",
+            "interior_trap" => "cross",
             "palette_mode" => "binary",
             "interior" => "trap",
             "interior_palette" => "ember",

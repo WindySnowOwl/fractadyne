@@ -374,6 +374,21 @@ fn a_placement_for_a_shape_is_finite_and_clamped() {
     assert!(TrapPlace { rotation: 45.0, size: 2.0, ..TrapPlace::DEFAULT }.for_shape(TrapType::Point).is_default());
 }
 
+/// The inside's own trap (`Trap::with_inside`): as its shape uses it, and none at all when it is the
+/// trap itself, so a view whose inside "has its own" equal to the method's computes as one without.
+#[test]
+fn an_inside_trap_equal_to_the_trap_is_none() {
+    let moved = TrapPlace { center: [0.3, -0.2], rotation: 40.0, size: 2.0 };
+    let t = Trap::new(TrapType::Cross, moved);
+    assert_eq!(t.with_inside(TrapType::Cross, moved).inside, None, "the same trap");
+    // The point ignores the turn and size, so a point with them is the plain point at that center.
+    let p = Trap::new(TrapType::Point, TrapPlace { center: [0.3, -0.2], ..TrapPlace::DEFAULT });
+    assert_eq!(p.with_inside(TrapType::Point, moved).inside, None, "the same point, as the point uses it");
+    let inside = t.with_inside(TrapType::Circle, moved).inside.expect("a circle inside a cross");
+    assert_eq!(inside, (TrapType::Circle, TrapPlace { center: [0.3, -0.2], rotation: 0.0, size: 2.0 }));
+    assert_ne!(t.with_inside(TrapType::Circle, moved).key_bits(), t.key_bits());
+}
+
 /// Placing the trap on a cycle (F4 part 2): its outline through a cycle point, the nearest first,
 /// then each next one in orbit order, round the cycle. The period-2 bulb's cycle at the study's
 /// view U: z+ near 0, z− at |z−| = 1.0047.

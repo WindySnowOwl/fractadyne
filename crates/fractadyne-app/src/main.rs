@@ -3391,11 +3391,20 @@ pub(crate) fn equalize_of(v: f32) -> f32 {
 /// The trap's placement a spec carries (coloring plan F4), clamped into the panel's ranges; an
 /// unreadable number takes its default.
 pub(crate) fn trap_place_of(s: &fractadyne_state::ColoringSpec) -> TrapPlace {
+    trap_place_from(s.trap_x, s.trap_y, s.trap_rotation, s.trap_size)
+}
+
+/// The inside's own trap's placement a spec carries, as [`trap_place_of`].
+pub(crate) fn interior_trap_place_of(s: &fractadyne_state::ColoringSpec) -> TrapPlace {
+    trap_place_from(s.interior_trap_x, s.interior_trap_y, s.interior_trap_rotation, s.interior_trap_size)
+}
+
+fn trap_place_from(x: f32, y: f32, rotation: f32, size: f32) -> TrapPlace {
     let clamp = |v: f32, r: std::ops::RangeInclusive<f32>, d: f32| if v.is_finite() { v.clamp(*r.start(), *r.end()) } else { d };
     TrapPlace {
-        center: [clamp(s.trap_x, slider_range::TRAP_CENTER, 0.0), clamp(s.trap_y, slider_range::TRAP_CENTER, 0.0)],
-        rotation: clamp(s.trap_rotation, slider_range::TRAP_ROTATION, 0.0),
-        size: clamp(s.trap_size, slider_range::TRAP_SIZE, 1.0),
+        center: [clamp(x, slider_range::TRAP_CENTER, 0.0), clamp(y, slider_range::TRAP_CENTER, 0.0)],
+        rotation: clamp(rotation, slider_range::TRAP_ROTATION, 0.0),
+        size: clamp(size, slider_range::TRAP_SIZE, 1.0),
     }
 }
 
@@ -6861,6 +6870,11 @@ struct ColoringConfig {
     /// What the iteration measures is [`ColoringConfig::trap`], which drops what the shape ignores.
     /// Persisted.
     trap_place: TrapPlace,
+    /// The inside's own trap, when the trap method's inside is colored by a trap: its shape, or
+    /// `None` for the method's trap. Effective only then ([`ColoringConfig::inside_trap_on`]).
+    /// Persisted, with its placement.
+    interior_trap: Option<TrapType>,
+    interior_trap_place: TrapPlace,
     /// What colors the inside of the set (coloring plan B5); `None`: the method's own
     /// (`InteriorMode::of_method`: the orbit trap its trap, every other method one color), so a view
     /// that never chose keeps its look whichever method it takes. Persisted.
@@ -6928,7 +6942,19 @@ impl ColoringConfig {
     /// (coloring plan F4). Every key, BLA lane and GPU request takes this, never the raw setting, so
     /// a turn or size the shape ignores re-iterates nothing.
     fn trap(&self) -> Trap {
-        Trap::new(self.trap_type, self.trap_place)
+        let t = Trap::new(self.trap_type, self.trap_place);
+        match self.interior_trap {
+            Some(shape) if self.inside_trap_on(self.color_method) => t.with_inside(shape, self.interior_trap_place),
+            _ => t,
+        }
+    }
+
+    /// Whether the inside of `method`'s view has a trap of its own: the trap method, its inside
+    /// colored by a trap, and a shape chosen for it. (`trap` drops one equal to the method's.)
+    pub(crate) fn inside_trap_on(&self, method: ColorMethod) -> bool {
+        method == ColorMethod::OrbitTrap
+            && self.interior_trap.is_some()
+            && self.interior_of(method) == InteriorMode::Trap
     }
     /// The orbit statistics a frame's iteration accumulates in a band, live and in exports: every
     /// rule about the iteration asks this, never the method (see the note at [`ColorMethod`]'s
@@ -8715,6 +8741,8 @@ impl FractadyneApp {
                 stripe_tail_len: s.coloring.stripe_tail_len.clamp(4, 1 << 20),
                 trap_type: TrapType::from_key(&s.coloring.trap_type),
                 trap_place: trap_place_of(&s.coloring),
+                interior_trap: TrapType::parse_key(&s.coloring.interior_trap),
+                interior_trap_place: interior_trap_place_of(&s.coloring),
                 interior: InteriorMode::parse_key(&s.coloring.interior),
                 interior_palette: fractadyne_color::preset_by_id(&s.coloring.interior_palette),
                 interior_color: s.coloring.interior_color,
@@ -9592,6 +9620,38 @@ impl FractadyneApp {
             let r = slider_range::TRAP_SIZE;
             self.coloring.trap_place.size = v.clamp(*r.start(), *r.end());
         }
+        // The inside's own trap (the trap method's inside colored by a trap of its own).
+        if let Some(t) = val("--interior-trap") {
+            match (t.as_str(), TrapType::parse_key(t)) {
+                ("same", _) => self.coloring.interior_trap = None,
+                (_, Some(k)) => self.coloring.interior_trap = Some(k),
+                _ => {
+                    eprintln!("fractadyne: --interior-trap: unknown orbit trap \"{t}\"; use point, cross, circle or same.");
+                    crate::exit(2)
+                }
+            }
+        }
+        if let Some(text) = val("--interior-trap-center") {
+            let parts: Vec<Option<f32>> = text.split(',').map(|t| t.trim().parse::<f32>().ok().filter(|v| v.is_finite())).collect();
+            match parts.as_slice() {
+                [Some(x), Some(y)] => {
+                    let r = slider_range::TRAP_CENTER;
+                    self.coloring.interior_trap_place.center = [x.clamp(*r.start(), *r.end()), y.clamp(*r.start(), *r.end())];
+                }
+                _ => {
+                    eprintln!("fractadyne: --interior-trap-center: \"{text}\" is not two numbers, such as 0.25,-0.5.");
+                    crate::exit(2)
+                }
+            }
+        }
+        if let Some(d) = val("--interior-trap-rotation").map(|s| arg_parse::<f32>("--interior-trap-rotation", s, "a number of degrees")) {
+            let r = slider_range::TRAP_ROTATION;
+            self.coloring.interior_trap_place.rotation = d.clamp(*r.start(), *r.end());
+        }
+        if let Some(v) = val("--interior-trap-size").map(|s| arg_parse::<f32>("--interior-trap-size", s, "a number")) {
+            let r = slider_range::TRAP_SIZE;
+            self.coloring.interior_trap_place.size = v.clamp(*r.start(), *r.end());
+        }
         // The inside (coloring plan B5, C1): what colors it, the trap's palette, a solid color.
         if let Some(m) = val("--interior") {
             match crate::InteriorMode::parse_key(m) {
@@ -9944,6 +10004,11 @@ impl FractadyneApp {
             trap_y: self.coloring.trap_place.center[1],
             trap_rotation: self.coloring.trap_place.rotation,
             trap_size: self.coloring.trap_place.size,
+            interior_trap: self.coloring.interior_trap.map_or(String::new(), |t| t.key().to_string()),
+            interior_trap_x: self.coloring.interior_trap_place.center[0],
+            interior_trap_y: self.coloring.interior_trap_place.center[1],
+            interior_trap_rotation: self.coloring.interior_trap_place.rotation,
+            interior_trap_size: self.coloring.interior_trap_place.size,
             custom_palette: self.coloring.custom_palette.clone(),
             custom_palette_flat: self.coloring.custom_palette_flat,
             custom_segments: self.coloring.custom_segments.clone(),
@@ -10004,6 +10069,8 @@ impl FractadyneApp {
         c.stripe_tail_len = s.stripe_tail_len.clamp(4, 1 << 20);
         c.trap_type = TrapType::from_key(&s.trap_type);
         c.trap_place = trap_place_of(s);
+        c.interior_trap = TrapType::parse_key(&s.interior_trap);
+        c.interior_trap_place = interior_trap_place_of(s);
         c.custom_palette = s.custom_palette.clone();
         c.custom_palette_flat = s.custom_palette_flat;
         c.custom_segments = s.custom_segments.clone();
@@ -13236,7 +13303,7 @@ impl FractadyneApp {
     /// The shading for `method` with the inside palette `palette`: the trap method's own inside
     /// keeps its exact path unless the inside has colors of its own (a palette, or its fit).
     pub(crate) fn interior_shading_with(&self, method: ColorMethod, palette: Option<usize>) -> InteriorShading {
-        let own_colors = palette.is_some() || self.coloring.interior_fit;
+        let own_colors = palette.is_some() || self.coloring.interior_fit || self.coloring.trap().inside.is_some() && self.coloring.inside_trap_on(method);
         InteriorShading::for_view(self.coloring.interior_of(method), method, own_colors)
     }
 

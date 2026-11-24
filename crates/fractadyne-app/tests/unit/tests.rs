@@ -364,6 +364,7 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "interior_fit", "trap",
     // Written only with a trap moved, turned or sized (F4).
     "trap_x", "trap_y", "trap_rotation", "trap_size",
+    "interior_trap", "interior_trap_x", "interior_trap_y", "interior_trap_rotation", "interior_trap_size",
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
     // Written only with the relief light on, and its slope from the distance (C5).
     "light_steep", "light_steep_px", "light_highlight", "light_shininess", "light_highlight_color",

@@ -673,20 +673,34 @@ impl TrapPlace {
 pub struct Trap {
     pub shape: TrapType,
     pub place: TrapPlace,
+    /// The inside's own trap, shape and placement as the shape uses it, when it has one: the trap
+    /// method's inside colored by a trap of its own. The iteration then measures both; an interior
+    /// pixel's lane holds this one, an escaped pixel's the trap above. `None`: the inside measures
+    /// the trap above, as before.
+    pub inside: Option<(TrapType, TrapPlace)>,
 }
 
 impl Trap {
     /// `shape` placed at `place`, as the shape uses it.
     pub fn new(shape: TrapType, place: TrapPlace) -> Trap {
-        Trap { shape, place: place.for_shape(shape) }
+        Trap { shape, place: place.for_shape(shape), inside: None }
     }
     /// `shape` at the default placement: the trap as it was before F4.
     pub fn of(shape: TrapType) -> Trap {
-        Trap { shape, place: TrapPlace::DEFAULT }
+        Trap { shape, place: TrapPlace::DEFAULT, inside: None }
     }
-    /// What keys hash: the shape's GPU number for this build and the placement's bits.
-    pub fn key_bits(self) -> (u32, [u32; 4]) {
-        (self.shape.gpu_id(), self.place.bits())
+    /// This trap with the inside's own, `shape` at `place` as the shape uses it; none when that is
+    /// this trap itself, which the inside then measures anyway (no second statistic, every bit as
+    /// without one).
+    pub fn with_inside(self, shape: TrapType, place: TrapPlace) -> Trap {
+        let place = place.for_shape(shape);
+        let inside = (shape != self.shape || place != self.place).then_some((shape, place));
+        Trap { inside, ..self }
+    }
+    /// What keys hash: the shape's GPU number for this build and the placement's bits, and the
+    /// inside's own the same way.
+    pub fn key_bits(self) -> (u32, [u32; 4], Option<(u32, [u32; 4])>) {
+        (self.shape.gpu_id(), self.place.bits(), self.inside.map(|(s, p)| (s.gpu_id(), p.bits())))
     }
 }
 

@@ -253,6 +253,32 @@ fn iter_uniform_matches_the_shader() {
         assert_eq!(wgsl_field_offset(&fields, wgsl), trap + rust, "IterU.{wgsl} and IterUniforms.trap disagree");
     }
     assert_eq!(std::mem::size_of::<super::TrapU>(), 32, "TrapU is the shader's 8 words");
+    // The inside's own trap: the same block again, then its row.
+    let trap_in = std::mem::offset_of!(super::IterUniforms, trap_in);
+    for (wgsl, rust) in [
+        ("trap_in_c", std::mem::offset_of!(super::TrapU, center)),
+        ("trap_in_turn", std::mem::offset_of!(super::TrapU, turn)),
+        ("trap_in_size", std::mem::offset_of!(super::TrapU, size)),
+        ("trap_in_inv", std::mem::offset_of!(super::TrapU, inv_size)),
+        ("trap_in_on", std::mem::offset_of!(super::TrapU, on)),
+    ] {
+        assert_eq!(wgsl_field_offset(&fields, wgsl), trap_in + rust, "IterU.{wgsl} and IterUniforms.trap_in disagree");
+    }
+    let row = std::mem::offset_of!(super::IterUniforms, trap_in_row);
+    assert_eq!(wgsl_field_offset(&fields, "trap_in_enabled"), row);
+    assert_eq!(wgsl_field_offset(&fields, "trap_in_type"), row + 4);
+}
+
+/// The inside's own trap reaches the shader only while the trap is accumulated, with its shape.
+#[test]
+fn the_inside_trap_uniform_is_off_unless_accumulated() {
+    use fractadyne_core::coloring::{TrapPlace, TrapType};
+    let inside = Some((TrapType::Circle, TrapPlace { center: [0.1, 0.4], rotation: 0.0, size: 0.3 }));
+    assert_eq!(super::trap_in_uniform(None, true), (super::TrapU::default(), [0; 4]));
+    assert_eq!(super::trap_in_uniform(inside, false), (super::TrapU::default(), [0; 4]));
+    let (u, row) = super::trap_in_uniform(inside, true);
+    assert_eq!(row, [1, TrapType::Circle.gpu_id(), 0, 0]);
+    assert_eq!((u.on, u.center, u.size), (1, [0.1, 0.4], 0.3));
 }
 
 /// The trap uniform at the default placement is all zeros (`trap_on` 0: no transform in the
