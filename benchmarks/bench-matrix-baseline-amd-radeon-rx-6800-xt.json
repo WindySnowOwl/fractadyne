@@ -3,6 +3,21 @@
   "gpu": "AMD Radeon RX 6800 XT",
   "utc": "2026-11-03 00:31:46 UTC",
   "segments": {
+    "color-decomposition": {
+      "mode": 0,
+      "sa_skip": 7954,
+      "orbit_len": 8008,
+      "eff_iter": 15000,
+      "counters": [
+        1347678,
+        0,
+        0,
+        0,
+        68
+      ],
+      "ref_ms": 11.9035,
+      "gpu_ms": 114.1121
+    },
     "color-smooth": {
       "mode": 0,
       "sa_skip": 7954,
