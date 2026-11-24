@@ -47,6 +47,9 @@ impl crate::FractadyneApp {
                 })
                 .response
                 .on_hover_text(tr!(panel_inside_trap_hover));
+            if self.dialogs.uitest_inside_trap_scroll {
+                ui.scroll_to_cursor(Some(egui::Align::Min));
+            }
         });
         if let Some(shape) = self.coloring.interior_trap {
             trap_place_rows(ui, shape, &mut self.coloring.interior_trap_place);

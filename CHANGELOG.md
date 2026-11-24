@@ -25,7 +25,12 @@ detail is in the git history.
   leaves the inside one color, it brings out a field of rays and dots. A point or a cross is
   centered on a point of the cycle, a circle passes through one, and each press moves on to the
   cycle's next point. It works for Mandelbrot and Multibrot, and in a Julia view takes the cycle of
-  its c.
+  its c. With the Orbit trap method coloring the inside too, the inside can have a trap of its own
+  (Inside trap, with its own shape, place and Place on the cycle), while the method's trap colors
+  the outside; Same as the method keeps one trap for both, as before. In a view file it is
+  `interior_trap` and its `interior_trap_x`, `_y`, `_rotation` and `_size`, and on the command line
+  `--interior-trap SHAPE` with `--interior-trap-center`, `--interior-trap-rotation` and
+  `--interior-trap-size`.
 - **Decomposition coloring calculates as fast as the smooth count.** It used to calculate every
   step past 1e4× (no series approximation, no BLA), because the cells it draws were thought too
   sensitive for those shortcuts. Measured, the shortcuts change fewer of its pixels than shifting

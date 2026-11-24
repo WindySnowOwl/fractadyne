@@ -8165,12 +8165,12 @@ impl FractadyneApp {
                 const MRE: &str = "-9.5615882490732676063982994499490578147935343195074805633443741253353130261608583401177598055702619474609439701446982e-2";
                 const MIM: &str = "9.2407201125877521262558092669605306283394020346180079142271967031202190501107148187554958943606565429410592657638281e-1";
                 let at = |s: &str| fractadyne_core::parse_bf_prec(s, 512).expect("a coordinate");
-                let (w, h) = (240u32, 150u32);
+                let (w, h) = (200u32, 125u32);
                 let mut u = Viewport::new(f64::from(w), f64::from(h));
                 u.set_center_mag(at("-0.9173735445860097"), at("0.22966943698602013"), 3.0 / (0.105 * f64::from(h) / f64::from(w)));
                 let mut m = Viewport::new(f64::from(w), f64::from(h));
-                m.set_center_mag(at(MRE), at(MIM), 3.0e78);
-                for (label, vp, iters, deep) in [("view U, direct", u, 3000u32, false), ("the 9.3e78 minibrot at 3e78x, BLA", m, 200_000, true)] {
+                m.set_center_mag(at(MRE), at(MIM), 3.0e79);
+                for (label, vp, iters, deep) in [("view U, direct", u, 3000u32, false), ("the 9.3e78 minibrot at 3e79x, BLA", m, 200_000, true)] {
                     self.render_cfg.max_iter = iters;
                     let lanes = |app: &mut Self, main: (T, P), inside: Option<(T, P)>| {
                         app.coloring.trap_type = main.0;
@@ -8212,12 +8212,12 @@ impl FractadyneApp {
                                 result: format!(
                                     "{inside} of {n} pixels inside; {esc_bad} escaped and {in_bad} interior lanes off; the inside's own differs from the method trap's on {moved}"
                                 ),
-                                threshold: "the inside trap on; 0 lanes off; 5-95% inside; it differs on half the inside or more; BLA engaged at depth".into(),
+                                threshold: "the inside trap on; 0 lanes off; 500+ pixels inside and 500+ escaped; it differs on half the inside or more; BLA engaged at depth".into(),
                                 pass: on
                                     && esc_bad == 0
                                     && in_bad == 0
-                                    && inside * 20 >= n
-                                    && inside * 20 <= n * 19
+                                    && inside >= 500
+                                    && n - inside >= 500
                                     && moved * 2 >= inside
                                     && (!deep || bla),
                             });

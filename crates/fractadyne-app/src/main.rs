@@ -7169,6 +7169,8 @@ struct DialogState {
     /// `--uitest` only: scroll the panel to the Effects header while it is held open (the
     /// `edge-shade-panel` screen, whose rows are below the fold otherwise).
     uitest_effects_scroll: bool,
+    /// `--uitest` only: scroll the panel to the Inside trap row (the `inside-own-trap` screen).
+    uitest_inside_trap_scroll: bool,
     /// Minimap overview enabled (persisted).
     minimap: bool,
     /// "Script to current view" export dialog open, plus its inputs (a notation caption and the
@@ -8572,6 +8574,7 @@ impl FractadyneApp {
                 uitest_advanced_open: None,
                 uitest_effects_open: None,
                 uitest_effects_scroll: false,
+                uitest_inside_trap_scroll: false,
                 minimap: s.minimap,
                 script_export_open: false,
                 script_export_note: String::new(),
