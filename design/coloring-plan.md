@@ -1,6 +1,6 @@
 # Coloring methods: implementation plan
 
-Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1 to C11 done (a solid inside in any color; the palette map's curves, wraps and steps; edge shading by the distance; the relief light's slope from the distance and a highlight; the inside's palette fitted to its range; Equalize, histogram coloring mixed into the fitted map; palettes blended in OKLab; the palette anti-aliased over a footprint from the distance estimate; the fringe method; equipotential lines at an even spacing at every depth; the dual view's Julia pane on the set's palette map); B8 not started; next C6b (tours and zoom videos equalized); see §10 (2026-11-23).** Line references are to `main` at `9ab75357`; check
+Status: **plan (2026-11-08); phase A done (A1–A10), B1, B1b, B9 and B10 done (the coloring matrix, its live method tour, every lane as NumPy arrays, a custom coloring hook), B2 done (what a frame accumulates is a `StatSet`, apart from the method shown), B3 done (in floatexp a stripe, triangle or trap frame carries the whole G-buffer), B4 to B7 done (one settings model, the method list, the method sheet, the inside and a second LUT), C1 to C11 done (a solid inside in any color; the palette map's curves, wraps and steps; edge shading by the distance; the relief light's slope from the distance and a highlight; the inside's palette fitted to its range; Equalize, histogram coloring mixed into the fitted map, in tours and zoom videos too; palettes blended in OKLab; the palette anti-aliased over a footprint from the distance estimate; the fringe method; equipotential lines at an even spacing at every depth; the dual view's Julia pane on the set's palette map); B8 and C6c not started; see §10 (2026-11-23).** Line references are to `main` at `9ab75357`; check
 them before editing, they drift. The research behind it (methods, prototypes, measured results,
 prior art) is the coloring-methods doc; its local copy is
 `local/research_notes/Fractal coloring methods/` (PDF, HTML, Markdown, prototype scripts).
@@ -1128,6 +1128,57 @@ UI rows, `.fdn`/farm/CLI through B4, B1 cells, a selftest appearance check, uite
 Order: C1, C4, C8, C9, C11 (smallest), then C2, C3, C10, then C5, C6, C7. (2026-11-20: B9 and B10,
 the prototyping aids, come before C2.)
 
+**C6b, done 2026-11-23** (branch `feat/color-c6b-tours`): Equalize colors in tours and zoom
+videos, each frame equalized by distributions measured along the way and blended to its time or
+depth, never by its own (a distribution measured frame by frame would flicker). **Tours:** each
+normalize anchor (`NormRange::Anchor`, the keyframe's view at 480x270) keeps its frame's
+distribution (`buffer_quantiles`) with its range, and a frame takes the blend of the two around
+its time at the range's own weights, knot by knot (`norm_anchor_eq`; `quantiles_zip`), through
+`NormRange::Fixed(range, distribution)`; the legacy EMA fallback eases the distribution as it eases
+the range (it equalized its first frame only). The anchor file is version 2: each anchor's
+distribution exactly, an `f32`'s bits in hex a knot (~2.4 KB an anchor; the file's cap and a farm
+bundle's anchors 8 MiB, within the bundle's 16); a version-1 file still reads and a tour that
+equalizes refuses it, naming why. The frame loop's setup is `enter_tour_frame`, shared with the
+self-test's rebuild. **Zoom videos:** a strip's 8x8 blocks keep 8 values each (`BLOCK_RANKS`) at
+mid-ranks BY AREA (each texel weighted by its row's radius squared, relative to the block's center
+row), only when the video equalizes; a frame's distribution (`frame_quantiles`) is those values,
+each block weighted by its escaped texels' area in the frame, from the blocks `frame_range` reads
+(`frame_blocks`; `quantiles_of_weighted`, the midpoint rule). Prototype first (the seahorse dive to
+2^20 at 640x360, 41 depths, scratchpad `c6b/`): the remap against the frame's own exact
+distribution was 0.30 of a sweep off from the blocks' means alone, 0.085 from the median, 0.040 from
+4 values, 0.017 from 8, 0.004 from every texel (the frame's geometry as the blocks take it, so the
+loss is the summary's); by area, a frame's blocks' texels 0.52 to 0.72% of the area off against 0.82
+to 0.96% counted alike (unit test, a 96x54 map). A strip the frame holds whole (its first block
+row within the frame's half height) is read once from its own distribution (`WholeStrip`, sorted
+when the strip is summarized; its blocks all scale alike with the depth), so only the strips
+across the frame's edge are read block by block: a reading 44 ms to 4.8 ms at 640x360, the same
+numbers. Distributions are anchored every quarter octave (`EQ_ANCHOR_STEP`; `NormAnchors<T>`,
+generic over what it blends, the ranges still every octave): an octave apart, the fullest of 16
+colors halfway between was 11.6% of the frame against 6.3% at the anchors and by the frame's own
+distribution; a quarter apart, 6.5 to 7.3% against 6.3 to 6.9%. `apply_video_eq` equalizes the map
+and, through the linear-to-log dissolve, the palette fade's form (its own table); `--assemble-at`
+frames take their own distribution. Re-assembling an equalized video from its kept strips matches
+the one-step render within 3 levels on under 0.1% of a frame's pixels: the strip file keeps a count
+as its whole iterations plus the fraction, whose sum can differ from the render's count in the last
+bit, which the equalized map's steep stretches show and the fitted map's do not (the same
+reassembly twice: identical). Tests: core `quantiles_of_weighted`, `quantiles_zip`; the anchor
+file's distributions round trip bit for bit, version 1 reads, damage refused; `norm_anchor_eq` at
+the range's weights, its ends the range's, a shard's frames as the whole tour's; a block's ranks,
+by area; a frame's distribution against its blocks' texels (0.8%) and its own (4%, a third of the
+96x54 frame's area in blocks across its edge); a strip read whole is its blocks; the anchors blend a
+quarter octave apart. Self-test `tour-equalize` (a 7-frame tour, Equalize 100%: the anchor file
+version 2 with both distributions; from it every frame identical, frames 2..5 alone identical; the
+middle frame rebuilt through `enter_tour_frame` with the blend 0 bytes apart, with either
+keyframe's distribution or none 17% of its pixels apart; Equalize off 33.7 levels away) and
+`video-equalize` (the reading within 0.016 of a sweep of each of 41 frames' own, 0.0053 on average,
+the blocks' means 0.284; frames between distribution anchors under the video's map, linear and log:
+0.00% apart from the CPU's colors, the control 96 to 98%, the fullest of 16 colors 6.3 to 7.3%
+equalized, 13 to 30% fitted). Looked at: a 640x360 tour from 1x to 3e11 and a zoom video to 2^20,
+Equalize 75% against off (the largest frame-to-frame step 1.35 and 1.12 times its neighbors', off
+1.43 and 1.03: no flicker; the equalized video's assembly 1.6 s against 1.4 s for 301 frames). Left
+for C6c: equalizing the orbit trap's fitted values (`CTR_TRAP_HIST`) and the research's rank-order
+"detail at the high end".
+
 **C7, done 2026-11-23** (branch `feat/color-c7-oklab`): Blend in OKLab, a checkbox under the
 palette's Saturation: every palette that colors a picture is baked with its RGB segments blended in
 OKLab (`Gradient::bake_oklab`, through `bake_palette`), lightness, chroma and hue moving along the
@@ -1751,6 +1802,7 @@ coloring in these places, so sequence the two with care:
 | C10        | done, merged                                              | `43368601` (merge `cc471188`)                                                             |
 | C5         | done, merged                                              | `ed36a532` (merge `2eb22119`)                                                             |
 | C6         | done, merged (after the C2 map fix, merge `c44d9d35`)     | `2674cffe` (merge `61325df2`)                                                             |
-| C6b        | not started (tours, zoom video, the trap's fit)           |                                                                                           |
-| C7         | done, on `feat/color-c7-oklab`                            | merge recorded with the next step                                                         |
+| C6b        | done, on `feat/color-c6b-tours` (tours, zoom videos)      | merge recorded with the next step                                                         |
+| C6c        | not started (the trap's fit; rank-order high-end detail)  |                                                                                           |
+| C7         | done, merged                                              | `3535dd38` (merge `e472c5ce`)                                                             |
 | D, E, F, G | not started                                               |                                                                                           |

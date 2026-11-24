@@ -235,6 +235,13 @@ pub(crate) fn dive_frames(start: f64, end: f64, speed: f64, fps: f64) -> Vec<f64
 /// Texels a side of the blocks a strip's escape values are summarized in ([`StripRange`]).
 pub(crate) const RANGE_BLOCK: usize = 8;
 
+/// Values a block keeps of its escaped texels for Equalize colors (coloring plan C6b): those at
+/// mid-ranks (i + ½) / 8 of the block's AREA in a frame ([`strip_range_ranked`]). Prototyped first (2026-11-23, the seahorse dive to 2^20 at 640x360, 41
+/// depths): a frame's distribution read from 8 a block put its equalized colors within 0.017 of a
+/// palette sweep of the frame's own exact distribution (mean 0.005); from the block's mean alone,
+/// up to 0.30; from 4, 0.040; from every texel, 0.004 (the frame's geometry, as the blocks take it).
+pub(crate) const BLOCK_RANKS: usize = 8;
+
 /// A strip's escape values in blocks of [`RANGE_BLOCK`]² texels: each block's least, greatest and
 /// mean smooth count among its escaped texels, and how many escaped (`+∞`, `−∞`, 0, 0 when none
 /// did). A frame's escape range, and where most of its picture escapes, follow to within a block,
@@ -247,10 +254,33 @@ pub(crate) struct StripRange {
     pub(crate) hi: Vec<f32>,
     pub(crate) mean: Vec<f32>,
     pub(crate) n: Vec<u32>,
+    /// Each block's escaped values at its [`BLOCK_RANKS`] mid-ranks by area, for Equalize colors
+    /// ([`frame_quantiles`]); empty unless asked for.
+    pub(crate) ranks: Vec<[f32; BLOCK_RANKS]>,
+    /// With the ranks: the whole strip's distribution, for a frame that holds all of it.
+    pub(crate) whole: Option<WholeStrip>,
 }
 
-/// A `w × h` strip's main target summarized ([`StripRange`]).
-pub(crate) fn strip_range(main: &[f32], w: usize, h: usize) -> StripRange {
+/// A strip's whole distribution (coloring plan C6b): its blocks' ranks, each block weighted by its
+/// escaped texels' area relative to the strip's first rows (`2^(−2·row/rows per octave)` at its
+/// center row). A frame that holds the whole strip weights every block of it by the same factor
+/// more (the square of the strip's radius in the frame), so it reads the strip from this alone, not
+/// block by block: the same blocks, and one sort a strip instead of one a frame.
+#[derive(Debug)]
+pub(crate) struct WholeStrip {
+    pub(crate) q: fractadyne_core::coloring::Quantiles,
+    /// The blocks' relative areas summed.
+    pub(crate) weight: f64,
+    pub(crate) lo: f32,
+    pub(crate) hi: f32,
+}
+
+/// A `w × h` strip's main target summarized ([`StripRange`]); with each block's ranks too when
+/// given the map's rows per octave (a video that equalizes): by area, each texel weighted by the square of its row's radius relative to the
+/// block's center row, which a frame weights the whole block by (`frame_blocks`). Counted alike,
+/// the outer rows' larger texels were under-weighted: 2.2% of the area at 2^3.3 on a 96x54
+/// frame's map (38 rows an octave, a block's rows ±15% in area), against a frame's own texels.
+pub(crate) fn strip_range_ranked(main: &[f32], w: usize, h: usize, rows_per_octave: Option<f64>) -> StripRange {
     let (bw, bh) = (w.div_ceil(RANGE_BLOCK), h.div_ceil(RANGE_BLOCK));
     let (mut lo, mut hi) = (vec![f32::INFINITY; bw * bh], vec![f32::NEG_INFINITY; bw * bh]);
     let (mut sum, mut n) = (vec![0f64; bw * bh], vec![0u32; bw * bh]);
@@ -268,7 +298,90 @@ pub(crate) fn strip_range(main: &[f32], w: usize, h: usize) -> StripRange {
         }
     }
     let mean = sum.iter().zip(&n).map(|(&s, &c)| if c > 0 { (s / c as f64) as f32 } else { 0.0 }).collect();
-    StripRange { bw, bh, lo, hi, mean, n }
+    let (ranks, whole) = match rows_per_octave {
+        Some(rpo) => {
+            let ranks = block_ranks(main, w, h, bw, bh, rpo);
+            let whole = whole_strip(&ranks, &lo, &hi, &n, bw, bh, h, rpo);
+            (ranks, whole)
+        }
+        None => (Vec::new(), None),
+    };
+    StripRange { bw, bh, lo, hi, mean, n, ranks, whole }
+}
+
+/// The strip's [`WholeStrip`] from its blocks' ranks; `None` when nothing in it escaped.
+#[allow(clippy::too_many_arguments)]
+fn whole_strip(ranks: &[[f32; BLOCK_RANKS]], lo: &[f32], hi: &[f32], n: &[u32], bw: usize, bh: usize, h: usize, rows_per_octave: f64) -> Option<WholeStrip> {
+    let (mut least, mut most, mut weight) = (f32::INFINITY, f32::NEG_INFINITY, 0.0f64);
+    let mut atoms: Vec<(f32, f64)> = Vec::with_capacity(ranks.len() * BLOCK_RANKS);
+    for by in 0..bh {
+        // A block row's area relative to the strip's first rows: its center row's (`frame_blocks`).
+        let rel = (-2.0 * (by * RANGE_BLOCK + RANGE_BLOCK / 2).min(h - 1) as f64 / rows_per_octave).exp2();
+        for b in by * bw..(by + 1) * bw {
+            if n[b] == 0 {
+                continue;
+            }
+            least = least.min(lo[b]);
+            most = most.max(hi[b]);
+            let a = n[b] as f64 * rel;
+            weight += a;
+            atoms.extend(ranks[b].iter().map(|&x| (x, a / BLOCK_RANKS as f64)));
+        }
+    }
+    let q = fractadyne_core::coloring::quantiles_of_weighted(&mut atoms, least, most)?;
+    Some(WholeStrip { q, weight, lo: least, hi: most })
+}
+
+/// Each block's escaped values at its [`BLOCK_RANKS`] mid-ranks by area (see
+/// [`strip_range_ranked`]): rank r the value at share (r + ½) / [`BLOCK_RANKS`] of the block's
+/// area, each texel's area centered on its value and linear between (with equal areas, the plain
+/// mid-rank of the values); all 0 for a block where none escaped. A row of blocks at a time.
+fn block_ranks(main: &[f32], w: usize, h: usize, bw: usize, bh: usize, rows_per_octave: f64) -> Vec<[f32; BLOCK_RANKS]> {
+    let mut out = vec![[0.0f32; BLOCK_RANKS]; bw * bh];
+    let mut vals: Vec<Vec<(f32, f64)>> = vec![Vec::with_capacity(RANGE_BLOCK * RANGE_BLOCK); bw];
+    for by in 0..bh {
+        vals.iter_mut().for_each(Vec::clear);
+        // The row a frame takes the block's radius from (`frame_blocks`' `centre`).
+        let center = (by * RANGE_BLOCK + RANGE_BLOCK / 2).min(h - 1) as f64;
+        for j in by * RANGE_BLOCK..((by + 1) * RANGE_BLOCK).min(h) {
+            // A row's radius goes as 2^(−row / rows per octave), its texels' area as the square.
+            let area = (-2.0 * (j as f64 - center) / rows_per_octave).exp2();
+            for i in 0..w {
+                let v = main[(j * w + i) * 4];
+                if v >= 0.0 {
+                    vals[i / RANGE_BLOCK].push((v, area));
+                }
+            }
+        }
+        for (bx, v) in vals.iter_mut().enumerate() {
+            if v.is_empty() {
+                continue;
+            }
+            v.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+            let total: f64 = v.iter().map(|p| p.1).sum();
+            // Each texel's share centered on it: the shares below their middles, rising.
+            let mut mid = Vec::with_capacity(v.len());
+            let mut acc = 0.0;
+            for p in v.iter() {
+                mid.push((acc + p.1 / 2.0) / total);
+                acc += p.1;
+            }
+            let last = v.len() - 1;
+            for (r, x) in out[by * bw + bx].iter_mut().enumerate() {
+                let s = (r as f64 + 0.5) / BLOCK_RANKS as f64;
+                let j = mid.partition_point(|&m| m < s);
+                *x = if j == 0 {
+                    v[0].0
+                } else if j > last {
+                    v[last].0
+                } else {
+                    let f = ((s - mid[j - 1]) / (mid[j] - mid[j - 1]).max(1.0e-300)).clamp(0.0, 1.0);
+                    (v[j - 1].0 as f64 + (v[j].0 as f64 - v[j - 1].0 as f64) * f) as f32
+                };
+            }
+        }
+    }
+    out
 }
 
 /// The palette window of the frame at magnification `2^l` (`fw × fh` pixels), as the live view takes
@@ -287,39 +400,129 @@ pub(crate) fn frame_range(
     fh: f64,
     q: f64,
 ) -> Result<Option<(f32, f32)>, String> {
+    let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+    let mut blocks: Vec<(f32, f64)> = Vec::new();
+    let shown = frame_blocks(map, ranges, strips, l, fw, fh, false, |seen| {
+        if let Seen::Block(r, b, rad) = seen {
+            lo = lo.min(r.lo[b]);
+            hi = hi.max(r.hi[b]);
+            // A texel's area in the frame goes as the square of its radius (pixels).
+            blocks.push((r.mean[b], r.n[b] as f64 * rad * rad));
+        }
+    })?;
+    if !shown || hi < lo {
+        return Ok(None);
+    }
+    let top = weighted_quantile(&mut blocks, q).map_or(hi, |v| v.clamp(lo, hi));
+    Ok(Some((lo, top)))
+}
+
+/// What [`frame_blocks`] hands on: a block, or (when asked for) a strip the frame holds whole.
+pub(crate) enum Seen<'a> {
+    /// A block with escaped texels: its strip's summary, the block, its center texel's radius in
+    /// the frame's pixels.
+    Block(&'a StripRange, usize, f64),
+    /// A strip every block of which the frame holds, as its [`WholeStrip`]: the factor its blocks'
+    /// relative areas take in the frame (the square of its first rows' radius there, in pixels).
+    Whole(&'a WholeStrip, f64),
+}
+
+/// Every block with escaped texels that the frame at magnification `2^l` (`fw × fh` pixels) shows,
+/// as `f(Seen::Block(..))`: those of every strip the frame reads whose center texel lies inside it.
+/// With `wholes`, a strip whose every block's center lies inside the frame (its outermost block row
+/// within the frame's half height) and that has a [`WholeStrip`] is handed on once, as
+/// `Seen::Whole`, instead. `false` when the frame reads no strip; an error when one it reads has no
+/// summary in `ranges`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn frame_blocks(
+    map: &ExpMap,
+    ranges: &HashMap<u64, Arc<StripRange>>,
+    strips: u64,
+    l: f64,
+    fw: f64,
+    fh: f64,
+    wholes: bool,
+    mut f: impl FnMut(Seen),
+) -> Result<bool, String> {
     let place = placement(map, l, fh, 1, 0.0);
     let Some((first, last)) = fractadyne_gpu::strips_for_frame(&place, fw as u32, fh as u32, strips) else {
-        return Ok(None);
+        return Ok(false);
     };
     let (o, rpo, step) = (map.sample_offset(), map.rows_per_octave(), map.step());
     let (hw, hh) = (fw / 2.0, fh / 2.0);
-    let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
-    let mut blocks: Vec<(f32, f64)> = Vec::new();
     for k in first..=last {
         let r = ranges.get(&k).ok_or_else(|| format!("strip {k}'s escape range has not been read"))?;
         // A texel of row j lies 2^(D − k − (j + o)/rpo) pixels from the center, D the placement's
         // depth (r0_log2 − log2 pixel), kept exact as the placement keeps it.
         let dk = (place.depth_whole - k as i64) as f64 + place.depth_frac;
         let centre = |b: usize, n: u32| ((b * RANGE_BLOCK + RANGE_BLOCK / 2).min(n as usize - 1)) as f64 + o;
+        if let Some(w) = r.whole.as_ref().filter(|_| wholes) {
+            // Radii fall with the row: the first block row's is the strip's largest. Within the
+            // frame's half height (its smaller half), every block's center lies inside it.
+            if (dk - centre(0, map.rows) / rpo).exp2() <= hw.min(hh) {
+                f(Seen::Whole(w, (2.0 * (dk - o / rpo)).exp2()));
+                continue;
+            }
+        }
         let cols: Vec<(f64, f64)> = (0..r.bw).map(|bx| (step * centre(bx, map.width)).sin_cos()).collect();
         for by in 0..r.bh {
             let rad = (dk - centre(by, map.rows) / rpo).exp2();
             for (bx, &(s, c)) in cols.iter().enumerate() {
                 let b = by * r.bw + bx;
                 if r.n[b] > 0 && (rad * c).abs() <= hw && (rad * s).abs() <= hh {
-                    lo = lo.min(r.lo[b]);
-                    hi = hi.max(r.hi[b]);
-                    // A texel's area in the frame goes as the square of its radius (pixels).
-                    blocks.push((r.mean[b], r.n[b] as f64 * rad * rad));
+                    f(Seen::Block(r, b, rad));
                 }
             }
         }
     }
-    if hi < lo {
+    Ok(true)
+}
+
+/// The distribution of the frame's escape values at magnification `2^l` (coloring plan C6b), as
+/// Equalize colors maps by: read from the blocks [`frame_range`] reads, each block's
+/// [`BLOCK_RANKS`] values weighted alike by its escaped texels' area in the frame, from the least
+/// value to the greatest; a strip the frame holds whole from its [`WholeStrip`] (its knots, each
+/// its share of the strip's area). `None` when nothing in the frame escaped. `ranges` must hold its
+/// strips, summarized with their ranks ([`strip_range_ranked`]).
+pub(crate) fn frame_quantiles(
+    map: &ExpMap,
+    ranges: &HashMap<u64, Arc<StripRange>>,
+    strips: u64,
+    l: f64,
+    fw: f64,
+    fh: f64,
+) -> Result<Option<fractadyne_core::coloring::Quantiles>, String> {
+    let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+    let mut atoms: Vec<(f32, f64)> = Vec::new();
+    let mut unranked = false;
+    let shown = frame_blocks(map, ranges, strips, l, fw, fh, true, |seen| match seen {
+        Seen::Block(r, b, rad) => {
+            lo = lo.min(r.lo[b]);
+            hi = hi.max(r.hi[b]);
+            match r.ranks.get(b) {
+                Some(v) => {
+                    let w = r.n[b] as f64 * rad * rad / BLOCK_RANKS as f64;
+                    atoms.extend(v.iter().map(|&x| (x, w)));
+                }
+                None => unranked = true,
+            }
+        }
+        Seen::Whole(w, scale) => {
+            use fractadyne_core::coloring::EQ_QUANTILES;
+            lo = lo.min(w.lo);
+            hi = hi.max(w.hi);
+            // Knot i stands for 1/256 of the strip's area, the two ends for half of that.
+            let a = w.weight * scale / EQ_QUANTILES as f64;
+            atoms.extend(w.q.iter().enumerate().map(|(i, &x)| (x, if i == 0 || i == EQ_QUANTILES { a / 2.0 } else { a })));
+        }
+    })?;
+    if unranked {
+        return Err("a strip the frame reads was summarized without the ranks Equalize colors reads".into());
+    }
+    if !shown || hi < lo {
         return Ok(None);
     }
-    let top = weighted_quantile(&mut blocks, q).map_or(hi, |v| v.clamp(lo, hi));
-    Ok(Some((lo, top)))
+    Ok(fractadyne_core::coloring::quantiles_of_weighted(&mut atoms, lo, hi))
 }
 
 /// The value below which fraction `q` of the total weight lies (`(value, weight)` pairs, reordered).
@@ -360,36 +563,85 @@ pub(crate) fn log_weight(lo: f32, top: f32, log_palette: bool) -> f32 {
 /// interpolated linearly it moved 13% in the first frame of the octave and 3% in the last.
 /// An anchor with nothing escaped takes its neighbor's range; with none on either side the last
 /// range given carries on.
-pub(crate) struct NormAnchors {
+///
+/// Equalize colors' distributions (coloring plan C6b) are anchored the same way, every
+/// [`EQ_ANCHOR_STEP`] of an octave, and blended knot by knot, so each share of the picture moves
+/// smoothly from one anchor's value to the next's.
+pub(crate) struct NormAnchors<T = (f32, f32)> {
     start: f64,
     end: f64,
-    at: HashMap<i64, Option<(f32, f32)>>,
-    last: Option<(f32, f32)>,
+    /// Octaves between anchors.
+    step: f64,
+    at: HashMap<i64, Option<T>>,
+    last: Option<T>,
 }
 
+/// How far apart a video's Equalize colors distributions are anchored, in octaves (coloring plan
+/// C6b). An octave apart, as the ranges are, the colors between drifted from even: halfway, the
+/// fullest of 16 colors held 11.6% of the frame (the seahorse dive at 2^15.5, 640x360), at the
+/// anchors 6.3%, as the frame's own exact distribution gives. A distribution is read from the strips'
+/// summaries on the CPU, so four an octave cost little.
+pub(crate) const EQ_ANCHOR_STEP: f64 = 0.25;
+
+/// What a video's anchors hold, blended between two anchors number by number (`lerp`).
+pub(crate) trait Blend: Copy {
+    fn blend(a: &Self, b: &Self, lerp: impl Fn(f32, f32) -> f32) -> Self;
+}
+
+/// A palette window `(lo, top)`.
+impl Blend for (f32, f32) {
+    fn blend(a: &Self, b: &Self, lerp: impl Fn(f32, f32) -> f32) -> Self {
+        (lerp(a.0, b.0), lerp(a.1, b.1))
+    }
+}
+
+/// A distribution, knot by knot.
+impl Blend for fractadyne_core::coloring::Quantiles {
+    fn blend(a: &Self, b: &Self, lerp: impl Fn(f32, f32) -> f32) -> Self {
+        fractadyne_core::coloring::quantiles_zip(a, b, lerp)
+    }
+}
+
+/// What a single frame of a video reads for itself (`--assemble-at`): its window, and its
+/// distribution when the video equalizes (coloring plan C6b).
+pub(crate) type FrameReading = ((f32, f32), Option<fractadyne_core::coloring::Quantiles>);
+
 impl NormAnchors {
+    /// Ranges anchored every octave.
     pub(crate) fn new(start: f64, end: f64) -> Self {
-        NormAnchors { start, end, at: HashMap::new(), last: None }
+        Self::every(start, end, 1.0)
+    }
+}
+
+impl<T: Blend> NormAnchors<T> {
+    /// Anchored every `step` octaves.
+    pub(crate) fn every(start: f64, end: f64, step: f64) -> Self {
+        NormAnchors { start, end, step, at: HashMap::new(), last: None }
     }
 
-    /// The depth of anchor `n`: `n` octaves into the dive, the last one at its end.
+    /// The depth of anchor `n`: `n` steps into the dive, the last one at its end.
     pub(crate) fn depth(&self, n: i64) -> f64 {
-        (self.start + n as f64).min(self.end)
+        (self.start + n as f64 * self.step).min(self.end)
     }
 
     /// The anchors frame depth `l` lies between.
     pub(crate) fn around(&self, l: f64) -> (i64, i64) {
-        let n = ((l - self.start).floor() as i64).max(0);
+        let n = (((l - self.start) / self.step).floor() as i64).max(0);
         (n, if self.depth(n + 1) > self.depth(n) { n + 1 } else { n })
     }
 
-    /// The range at depth `l`, measuring the anchors around it with `measure` (a depth's range) the
-    /// first time they are needed.
+    /// How many anchors have been measured.
+    pub(crate) fn measured(&self) -> usize {
+        self.at.len()
+    }
+
+    /// The value at depth `l`, measuring the anchors around it with `measure` (a depth's value)
+    /// the first time they are needed.
     pub(crate) fn range(
         &mut self,
         l: f64,
-        mut measure: impl FnMut(f64) -> Result<Option<(f32, f32)>, String>,
-    ) -> Result<Option<(f32, f32)>, String> {
+        mut measure: impl FnMut(f64) -> Result<Option<T>, String>,
+    ) -> Result<Option<T>, String> {
         let (a, b) = self.around(l);
         for n in [a, b] {
             if !self.at.contains_key(&n) {
@@ -408,7 +660,7 @@ impl NormAnchors {
             t => p + t * (q - p),
         };
         let r = match (self.at[&a], self.at[&b]) {
-            (Some(x), Some(y)) => Some((lerp(x.0, y.0), lerp(x.1, y.1))),
+            (Some(x), Some(y)) => Some(T::blend(&x, &y, lerp)),
             (Some(x), None) | (None, Some(x)) => Some(x),
             (None, None) => self.last,
         };
@@ -425,6 +677,8 @@ impl NormAnchors {
 /// GPU, for `--normalize`.
 pub(crate) struct StripReader {
     dive: Arc<Dive>,
+    /// Summarize each strip with its ranks too (a video that equalizes, coloring plan C6b).
+    ranks: bool,
     pending: HashMap<u64, JoinHandle<Result<(Vec<f32>, StripRange), String>>>,
     /// Read, not yet taken (a strip read early for an anchor's range).
     ready: HashMap<u64, Vec<f32>>,
@@ -432,8 +686,8 @@ pub(crate) struct StripReader {
 }
 
 impl StripReader {
-    pub(crate) fn new(dive: Arc<Dive>) -> Self {
-        StripReader { dive, pending: HashMap::new(), ready: HashMap::new(), ranges: HashMap::new() }
+    pub(crate) fn new(dive: Arc<Dive>, ranks: bool) -> Self {
+        StripReader { dive, ranks, pending: HashMap::new(), ready: HashMap::new(), ranges: HashMap::new() }
     }
 
     /// Start reading strip `k` if it is in the dive and not already read or on its way.
@@ -441,7 +695,7 @@ impl StripReader {
         if k >= self.dive.strips || self.pending.contains_key(&k) || self.ready.contains_key(&k) {
             return;
         }
-        let dive = self.dive.clone();
+        let (dive, ranks) = (self.dive.clone(), self.ranks);
         let h = std::thread::Builder::new().name(format!("strip-read-{k}")).spawn(move || {
             let path = dive.dir.join(strip_file(k));
             if !path.exists() {
@@ -451,7 +705,7 @@ impl StripReader {
                 ));
             }
             let main = strip_main(&path, &dive.map)?;
-            let range = strip_range(&main, dive.map.width as usize, dive.map.rows as usize);
+            let range = strip_range_ranked(&main, dive.map.width as usize, dive.map.rows as usize, ranks.then(|| dive.map.rows_per_octave()));
             Ok((main, range))
         });
         match h {
@@ -507,6 +761,8 @@ pub(crate) struct StripRenderer {
     next: u64,
     ready: HashMap<u64, Vec<f32>>,
     pub(crate) ranges: HashMap<u64, Arc<StripRange>>,
+    /// Summarize each strip with its ranks too (a video that equalizes, coloring plan C6b).
+    ranks: bool,
     keep: Option<PathBuf>,
     /// Seconds spent rendering strips.
     pub(crate) render_s: f64,
@@ -612,7 +868,7 @@ impl crate::FractadyneApp {
                 ),
             );
             let main = s.result.pixels;
-            src.ranges.insert(j, Arc::new(strip_range(&main, p.map.width as usize, p.map.rows as usize)));
+            src.ranges.insert(j, Arc::new(strip_range_ranked(&main, p.map.width as usize, p.map.rows as usize, src.ranks.then(|| p.map.rows_per_octave()))));
             src.ready.insert(j, main);
             src.next += 1;
         }
@@ -664,15 +920,15 @@ impl crate::FractadyneApp {
         Ok(())
     }
 
-    /// The palette window of the frame at depth `l`, reading or rendering the strips it shows first.
-    fn measured_range(
+    /// Read or render the strips the frame at depth `l` shows, so their summaries are there.
+    fn summarize_frame(
         &mut self,
         dive: &Dive,
         src: &mut StripSource,
         device: &eframe::wgpu::Device,
         queue: &eframe::wgpu::Queue,
         l: f64,
-    ) -> Result<Option<(f32, f32)>, String> {
+    ) -> Result<(), String> {
         let (fw, fh) = dive.frame;
         let place = placement(&dive.map, l, fh, 1, 0.0);
         if let Some((first, last)) = fractadyne_gpu::strips_for_frame(&place, fw as u32, fh as u32, dive.strips) {
@@ -684,7 +940,51 @@ impl crate::FractadyneApp {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// The palette window of the frame at depth `l`, reading or rendering the strips it shows first.
+    fn measured_range(
+        &mut self,
+        dive: &Dive,
+        src: &mut StripSource,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        l: f64,
+    ) -> Result<Option<(f32, f32)>, String> {
+        self.summarize_frame(dive, src, device, queue, l)?;
+        let (fw, fh) = dive.frame;
         frame_range(&dive.map, src.ranges(), dive.strips, l, fw, fh, crate::tunables::cost().norm_top_quantile)
+    }
+
+    /// The distribution of the frame at depth `l` ([`frame_quantiles`], coloring plan C6b), reading
+    /// or rendering the strips it shows first.
+    fn measured_quantiles(
+        &mut self,
+        dive: &Dive,
+        src: &mut StripSource,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        l: f64,
+    ) -> Result<Option<fractadyne_core::coloring::Quantiles>, String> {
+        self.summarize_frame(dive, src, device, queue, l)?;
+        frame_quantiles(&dive.map, src.ranges(), dive.strips, l, dive.frame.0, dive.frame.1)
+    }
+
+    /// A single frame's own window, and its own distribution when the video equalizes.
+    fn measured_reading(
+        &mut self,
+        dive: &Dive,
+        src: &mut StripSource,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        l: f64,
+    ) -> Result<Option<FrameReading>, String> {
+        let Some(range) = self.measured_range(dive, src, device, queue, l)? else {
+            return Ok(None);
+        };
+        let eq = if self.assembly_equalizes() { self.measured_quantiles(dive, src, device, queue, l)? } else { None };
+        Ok(Some((range, eq)))
     }
 }
 
@@ -707,6 +1007,33 @@ impl crate::FractadyneApp {
         } else {
             fractadyne_gpu::PaletteFade::default()
         };
+    }
+
+    /// Equalize colors on a video frame's map ([`Self::apply_video_norm`]'s, coloring plan C6b): the
+    /// share asked for, of the remap of `q`, the frame's distribution, over the window `[lo, top]`,
+    /// for the map and, while the linear-to-log dissolve is under way, for the form it dissolves to
+    /// (the color pass's palette fade carries its own table). A linear map is rewritten about its
+    /// floor, the same colors, as an equalized map needs. Smooth only, as a flat export's.
+    pub(crate) fn apply_video_eq(&self, req: &mut fractadyne_gpu::ExportRequest, lo: f32, top: f32, q: &fractadyne_core::coloring::Quantiles) {
+        use fractadyne_core::coloring::{eq_knots, Transfer};
+        let share = self.coloring.equalize;
+        if !(share > 0.0) || self.coloring.color_method != crate::ColorMethod::Smooth || !(top > lo) {
+            return;
+        }
+        let sweeps = 0.5 + self.coloring.cycle * 6.0;
+        let curve = if self.coloring.transfer == Transfer::Linear { Transfer::Log } else { self.coloring.transfer };
+        let table = |t: Transfer| fractadyne_gpu::Equalize { share, sweeps, knots: eq_knots(q, lo as f64, top as f64, t) };
+        if req.norm_mode == 0 {
+            // (v − lo)·cycle + offset: the linear map's colors, measured from its floor.
+            req.norm_lo = lo;
+            req.offset = self.coloring.offset;
+            req.equalize = Some(table(Transfer::Linear));
+        } else {
+            req.equalize = Some(table(curve));
+        }
+        if req.palette_fade.weight > 0.0 {
+            req.palette_fade.equalize = Some(table(curve));
+        }
     }
 
     /// The coloring an assembled frame gets: the session's (palette, method, cycle, effects), as an
@@ -791,6 +1118,12 @@ impl crate::FractadyneApp {
         self.coloring.normalize || self.coloring.normalize_live
     }
 
+    /// The normalized palette is equalized too (coloring plan C6b): the share asked for, under the
+    /// smooth coloring, which is the one Equalize colors applies to.
+    pub(crate) fn assembly_equalizes(&self) -> bool {
+        self.assembly_normalizes() && self.coloring.equalize > 0.0 && self.coloring.color_method == crate::ColorMethod::Smooth
+    }
+
     /// `--assemble DIR`. Returns the summary line, or why it could not assemble.
     pub(crate) fn assemble_from_dir(
         &mut self,
@@ -802,7 +1135,7 @@ impl crate::FractadyneApp {
         let dive = Arc::new(read_dive(dir)?);
         let opts = self.render_cli.assemble_opts.clone();
         let (mut asm, ss, colour) = self.begin_assembly(ctx, device, &dive, &dir.display().to_string())?;
-        let mut src = StripSource::Folder(StripReader::new(dive.clone()));
+        let mut src = StripSource::Folder(StripReader::new(dive.clone(), self.assembly_equalizes()));
         let (fw, fh) = (dive.frame.0 as u32, dive.frame.1 as u32);
 
         if !opts.at.is_empty() {
@@ -826,11 +1159,15 @@ impl crate::FractadyneApp {
                     fractadyne_export::write_exr_raw(&path, fw * ss, fh * ss, &main, Some(&meta))
                         .map_err(|e| format!("{}: {e}", path.display()))?;
                 } else {
-                    // A single frame normalizes to its own window.
+                    // A single frame normalizes to its own window (and equalizes by its own
+                    // distribution): what a video's frame at an anchor's depth gets of each.
                     let mut c = colour.clone();
                     if self.assembly_normalizes() {
-                        if let Some((lo, top)) = self.measured_range(&dive, &mut src, device, queue, l)? {
+                        if let Some(((lo, top), q)) = self.measured_reading(&dive, &mut src, device, queue, l)? {
                             self.apply_video_norm(&mut c, lo, top);
+                            if let Some(q) = &q {
+                                self.apply_video_eq(&mut c, lo, top, q);
+                            }
                         }
                     }
                     let mut rgba = asm.frame(device, queue, &place, &c).map_err(|e| e.to_string())?;
@@ -921,6 +1258,7 @@ impl crate::FractadyneApp {
                 next: 0,
                 ready: HashMap::new(),
                 ranges: HashMap::new(),
+                ranks: self.assembly_equalizes(),
                 keep,
                 render_s: 0.0,
                 recent: Default::default(),
@@ -1007,6 +1345,9 @@ impl crate::FractadyneApp {
         let (fw, fh) = (dive.frame.0 as u32, dive.frame.1 as u32);
         let normalize = self.assembly_normalizes();
         let mut anchors = NormAnchors::new(dive.start_log2mag, dive.end_log2mag);
+        // Equalize colors' distributions, anchored more often (coloring plan C6b).
+        let equalizes = self.assembly_equalizes();
+        let mut eq_anchors: NormAnchors<fractadyne_core::coloring::Quantiles> = NormAnchors::every(dive.start_log2mag, dive.end_log2mag, EQ_ANCHOR_STEP);
         let (frames, fps, how) = Self::video_frames(&opts, dive)?;
         let pipe = crate::video_pipe::VideoPipe::start(out, fw, fh, fps, opts.crf.unwrap_or(18))?;
         crate::diag::log_line(
@@ -1040,6 +1381,11 @@ impl crate::FractadyneApp {
                 })?;
                 if let Some((lo, top)) = r {
                     self.apply_video_norm(&mut c, lo, top);
+                    if equalizes {
+                        if let Some(q) = eq_anchors.range(l, |la| self.measured_quantiles(dive, src, device, queue, la))? {
+                            self.apply_video_eq(&mut c, lo, top, &q);
+                        }
+                    }
                     range_seen = Some(range_seen.map_or((lo, top), |(a, b)| (a.min(lo), b.max(top))));
                 }
                 if let Some((first, _)) = asm.strips_for(&place) {
@@ -1080,7 +1426,11 @@ impl crate::FractadyneApp {
         if let Some((lo, top)) = range_seen {
             crate::diag::log_line(
                 "assemble",
-                &format!("normalized: the palette followed windows from {lo:.1} to {top:.1} over the dive, {} anchors", anchors.at.len()),
+                &format!(
+                    "normalized: the palette followed windows from {lo:.1} to {top:.1} over the dive, {} anchors{}",
+                    anchors.measured(),
+                    if equalizes { format!(", equalized by {} distributions every {EQ_ANCHOR_STEP} octave", eq_anchors.measured()) } else { String::new() }
+                ),
             );
         }
         Ok(format!(

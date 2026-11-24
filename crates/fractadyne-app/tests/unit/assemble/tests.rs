@@ -146,7 +146,7 @@ fn a_strips_blocks_keep_the_least_and_greatest_escape_value_of_their_texels() {
         // Interior in the first block row's left block, escaped elsewhere.
         main[t * 4] = if t % w < 8 && t / w < 8 { -1.0 } else { (t % w) as f32 + 100.0 * (t / w) as f32 };
     }
-    let r = strip_range(&main, w, h);
+    let r = strip_range_ranked(&main, w, h, None);
     assert_eq!((r.bw, r.bh), (3, 2));
     assert!(r.hi[0] < r.lo[0], "an all-interior block has no range");
     assert_eq!((r.lo[1], r.hi[1]), (8.0, 15.0 + 700.0));
@@ -175,7 +175,7 @@ fn a_frames_window_is_the_least_value_and_the_area_quantile_of_the_texels_inside
         for t in 0..w * rows {
             main[t * 4] = value(k, t % w, t / w);
         }
-        ranges.insert(k, Arc::new(strip_range(&main, w, rows)));
+        ranges.insert(k, Arc::new(strip_range_ranked(&main, w, rows, None)));
     }
     for l in [0.0, 3.3, 9.75] {
         let got = frame_range(&map, &ranges, strips, l, fw, fh, 0.98).unwrap().expect("escaped");
@@ -268,6 +268,202 @@ fn a_videos_palette_ranges_are_measured_once_an_octave_and_interpolated_between(
     let mut empty_at_2 = |d: f64| -> Result<Option<(f32, f32)>, String> { Ok((d != 2.0 && d != 3.0).then_some((d as f32, d as f32 + 1.0))) };
     assert_eq!(b.range(1.5, &mut empty_at_2).unwrap(), Some((1.0, 2.0)));
     assert_eq!(b.range(2.5, &mut empty_at_2).unwrap(), Some((1.0, 2.0)), "carried over");
+}
+
+/// Equalize colors' distribution (coloring plan C6b) moves between two anchors' as the window does:
+/// geometrically, knot by knot, each anchor's exactly at it; anchored every quarter octave.
+#[test]
+fn a_videos_distributions_are_blended_between_octaves_as_its_windows_are() {
+    use fractadyne_core::coloring::{Quantiles, EQ_QUANTILES};
+    let dist = |d: f64| -> Quantiles {
+        let mut q = [0.0f32; EQ_QUANTILES + 1];
+        for (i, k) in q.iter_mut().enumerate() {
+            *k = (d * 10.0 * (1.0 + 9.0 * (i as f64 / EQ_QUANTILES as f64).powf(2.0))) as f32;
+        }
+        q
+    };
+    let mut a: NormAnchors<Quantiles> = NormAnchors::every(0.0, 6.0, EQ_ANCHOR_STEP);
+    let mut measured = Vec::new();
+    let mut measure = |d: f64| -> Result<Option<Quantiles>, String> {
+        measured.push(d);
+        Ok(Some(dist(d + 1.0)))
+    };
+    let q = a.range(2.0, &mut measure).unwrap().unwrap();
+    assert_eq!(q, dist(3.0), "at an anchor, its own distribution");
+    let q = a.range(2.125, &mut measure).unwrap().unwrap();
+    assert_eq!(measured, vec![2.0, 2.25], "the anchors a quarter octave apart");
+    let (p3, p4) = (dist(3.0), dist(3.25));
+    for i in 0..=EQ_QUANTILES {
+        let want = (p3[i] as f64 * p4[i] as f64).sqrt();
+        assert!((q[i] as f64 - want).abs() <= 1.0e-4 * want, "knot {i}: {} against the geometric mean {want}", q[i]);
+    }
+    assert!(q.windows(2).all(|w| w[0] <= w[1]), "never decreasing");
+}
+
+/// A block's ranks are its escaped values at mid-ranks: of the 64 values 0..63 at equal areas, the
+/// ones at (r + ½)·8 − ½; a partial block's from the values it has; none for a block nothing
+/// escaped in. By AREA: with the rows' areas unequal, the outer (larger) rows' values hold more.
+#[test]
+fn a_blocks_ranks_are_its_values_at_mid_ranks() {
+    let (w, h) = (20usize, 11usize);
+    let mut main = vec![-1f32; w * h * 4];
+    for j in 0..h {
+        for i in 0..w {
+            // Block 0 (columns 0..8, rows 0..8): the values 0..63 in a scrambled order.
+            let v = if i < 8 && j < 8 { ((i * 8 + j) * 37 % 64) as f32 } else { (i + 100 * j) as f32 };
+            if !(i >= 8 && i < 16 && j < 8) {
+                main[(j * w + i) * 4] = v;
+            }
+        }
+    }
+    // Rows per octave so many that a block's rows are all but equal in area.
+    let r = strip_range_ranked(&main, w, h, Some(1.0e12));
+    assert_eq!(r.ranks.len(), r.bw * r.bh);
+    let want: Vec<f32> = (0..BLOCK_RANKS).map(|k| (k as f32 + 0.5) * 8.0 - 0.5).collect();
+    assert!(r.ranks[0].iter().zip(&want).all(|(a, b)| (a - b).abs() < 1.0e-4), "the 64 values 0..63: {:?}", r.ranks[0]);
+    assert_eq!(r.n[1], 0, "block 1 is all interior");
+    assert_eq!(r.ranks[1], [0.0; BLOCK_RANKS]);
+    // Block 5 (columns 16..20, rows 8..11): 12 values; its lowest rank at or above its least.
+    assert!(r.ranks[5][0] >= r.lo[5] && r.ranks[5][BLOCK_RANKS - 1] <= r.hi[5]);
+    assert!(r.ranks[5].windows(2).all(|p| p[0] <= p[1]));
+    // Without asking, no ranks, and the rest the same.
+    let plain = strip_range_ranked(&main, w, h, None);
+    assert!(plain.ranks.is_empty());
+    assert_eq!((plain.lo, plain.hi, plain.n), (r.lo.clone(), r.hi.clone(), r.n.clone()));
+    // By area: values that rise with the row (row j holds 10·j), rows an octave apart in radius
+    // (4 times the area a row further out). The block's middle rank falls among its outer rows.
+    let mut rows = vec![-1f32; 8 * 8 * 4];
+    for j in 0..8 {
+        for i in 0..8 {
+            rows[(j * 8 + i) * 4] = 10.0 * j as f32 + i as f32 * 0.01;
+        }
+    }
+    let equal = strip_range_ranked(&rows, 8, 8, Some(1.0e12));
+    let by_area = strip_range_ranked(&rows, 8, 8, Some(1.0));
+    assert!(by_area.ranks[0][BLOCK_RANKS / 2] < equal.ranks[0][BLOCK_RANKS / 2] - 15.0, "{:?} against {:?}", by_area.ranks[0], equal.ranks[0]);
+}
+
+/// A strip a frame holds whole, read once from its [`WholeStrip`], is the same blocks read one by
+/// one: at every depth the area in the frame and the least and greatest values come out the same,
+/// and deep frames do read whole strips (else this sees nothing).
+#[test]
+fn a_strip_held_whole_is_its_blocks() {
+    let (fw, fh) = (96.0, 54.0);
+    let map = ExpMap::for_frames(fw, fh, 1.0, 0.0);
+    let strips = 20u64;
+    let (w, rows) = (map.width as usize, map.rows as usize);
+    let mut ranked = HashMap::new();
+    for k in 0..strips {
+        let mut main = vec![0f32; w * rows * 4];
+        for t in 0..w * rows {
+            main[t * 4] = if (t * 7) % 13 == 0 { -1.0 } else { (k as usize * 1000 + t % 977) as f32 };
+        }
+        ranked.insert(k, Arc::new(strip_range_ranked(&main, w, rows, Some(map.rows_per_octave()))));
+    }
+    let mut wholes_seen = 0usize;
+    for l in [0.0, 2.5, 6.0, 9.75, 13.2] {
+        let read = |wholes: bool, seen: &mut usize| {
+            let (mut area, mut lo, mut hi) = (0.0f64, f32::INFINITY, f32::NEG_INFINITY);
+            frame_blocks(&map, &ranked, strips, l, fw, fh, wholes, |s| match s {
+                Seen::Block(r, b, rad) => {
+                    area += r.n[b] as f64 * rad * rad;
+                    lo = lo.min(r.lo[b]);
+                    hi = hi.max(r.hi[b]);
+                }
+                Seen::Whole(ws, scale) => {
+                    area += ws.weight * scale;
+                    lo = lo.min(ws.lo);
+                    hi = hi.max(ws.hi);
+                    *seen += 1;
+                }
+            })
+            .unwrap();
+            (area, lo, hi)
+        };
+        let (blocks, whole) = (read(false, &mut 0), read(true, &mut wholes_seen));
+        assert!((whole.0 - blocks.0).abs() <= 1.0e-9 * blocks.0, "2^{l}: area {} whole, {} by blocks", whole.0, blocks.0);
+        assert_eq!((whole.1, whole.2), (blocks.1, blocks.2), "2^{l}: the least and greatest values");
+    }
+    assert!(wholes_seen > 0, "no frame read a strip whole");
+}
+
+/// A frame's distribution from its strips' ranks against the texels of the blocks it reads, each
+/// weighted by its own area (`texel_polar` directly): what 8 values a block keep of it. (Which
+/// blocks a frame reads is `frame_range`'s rule, a block whose center lies inside it; on this small
+/// frame a third of the area lies in blocks across its edge, so against the frame's own texels it
+/// is looser, and the self-test measures that on a real dive's assembled frames.) And a strip
+/// summarized without ranks is an error, not a distribution of nothing.
+#[test]
+fn a_frames_distribution_is_its_texels_weighted_by_their_area() {
+    use fractadyne_core::coloring::{cdf_at, EQ_QUANTILES};
+    let (fw, fh) = (96.0, 54.0);
+    let map = ExpMap::for_frames(fw, fh, 1.0, 0.0);
+    let strips = 20u64;
+    let (w, rows) = (map.width as usize, map.rows as usize);
+    // Growing with depth, each texel its own value spread evenly across 3 a row (a CONTINUOUS
+    // distribution: with whole numbers, a ring of texels at one value made the exact CDF jump by the
+    // ring's area there, which measured the field's steps, not the estimate).
+    let value = |k: u64, i: usize, j: usize| (k as f64 * 1000.0 + j as f64 * 3.0 + 3.0 * ((i * 2_654_435_761 + j * 40_503) % 1000) as f64 / 1000.0) as f32;
+    let mut ranked = HashMap::new();
+    let mut plain = HashMap::new();
+    for k in 0..strips {
+        let mut main = vec![0f32; w * rows * 4];
+        for t in 0..w * rows {
+            main[t * 4] = value(k, t % w, t / w);
+        }
+        ranked.insert(k, Arc::new(strip_range_ranked(&main, w, rows, Some(map.rows_per_octave()))));
+        plain.insert(k, Arc::new(strip_range_ranked(&main, w, rows, None)));
+    }
+    for l in [0.0, 3.3, 9.75] {
+        let q = frame_quantiles(&map, &ranked, strips, l, fw, fh).unwrap().expect("escaped");
+        let upp_log2 = (Viewport::REFERENCE_HEIGHT / fh).log2() - l;
+        let (first, last) = fractadyne_gpu::strips_for_frame(&placement(&map, l, fh, 1, 0.0), fw as u32, fh as u32, strips).unwrap();
+        let inside_frame = |i: usize, j: usize, k: u64| {
+            let (r_log2, th) = map.texel_polar(k, i as f64, j as f64);
+            let r = (r_log2 - upp_log2).exp2();
+            ((r * th.cos()).abs() <= fw / 2.0 && (r * th.sin()).abs() <= fh / 2.0, r * r)
+        };
+        // The texels of the blocks the frame reads, and (looser) the frame's own texels.
+        let (mut read, mut own): (Vec<(f32, f64)>, Vec<(f32, f64)>) = (Vec::new(), Vec::new());
+        for k in first..=last {
+            for by in 0..rows.div_ceil(RANGE_BLOCK) {
+                for bx in 0..w.div_ceil(RANGE_BLOCK) {
+                    let center = ((bx * RANGE_BLOCK + RANGE_BLOCK / 2).min(w - 1), (by * RANGE_BLOCK + RANGE_BLOCK / 2).min(rows - 1));
+                    let block_in = inside_frame(center.0, center.1, k).0;
+                    for j in by * RANGE_BLOCK..((by + 1) * RANGE_BLOCK).min(rows) {
+                        for i in bx * RANGE_BLOCK..((bx + 1) * RANGE_BLOCK).min(w) {
+                            let (texel_in, area) = inside_frame(i, j, k);
+                            if block_in {
+                                read.push((value(k, i, j), area));
+                            }
+                            if texel_in {
+                                own.push((value(k, i, j), area));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // At each of a few values, the share of the area at or below it: the blocks' distribution
+        // against the texels'.
+        let worst = |texels: &[(f32, f64)]| {
+            let total: f64 = texels.iter().map(|p| p.1).sum();
+            (8..EQ_QUANTILES)
+                .step_by(16)
+                .map(|i| {
+                    let v = q[i] as f64;
+                    let exact = texels.iter().filter(|p| p.0 as f64 <= v).map(|p| p.1).sum::<f64>() / total;
+                    (cdf_at(&q, v) - exact).abs()
+                })
+                .fold(0.0f64, f64::max)
+        };
+        let (of_read, of_own) = (worst(&read), worst(&own));
+        // Ranked by area 0.0052 to 0.0072 here; counted alike (equal areas), 0.0082 to 0.0096.
+        assert!(of_read <= 0.008, "2^{l}: the distribution is {of_read} of the area from its blocks' texels'");
+        assert!(of_own <= 0.04, "2^{l}: the distribution is {of_own} of the area from the frame's own texels'");
+        assert!(q.windows(2).all(|p| p[0] <= p[1]));
+    }
+    assert!(frame_quantiles(&map, &plain, strips, 3.3, fw, fh).is_err(), "strips without ranks");
 }
 
 #[test]

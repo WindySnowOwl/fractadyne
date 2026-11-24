@@ -125,3 +125,65 @@ fn a_shard_measures_its_bracketing_keyframes_only() {
     assert_eq!(got, vec![9, 18], "the anchors bracketing frames 11..=16");
     assert_eq!(order, vec![9, 18], "no keyframe beyond the brackets was measured");
 }
+
+// ---- Equalize colors' distributions (coloring plan C6b) ----
+
+/// A distribution from `lo` to `hi` (its first and last knots), crowded toward `lo` by `bend`.
+fn spread(lo: f32, hi: f32, bend: f64) -> fractadyne_core::coloring::Quantiles {
+    let n = fractadyne_core::coloring::EQ_QUANTILES;
+    let mut q = [0.0f32; fractadyne_core::coloring::EQ_QUANTILES + 1];
+    for (i, k) in q.iter_mut().enumerate() {
+        *k = (lo as f64 + (hi - lo) as f64 * (i as f64 / n as f64).powf(bend)) as f32;
+    }
+    q[n] = hi;
+    q
+}
+
+/// The distribution moves between two keyframes' at the range's own weights, share by share:
+/// its ends ARE the blended range (a distribution's ends are its range), at a keyframe it is that
+/// keyframe's, and it is clamped outside the anchored span as the range is.
+#[test]
+fn the_distribution_blends_at_the_ranges_weights_and_hits_the_keyframes() {
+    let (ra, rb) = ((12.5f32, 840.0f32), (300.25f32, 91_000.0f32));
+    let (qa, qb) = (spread(ra.0, ra.1, 2.0), spread(rb.0, rb.1, 3.5));
+    let ranges = [(0.0, ra), (4.0, rb)];
+    let eqs = [(0.0, qa), (4.0, qb)];
+    assert_eq!(norm_anchor_eq(&[], 1.0), None);
+    assert_eq!(norm_anchor_eq(&eqs, 0.0), Some(qa));
+    assert_eq!(norm_anchor_eq(&eqs, -1.0), Some(qa));
+    assert_eq!(norm_anchor_eq(&eqs, 9.0), Some(qb));
+    for t in [0.0, 0.37, 1.0, 2.0, 3.99, 4.0] {
+        let q = norm_anchor_eq(&eqs, t).unwrap();
+        let r = norm_anchor_range(&ranges, t).unwrap();
+        let n = fractadyne_core::coloring::EQ_QUANTILES;
+        assert_eq!((q[0], q[n]), r, "at {t}: the distribution's ends are the range's");
+        assert!(q.windows(2).all(|w| w[0] <= w[1]), "at {t}: never decreasing");
+        // Each knot at the same weight as the range's: a quarter of the way at t = 1.
+        if t == 1.0 {
+            for i in 0..=n {
+                let want = qa[i] + (qb[i] - qa[i]) * 0.25;
+                assert!((q[i] - want).abs() <= 1.0e-3 * want.abs(), "knot {i}: {} against {want}", q[i]);
+            }
+        }
+    }
+    // A keyframe's own distribution verbatim at the first anchor; the last is reached at its time.
+    let at_b = norm_anchor_eq(&eqs, 4.0).unwrap();
+    assert!(at_b.iter().zip(&qb).all(|(x, y)| (x - y).abs() <= 1.0e-3 * y.abs()));
+}
+
+/// ⭐A shard equalizes every frame exactly as the whole tour does: the same anchors bracket it
+/// (`anchors_for_range`), and the blend is a function of them and the time alone.
+#[test]
+fn a_shard_equalizes_its_frames_as_the_whole_tour_does() {
+    let kf = [0u64, 9, 18, 27];
+    let (fps, total) = (3.0, 9.0);
+    let anchor_of = |k: u64| -> Option<(f64, fractadyne_core::coloring::Quantiles)> {
+        (k != 18).then(|| (anchor_file::frame_time(k, fps, total), spread(k as f32 + 1.0, k as f32 * 40.0 + 90.0, 1.0 + k as f64 / 9.0)))
+    };
+    let full = anchors_for_range(&kf, 0, 27, &mut |k| anchor_of(k));
+    let part = anchors_for_range(&kf, 11, 22, &mut |k| anchor_of(k));
+    for f in 11..=22 {
+        let t = anchor_file::frame_time(f, fps, total);
+        assert_eq!(norm_anchor_eq(&part, t), norm_anchor_eq(&full, t), "frame {f}");
+    }
+}

@@ -1346,6 +1346,31 @@ pub(crate) fn norm_anchor_range(anchors: &[(f64, (f32, f32))], t: f64) -> Option
     Some(prev.1)
 }
 
+/// Equalize colors' distribution for tour time `t` (coloring plan C6b): blended between the
+/// keyframe anchors `(t, distribution)` (time-sorted) share by share, at exactly
+/// [`norm_anchor_range`]'s weights, and clamped at both ends the same; `None` when none was
+/// measured. Pure, so how a frame is equalized is a function of the TOUR alone, as its range is:
+/// the same in any render order, across `--resume` and across shards, and it moves smoothly from
+/// one keyframe's to the next's instead of flickering as a frame-by-frame measurement would.
+pub(crate) fn norm_anchor_eq(
+    anchors: &[(f64, fractadyne_core::coloring::Quantiles)],
+    t: f64,
+) -> Option<fractadyne_core::coloring::Quantiles> {
+    let (first, rest) = anchors.split_first()?;
+    if t <= first.0 {
+        return Some(first.1);
+    }
+    let mut prev = first;
+    for a in rest {
+        if t <= a.0 {
+            let w = ((t - prev.0) / (a.0 - prev.0).max(f64::EPSILON)).clamp(0.0, 1.0) as f32;
+            return Some(fractadyne_core::coloring::quantiles_zip(&prev.1, &a.1, |p, q| p + (q - p) * w));
+        }
+        prev = a;
+    }
+    Some(prev.1)
+}
+
 #[cfg(test)]
 #[path = "../tests/unit/scripting/norm_anchor_tests.rs"]
 mod norm_anchor_tests;
@@ -3288,6 +3313,35 @@ impl FractadyneApp {
         }
     }
 
+    /// Set the app up for a tour frame's sample `s` as the frame loop does, and return its
+    /// iteration budget: its formula, fractal, Julia state, iteration budget and keyframe settings.
+    /// (One function so the self-test rebuilds a tour's frame exactly as the loop rendered it.)
+    pub(crate) fn enter_tour_frame(&mut self, s: &Sampled, base_iter: u32, base_auto: bool) -> crate::render::IterBudget {
+        self.install_tour_formula(s);
+        self.fractal = s.fractal;
+        self.julia_mode = s.julia && s.fractal.supports_julia();
+        // (A family with no Julia set has no dual view, whatever an earlier keyframe said.)
+        self.dual = s.dual && s.fractal.supports_julia();
+        if let Some(c) = s.julia_c {
+            self.julia_c = c;
+        }
+        if s.fractal == FractalKind::LSystem {
+            self.apply_tour_lsystem(&s.ls);
+        }
+        // Per-keyframe iteration budget + palette; fall back to the script-wide base. This is
+        // what lets one script hold a 1.33× home view at a few thousand iterations and a 1e94×
+        // spar at millions — a single budget either starves the deep frames or makes the
+        // shallow ones cost minutes each.
+        // Behavior-identical to the old `= base_iter; = base_auto;` pair (the
+        // `apply_sampled_settings` below re-applies the same override), but routed through the
+        // helper so this frame and the prefetch of the NEXT one read the same rule.
+        let frame_budget = Self::sampled_iter_budget(s, base_iter, base_auto);
+        self.render_cfg.max_iter = frame_budget.max_iter;
+        self.render_cfg.auto_iter = frame_budget.auto_iter;
+        self.apply_sampled_settings(s);
+        frame_budget
+    }
+
     pub(crate) fn apply_sampled_settings(&mut self, s: &Sampled) {
         if let Some(m) = s.max_iter {
             self.render_cfg.max_iter = m;
@@ -3523,7 +3577,8 @@ impl FractadyneApp {
     }
 
     /// Measure one normalize anchor: the escape-value range of keyframe frame `kfi`'s view at the
-    /// fixed 480×270 measuring size and the keyframe's own iteration budget. `None` when the view
+    /// fixed 480×270 measuring size and the keyframe's own iteration budget, and the distribution
+    /// of its escape values (coloring plan C6b, for Equalize colors). `None` when the view
     /// has no range to measure (all interior, aux coloring, or not an escape-time family).
     ///
     /// Leaves the app holding that keyframe's fractal, budget and palette — the caller renders
@@ -3576,12 +3631,12 @@ impl FractadyneApp {
             NORM_MEASURE_W,
             NORM_MEASURE_H,
             1,
-            crate::render::NormRange::OwnFrame,
+            crate::render::NormRange::Anchor,
             None,
             None,
             work_budget,
         )
-        .map(|(_, range)| anchor_file::Anchor { frame: kfi, t, range })
+        .map(|(_, (range, eq))| anchor_file::Anchor { frame: kfi, t, range, eq })
     }
 
     /// Render a keyframe-tour script (TOML) to a numbered PNG frame sequence — the headless
@@ -3793,7 +3848,7 @@ impl FractadyneApp {
                 }
             ));
         }
-        let file_anchors: Option<Vec<(f64, (f32, f32))>> = match &cli.norm_anchors {
+        let file_anchors: Option<Vec<anchor_file::Anchor>> = match &cli.norm_anchors {
             Some(p) => {
                 let d = anchor_file::read(p, &anchor_ctx)?;
                 if d.app_version != crate::sysinfo::APP_VERSION || d.git != crate::sysinfo::BUILD_GIT {
@@ -3806,12 +3861,20 @@ impl FractadyneApp {
                         crate::sysinfo::BUILD_GIT
                     ));
                 }
+                // ⭐A file of ranges alone (version 1) cannot color an equalized tour: rendering it
+                // without Equalize colors would be a silently different palette (coloring plan C6b).
+                if self.coloring.equalize > 0.0 && d.anchors.iter().any(|a| a.eq.is_none()) {
+                    return Err(format!(
+                        "{}: written by a build before Equalize colors reached tours, it holds the ranges but not the distributions this tour equalizes by — write it again with --dump-norm-anchors",
+                        p.display()
+                    ));
+                }
                 say(&format!(
                     "normalize: {} time-keyed range anchor(s) read from {} (not measured on this machine)",
                     d.anchors.len(),
                     p.display()
                 ));
-                Some(d.anchors.iter().map(|a| (a.t, a.range)).collect())
+                Some(d.anchors)
             }
             None => None,
         };
@@ -3974,7 +4037,7 @@ impl FractadyneApp {
         // below) — everywhere else the mapping is `NormRange::Fixed` from the anchors, and this
         // variable never feeds a frame. The one-shot flag keeps an oversized frame warning once
         // rather than per-frame.
-        let mut norm_range: Option<(f32, f32)> = None;
+        let mut norm_range: Option<crate::render::NormReading> = None;
         let mut norm_oversize_warned = false;
         let want_normalize = pb.render.normalize;
         // (`TOUR_WORK_BUDGET`, the per-tile dispatch cap, is defined above the anchor handling.)
@@ -4043,24 +4106,34 @@ impl FractadyneApp {
         // fallback above still runs. With `--norm-anchors` the anchors come from the file
         // instead, measured once for every machine (cross-GPU escape values differ, so per-machine
         // measurement is exactly what a multi-machine render must not do).
-        let mut norm_anchors: Vec<(f64, (f32, f32))> = Vec::new();
-        if let Some(a) = file_anchors {
-            norm_anchors = a;
-        } else if want_normalize {
-            let kf_frames = anchor_keyframe_frames(pb.kfs.iter().map(|k| k.at), fps, frames);
-            norm_anchors = anchors_for_range(&kf_frames, first_frame, last_frame, &mut |kfi| {
-                self.measure_norm_anchor(device, queue, &pb, fps, kfi, base_iter, base_auto, TOUR_WORK_BUDGET)
-                    .map(|a| (a.t, a.range))
-            });
-            if !norm_anchors.is_empty() {
-                say(&format!(
-                    "normalize: {} time-keyed range anchor(s) measured at the keyframes — the \
-                     palette mapping is identical in any render order, across --resume, and \
-                     across shards",
-                    norm_anchors.len()
-                ));
+        //
+        // ⭐Equalize colors (coloring plan C6b) the same way: each anchor also holds the distribution
+        // of its keyframe's escape values, and a frame is equalized by their blend at its time
+        // (`norm_anchor_eq`), never by its own measurement, which would flicker frame to frame.
+        let anchors: Vec<anchor_file::Anchor> = match file_anchors {
+            Some(a) => a,
+            None if want_normalize => {
+                let kf_frames = anchor_keyframe_frames(pb.kfs.iter().map(|k| k.at), fps, frames);
+                let a = anchors_for_range(&kf_frames, first_frame, last_frame, &mut |kfi| {
+                    self.measure_norm_anchor(device, queue, &pb, fps, kfi, base_iter, base_auto, TOUR_WORK_BUDGET)
+                });
+                if !a.is_empty() {
+                    say(&format!(
+                        "normalize: {} time-keyed range anchor(s) measured at the keyframes{} — the \
+                         palette mapping is identical in any render order, across --resume, and \
+                         across shards",
+                        a.len(),
+                        if self.coloring.equalize > 0.0 { ", with the distributions Equalize colors blends" } else { "" }
+                    ));
+                }
+                a
             }
-        }
+            None => Vec::new(),
+        };
+        let norm_anchors: Vec<(f64, (f32, f32))> = anchors.iter().map(|a| (a.t, a.range)).collect();
+        // All or none: a file's anchors carry them by its version, measured ones always.
+        let eq_anchors: Vec<(f64, fractadyne_core::coloring::Quantiles)> =
+            if anchors.iter().all(|a| a.eq.is_some()) { anchors.iter().filter_map(|a| Some((a.t, a.eq?))).collect() } else { Vec::new() };
         // The deepest frame's reference, reused by every frame it serves ([`DeepReference`]):
         // built for the first frame that renders AND shows the deepest keyframe's center — a
         // resume with nothing left, or a run of another chapter's frames, never pays for it. That
@@ -4086,28 +4159,7 @@ impl FractadyneApp {
         for (pos, &fi) in order.iter().enumerate() {
             let t = if pb.total <= 0.0 { 0.0 } else { (fi as f64 / fps).min(pb.total) };
             let s = pb.sample(t);
-            self.install_tour_formula(&s);
-            self.fractal = s.fractal;
-            self.julia_mode = s.julia && s.fractal.supports_julia();
-            // (A family with no Julia set has no dual view, whatever an earlier keyframe said.)
-            self.dual = s.dual && s.fractal.supports_julia();
-            if let Some(c) = s.julia_c {
-                self.julia_c = c;
-            }
-            if s.fractal == FractalKind::LSystem {
-                self.apply_tour_lsystem(&s.ls);
-            }
-            // Per-keyframe iteration budget + palette; fall back to the script-wide base. This is
-            // what lets one script hold a 1.33× home view at a few thousand iterations and a 1e94×
-            // spar at millions — a single budget either starves the deep frames or makes the
-            // shallow ones cost minutes each.
-            // Behavior-identical to the old `= base_iter; = base_auto;` pair (the
-            // `apply_sampled_settings` below re-applies the same override), but routed through the
-            // helper so this frame and the prefetch of the NEXT one read the same rule.
-            let frame_budget = Self::sampled_iter_budget(&s, base_iter, base_auto);
-            self.render_cfg.max_iter = frame_budget.max_iter;
-            self.render_cfg.auto_iter = frame_budget.auto_iter;
-            self.apply_sampled_settings(&s);
+            let frame_budget = self.enter_tour_frame(&s, base_iter, base_auto);
             // Output path for this frame; ask before clobbering an existing one (unless overwriting).
             let frame_path = out_dir.join(format!("{prefix}_{fi:05}.png"));
             // Resume: a frame that's already on disk is assumed complete — skip it silently and
@@ -4288,7 +4340,7 @@ impl FractadyneApp {
                 // that case fall through to the normal render (with the reference it handed back).
                 let normalized = if want_normalize && !over_cap {
                     let spec = match norm_anchor_range(&norm_anchors, t) {
-                        Some(r) => crate::render::NormRange::Fixed(r),
+                        Some(r) => crate::render::NormRange::Fixed(r, norm_anchor_eq(&eq_anchors, t)),
                         None => crate::render::NormRange::Ema(norm_range),
                     };
                     self.render_export_normalized(
@@ -4299,8 +4351,8 @@ impl FractadyneApp {
                     None
                 };
                 match normalized {
-                    Some((r, range)) => {
-                        norm_range = Some(range);
+                    Some((r, reading)) => {
+                        norm_range = Some(reading);
                         (r.pixels, r.width, r.height)
                     }
                     None => {

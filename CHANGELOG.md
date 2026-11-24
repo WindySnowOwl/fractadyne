@@ -61,7 +61,11 @@ detail is in the git history.
   they ease from one picture's spread to the next. Moving the slider recolors the view at once,
   with no recalculation. Views, bookmarks, Share text and render-farm jobs carry it, and it has a
   command-line flag (`--equalize`); Reset coloring settings puts it back to 0%. Tours and zoom
-  videos don't equalize their frames yet.
+  videos equalize their frames too, without flicker: each frame takes a spread blended between ones
+  measured along the way (at a tour's keyframes, every quarter octave of a zoom video), so the colors
+  move smoothly as the picture changes, and every machine of a render farm colors a tour alike. A
+  normalize anchors file (`--dump-norm-anchors`) written by an earlier build still works, except for
+  a tour that equalizes, which asks for the file to be written again.
 - **Blend in OKLab: cleaner blends between a palette's colors.** A new checkbox under the palette's
   Saturation blends between each pair of the palette's colors in OKLab, a color space built on how
   the eye sees, instead of between their screen values. Each blend then brightens or darkens

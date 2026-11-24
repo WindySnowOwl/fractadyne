@@ -156,3 +156,56 @@ fn share_zero_is_the_fitted_map_exactly() {
         assert_eq!(equalized(x, 0.0, 2.12, &k), x);
     }
 }
+
+// ---- Weighted atoms and blends (coloring plan C6b: tours and zoom videos) ----
+
+#[test]
+fn equal_weights_give_the_values_own_quantiles() {
+    let mut v = sample(20_000, 277.0);
+    v.sort_by(f32::total_cmp);
+    let exact = quantiles_of_sorted(&v).unwrap();
+    let mut atoms: Vec<(f32, f64)> = v.iter().rev().map(|&x| (x, 3.0)).collect();
+    let q = quantiles_of_weighted(&mut atoms, v[0], v[v.len() - 1]).unwrap();
+    assert_eq!((q[0], q[EQ_QUANTILES]), (exact[0], exact[EQ_QUANTILES]), "the ends are the range");
+    assert!(q.windows(2).all(|w| w[0] <= w[1]), "never decreasing");
+    // Within two values' share of its exact rank among the values themselves (the midpoint rule
+    // puts share s half a value below the s·n-th value).
+    for i in 1..EQ_QUANTILES {
+        let rank = v.partition_point(|&x| x < q[i]) as f64 / v.len() as f64;
+        assert!((rank - i as f64 / EQ_QUANTILES as f64).abs() <= 2.0 / v.len() as f64, "knot {i}: rank {rank}");
+    }
+    let mut none: Vec<(f32, f64)> = vec![(1.0, 0.0), (2.0, 0.0)];
+    assert!(quantiles_of_weighted(&mut none, 1.0, 2.0).is_none(), "atoms that weigh nothing");
+    assert!(quantiles_of_weighted(&mut [], 1.0, 2.0).is_none());
+}
+
+#[test]
+fn a_heavier_atom_holds_more_of_the_picture() {
+    // Two values, the upper weighing three times the lower: three quarters of the shares sit at or
+    // near the upper one. The control: equal weights split them evenly.
+    let share_at_upper = |w_hi: f64| {
+        let mut atoms = vec![(10.0f32, 1.0), (20.0f32, w_hi)];
+        let q = quantiles_of_weighted(&mut atoms, 10.0, 20.0).unwrap();
+        q.iter().filter(|&&x| x > 15.0).count() as f64 / (EQ_QUANTILES + 1) as f64
+    };
+    assert!((share_at_upper(3.0) - 0.625).abs() < 0.02, "{}", share_at_upper(3.0));
+    assert!((share_at_upper(1.0) - 0.5).abs() < 0.02, "the control: {}", share_at_upper(1.0));
+}
+
+#[test]
+fn a_blend_moves_each_share_from_one_distribution_to_the_other() {
+    let (mut a, mut b) = (sample(10_000, 100.0), sample(10_000, 400.0));
+    a.sort_by(f32::total_cmp);
+    b.sort_by(f32::total_cmp);
+    let (qa, qb) = (quantiles_of_sorted(&a).unwrap(), quantiles_of_sorted(&b).unwrap());
+    let lerp = |w: f32| quantiles_zip(&qa, &qb, |x, y| x + (y - x) * w);
+    assert_eq!(lerp(0.0), qa, "none of the way is the first");
+    let half = lerp(0.5);
+    for i in 0..=EQ_QUANTILES {
+        assert!((half[i] - (qa[i] + qb[i]) / 2.0).abs() <= 1.0e-3 * qb[i].abs(), "knot {i}");
+    }
+    assert!(half.windows(2).all(|w| w[0] <= w[1]), "never decreasing");
+    // Kept never decreasing even when the combination is not.
+    let bent = quantiles_zip(&qa, &qb, |x, _| -x);
+    assert!(bent.windows(2).all(|w| w[0] <= w[1]));
+}

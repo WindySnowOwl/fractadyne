@@ -311,7 +311,10 @@ impl Bundle {
                 return Err("a zoom video's strip job carries a script, anchors or another file prefix".into());
             }
         }
-        if self.script.len() > 1 << 20 || self.anchors.as_ref().is_some_and(|a| a.len() > 1 << 20) {
+        // The anchors as large as an anchor file may be (with each keyframe's distribution since
+        // coloring plan C6b, 8 MiB): within the bundle's own cap.
+        let anchors_max = crate::scripting::anchor_file::MAX_FILE_BYTES as usize;
+        if self.script.len() > 1 << 20 || self.anchors.as_ref().is_some_and(|a| a.len() > anchors_max) {
             return Err("the job's script or anchors are too large".into());
         }
         // A strip is long and thin (a 1080p one at 3x is 20763×2294): its texels against the
