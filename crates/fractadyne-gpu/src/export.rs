@@ -1691,7 +1691,9 @@ fn export_plan(limits: &wgpu::Limits, req: &ExportRequest, allow_chunking: bool)
     let chunk_scope = allow_chunking
         && (req.mode == 1 || req.mode == 0 || req.mode == 2)
         && req.resumable()
-        && req.iter_stats().is_empty()
+        // Not with statistics accumulated as the orbit runs: the chunk state carries none. The
+        // final angle alone chunks, the resolve writing it from the state's z (B8).
+        && !req.iter_stats().accumulates()
         && limits.max_color_attachment_bytes_per_sample >= if fe { 64 } else { 48 };
     // A pass target (`ExportRequest::pass_ms`) prices chunk windows and step caps; where the
     // iterate cannot chunk, the tile is the pass, and only a smaller work budget shortens it.
@@ -2022,7 +2024,7 @@ impl<'a> TileRenderer<'a> {
             stripe_freq: req.stripe_freq,
             trap_type: req.trap_type,
             aux_on: crate::aux_on_word(
-                !req.iter_stats().is_empty(),
+                req.iter_stats().accumulates(),
                 req.stripe_tail,
                 req.stripe_tail_len,
             ),
@@ -2927,8 +2929,9 @@ fn render_iter_tiled_impl(
     // whose method or request asks for a statistic. A strip's aux is its own (`StripMap`), never this.
     let strip = req.map.mode != 0;
     let stats = if lanes && !strip { req.iter_stats() } else { fractadyne_core::coloring::StatSet::NONE };
-    let accum = !stats.is_empty();
-    // Not with statistics, as `render_export`: the chunk state carries none of them.
+    // Statistics accumulated as the orbit runs; the final angle alone is written at escape (B8).
+    let accum = stats.accumulates();
+    // Not with those, as `render_export`: the chunk state carries none of them.
     let chunk_scope = (req.mode == 1 || req.mode == 0 || req.mode == 2)
         && req.resumable()
         && !accum

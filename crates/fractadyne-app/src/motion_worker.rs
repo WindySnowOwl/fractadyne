@@ -267,6 +267,9 @@ impl FractadyneApp {
         // pass it fits only where the window is quick anyway (≤ 1e9 pixel-steps against the
         // maintainer's 294,202 px × 17,185 iterations); offered, every such frame failed on the
         // worker. The settled samples (L2, the export renderer) still go to the worker.
+        // Decomposition's final angle alone could walk on the twin since coloring plan B8 (its
+        // resolve writes the angle), but the worker's aux readback and the window's adoption of it
+        // have no test of their own, so it is not offered either (TODO.md).
         if !params.iter_stats().is_empty() {
             return;
         }

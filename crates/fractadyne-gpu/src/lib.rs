@@ -4153,7 +4153,9 @@ impl Default for MandelbrotParams {
     }
 }
 
-/// The iterate uniform's `aux_on` word: bit 0 = accumulate orbit statistics, bit 1 = stripe
+/// The iterate uniform's `aux_on` word: bit 0 = accumulate orbit statistics as the orbit runs
+/// (`StatSet::accumulates`: not for the final angle alone, which the shader writes at escape from
+/// `orbit_stats`' bit without any per-iteration work, coloring plan B8), bit 1 = stripe
 /// average over an exponential tail window, bits 2.. = that window's length in iterations
 /// (clamped to `1..=2^20`; the shader reads `aux_on >> 2`). One word, so the uniform layout —
 /// bound by every iterate pipeline — did not have to move.
@@ -4736,7 +4738,7 @@ impl CallbackTrait for MandelbrotParams {
                 stripe_freq: self.stripe_freq,
                 trap_type: self.trap_type,
                 aux_on: aux_on_word(
-                    !self.iter_stats().is_empty(),
+                    self.iter_stats().accumulates(),
                     self.stripe_tail,
                     self.stripe_tail_len,
                 ),

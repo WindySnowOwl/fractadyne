@@ -1303,13 +1303,13 @@ fn fe_branch() -> String {
         step_commit(gx, gy, n_full, n_full, n_big, iter);
         if (!escaped) {{
             atomicAdd(&counters[CTR_MAXITER], 1u);
-            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
+            let aux_out = aux_interior(aux, zf);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }}
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
         let smit = max(f32(iter) + 1.0 - nu, 0.0);
-        let aux_out = select(AUX_NONE, aux_pack(aux, band_pos(mag2, power_f, bail2), zf), (iu.aux_on & 1u) == 1u);
+        let aux_out = aux_escape(aux, band_pos(mag2, power_f, bail2), zf);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));

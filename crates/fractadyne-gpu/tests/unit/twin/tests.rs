@@ -133,23 +133,31 @@ fn a_gbuffers_escaped_share_counts_only_escaped_texels() {
     assert_eq!(g(&[]).escaped_share(), 0.0);
 }
 
-/// ⭐A frame that accumulates orbit statistics never walks on the twin (2026-11-19): a walk's resolve
-/// writes `AUX_NONE` into the aux plane, and the window adopted the result — stripe-average coloring
-/// of an empty aux plane is one flat color, which a deep zoom showed for most of its frames with the
-/// default same-card worker. Smooth coloring walks wherever the device can; nothing walks without
-/// the resumable pipelines; a statistic asked for directly counts as much as the method's own.
+/// ⭐A frame that accumulates orbit statistics as the orbit runs never walks on the twin
+/// (2026-11-19): a walk's resolve writes `AUX_NONE` into those lanes, and the window adopted the
+/// result — stripe-average coloring of an empty aux plane is one flat color, which a deep zoom
+/// showed for most of its frames with the default same-card worker. Smooth coloring walks wherever
+/// the device can; nothing walks without the resumable pipelines; a statistic asked for directly
+/// counts as much as the method's own. Decomposition's final angle alone walks (coloring plan B8:
+/// the resolve writes it from the state's z), and beside a running statistic it changes nothing.
 #[test]
 fn a_frame_that_accumulates_orbit_statistics_does_not_walk() {
     use fractadyne_core::coloring::{ColorMethod, Stat, StatSet};
     let smooth = MandelbrotParams { color_method: ColorMethod::Smooth.gpu_id(), ..MandelbrotParams::default() };
     assert!(walkable(&smooth, true), "smooth coloring walks");
     assert!(!walkable(&smooth, false), "no resumable pipelines, no walk");
-    for m in [ColorMethod::Stripe, ColorMethod::TriangleIneq, ColorMethod::OrbitTrap, ColorMethod::Decomposition] {
+    for m in [ColorMethod::Stripe, ColorMethod::TriangleIneq, ColorMethod::OrbitTrap] {
         let p = MandelbrotParams { color_method: m.gpu_id(), ..MandelbrotParams::default() };
-        assert!(!p.iter_stats().is_empty(), "{m:?} accumulates statistics");
+        assert!(p.iter_stats().accumulates(), "{m:?} accumulates statistics");
         assert!(!walkable(&p, true), "{m:?} must not walk");
     }
+    let decomposition = MandelbrotParams { color_method: ColorMethod::Decomposition.gpu_id(), ..MandelbrotParams::default() };
+    assert_eq!(decomposition.iter_stats(), StatSet::of(Stat::Angle));
+    assert!(walkable(&decomposition, true), "the final angle alone walks");
+    assert!(!walkable(&decomposition, false));
     // A statistic asked for apart from the method (an interior coloring, say) stops the walk too.
     let trap_inside = MandelbrotParams { orbit_stats: StatSet::of(Stat::Trap), ..smooth.clone() };
     assert!(!walkable(&trap_inside, true));
+    let trap_inside = MandelbrotParams { orbit_stats: StatSet::of(Stat::Trap), ..decomposition };
+    assert!(!walkable(&trap_inside, true), "the angle beside the trap");
 }

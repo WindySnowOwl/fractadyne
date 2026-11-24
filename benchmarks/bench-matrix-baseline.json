@@ -5,18 +5,18 @@
   "segments": {
     "color-decomposition": {
       "mode": 0,
-      "sa_skip": 0,
+      "sa_skip": 7954,
       "orbit_len": 8008,
       "eff_iter": 15000,
       "counters": [
-        1346911,
+        1347693,
         0,
         0,
         0,
-        69
+        68
       ],
-      "ref_ms": 19.0099,
-      "gpu_ms": 87.4746
+      "ref_ms": 9.6502,
+      "gpu_ms": 65.5253
     },
     "color-smooth": {
       "mode": 0,

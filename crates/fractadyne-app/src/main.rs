@@ -6940,11 +6940,18 @@ impl ColoringConfig {
     pub(crate) fn interior_of(&self, method: ColorMethod) -> InteriorMode {
         self.interior.unwrap_or(InteriorMode::of_method(method))
     }
-    /// Whether a frame accumulates any statistic at all: the same answer in every band, since the
-    /// G-buffer only joins a frame that already accumulates one. For the rules that ask only that
-    /// (the walks, band BLA, the corrector and the normalized export refuse such a frame).
+    /// Whether a frame carries any statistic at all, the final angle included: the same answer in
+    /// every band, since the G-buffer only joins a frame that already accumulates one. The
+    /// corrector and the normalized export refuse such a frame (they patch and read the main lane
+    /// only).
     fn accumulates_any(&self) -> bool {
         !self.orbit_stats(RenderMode::Direct).is_empty()
+    }
+    /// Whether a frame accumulates a statistic as the orbit runs ([`StatSet::accumulates`]; not the
+    /// final angle alone, read off the final z): the same answer in every band, for the same reason.
+    /// The walks in passes and band BLA refuse such a frame (their state carries no statistics).
+    fn accumulates_as_it_runs(&self) -> bool {
+        self.orbit_stats(RenderMode::Direct).accumulates()
     }
 }
 

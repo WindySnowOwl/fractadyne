@@ -1003,6 +1003,38 @@ reproduced. Reproduce before fixing; never close on the mechanism argument alone
   (derived), so BLA may be safe.
 - **Tests**: B1 A/Bs for Decomposition with BLA on, at 1e30× and 1e60×, three families.
 - **Done when**: a measured verdict on BLA and SA for angle colorings, recorded here.
+- **Verdict (2026-11-23, RTX 3080, `feat/color-b8-angle`)**: both keep the angle. First with the
+  table's flags flipped and nothing else (the angle then rode the series and BLA through the aux
+  path), then with the change below, the coloring matrix's Decomposition cell in every view
+  (`--coloring-matrix --only decomposition`, 82 views): wherever the series or BLA engaged (the
+  df32 views of Mandelbrot and Multibrot 3-8 for the series; Mandelbrot at 1e30x, 9.3e78x and
+  7.4e143x, Multibrot 3-8 at 1e30x and the sixteen folds at 2e28x for BLA, with the short
+  escaper's series where it ran), the accelerated render changed FEWER pixels than a nudge of a
+  thousandth of a pixel does (corpus 07 at 1e30x: 10% against 23%; the seahorse at 1e6x with the
+  series: 14% against 40%; the minibrot at 9.3e78x: 57% against 89%), with none unexplained among
+  the stable, smooth pixels the matrix judges. The "~15% of pixels change with SA" that gated it
+  was those pixels: decomposition's cell edges are dense enough that a thousandth of a pixel moves
+  more of them. ⚠The 1e60x rung is Mandelbrot's only (9.3e78x, 7.4e143x): no saved Multibrot or
+  fold point is good past about 1e34 (the matrix's deep points, 2^-112).
+- **What changed**: the angle is now a statistic read off the final z AT ESCAPE
+  (`StatSpec::at_escape`): it blocks no skip (`blocks_iter_skip: false`), has no BLA aggregate and
+  needs none (`StatSet::rides_bla`), and is not accumulated as the orbit runs
+  (`StatSet::accumulates`, `aux_on` bit 0 off). The shader writes it at escape from `orbit_stats`'
+  bit (`aux_escape`, `aux_angle`; `final_angle` one expression for every path), and the chunked
+  resolve writes it from the state's z, so the walk in passes, band BLA and export chunking serve a
+  Decomposition frame (`accumulates_as_it_runs` for the walks; the corrector and the normalized
+  export still refuse any statistic, `accumulates_any`). Interior texels carry no angle in an
+  angle-only frame (the color pass never reads it there, and the resolve writes none). Measured:
+  Decomposition iterates at Smooth's speed in every view of the matrix (0.87-1.13x, one run), where
+  before it ran without BLA in floatexp. Not done: the angle in EVERY frame (a Smooth frame
+  carrying it would be refused by the corrector and the normalized export; any frame can carry it
+  now for an `atan2` at escape, which D1's combinations will do), and the angle in the deep
+  G-buffer (it would put the three running statistics' work on every deep Decomposition frame and
+  take the walk away; `StatSet::GBUFFER`'s note). The motion worker still offers no Decomposition
+  frame (TODO.md "Offer Decomposition's motion frames to the worker").
+- **Tests**: self-test group `angle` (the live chunked walk against the one pass, bit for bit, on
+  resumed texels; BLA and the series against a nudge at 1e30x and 1e6x); core's set and capability
+  tables; the twin's `walkable`; the shader's `STAT_ANGLE` read; the method notes.
 
 ### B9. Every lane as NumPy arrays (a prototyping aid)
 
@@ -1827,7 +1859,7 @@ coloring in these places, so sequence the two with care:
 | B6         | done, merged                                              | `c1e4bd61` (merge `35001f80`)                                                             |
 | B7         | done, merged                                              | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
 | B5         | done, merged                                              | `b2b927d6` (merge `e3e53257`)                                                             |
-| B8         | not started                                               |                                                                                           |
+| B8         | done, on `feat/color-b8-angle`                            | merge recorded with the next step                                                         |
 | B9         | done, merged                                              | `6d18af38` (merge `23d32dc5`)                                                             |
 | B10        | done, merged                                              | `2f9648d2` (merge `2f5db211`)                                                             |
 | C1         | done, merged                                              | `58d6dce3` (merge `84af4b0d`)                                                             |
@@ -1841,6 +1873,6 @@ coloring in these places, so sequence the two with care:
 | C5         | done, merged                                              | `ed36a532` (merge `2eb22119`)                                                             |
 | C6         | done, merged (after the C2 map fix, merge `c44d9d35`)     | `2674cffe` (merge `61325df2`)                                                             |
 | C6b        | done, merged (tours, zoom videos)                         | `5d53ce76` (merge `9d08ac0d`)                                                             |
-| C6c        | done, on `feat/color-c6c-trap-equalize`                   | merge recorded with the next step                                                         |
+| C6c        | done, merged                                              | `92836a58` (merge `e5a0432a`)                                                             |
 | C7         | done, merged                                              | `3535dd38` (merge `e472c5ce`)                                                             |
 | D, E, F, G | not started                                               |                                                                                           |

@@ -201,8 +201,8 @@ impl ColorMethod {
     /// it in every deep frame (the app's `GBUFFER_DEEP` switch turns it off). In df32 and direct,
     /// where an iteration is cheap anyway, it would cost the NVIDIA cards 10-35% per frame, so there
     /// a frame carries only what its method reads.
-    /// Decomposition is left as it is: its angle keeps BLA off, so no switch to or from it could
-    /// recolor.
+    /// Decomposition is left as it is: its final angle alone iterates as Smooth does, with the
+    /// series, BLA and the walk, which the G-buffer would take away ([`StatSet::GBUFFER`]).
     pub const fn orbit_stats_at(self, floatexp: bool) -> StatSet {
         let own = self.orbit_stats();
         match self.spec().reads {
@@ -228,10 +228,11 @@ impl ColorMethod {
     pub const fn can(self, c: Capability) -> bool {
         let stats = self.orbit_stats();
         match c {
-            Capability::GlitchCorrection | Capability::NormalizedExport | Capability::LiveWalk => stats.is_empty(),
+            Capability::GlitchCorrection | Capability::NormalizedExport => stats.is_empty(),
+            Capability::LiveWalk => !stats.accumulates(),
             Capability::Strips => !self.reads_aux(),
             Capability::Series => !stats.blocks_iter_skip(),
-            Capability::Bla => stats.bla_aggregate(),
+            Capability::Bla => stats.rides_bla(),
         }
     }
 
@@ -283,11 +284,12 @@ pub enum Capability {
     NormalizedExport,
     /// A picture assembled from strips (a zoom video, `--assemble`): strips keep the main lane only.
     Strips,
-    /// The live view's walk in passes (the chunked walk, band BLA): it carries no statistics.
+    /// The live view's walk in passes (the chunked walk, band BLA): its state carries no
+    /// statistics, so it serves a frame that accumulates none; its resolve writes the final angle.
     LiveWalk,
-    /// Series approximation: skipping iterations would drop the statistics' terms.
+    /// Series approximation: skipping iterations would drop the running statistics' terms.
     Series,
-    /// BLA: its nodes fold every statistic but the final angle.
+    /// BLA: its nodes fold every running statistic, and the final angle needs no fold.
     Bla,
 }
 
@@ -315,8 +317,8 @@ impl Capability {
     }
 }
 
-/// One orbit statistic's row of the table: something the iteration can accumulate into the aux
-/// lane as it runs (`aux_step` in the shader).
+/// One orbit statistic's row of the table: something a frame can carry in the aux lane, either
+/// accumulated as the orbit runs (`aux_step` in the shader) or read off the final z at escape.
 #[derive(Debug)]
 pub struct StatSpec {
     /// A name for logs and tests (never stored: a frame's set is derived, not saved).
@@ -324,13 +326,25 @@ pub struct StatSpec {
     /// The name of the shader constant that carries its bit (`STAT_STRIPE`).
     pub wgsl: &'static str,
     /// Skipping iterations would change it: a running statistic (stripe, triangle inequality, trap
-    /// minimum) would drop the skipped terms, and the final angle is a discontinuous function of the
-    /// exact final z (series approximation moved ~15% of decomposition's cell edges). Series
-    /// approximation stays off while it is accumulated.
+    /// minimum) would drop the skipped terms. Series approximation stays off while it is
+    /// accumulated. Not the final angle (coloring plan B8, measured 2026-11-23): the series moves the
+    /// final z within its tolerance, and in the coloring matrix the angle with the series on changed
+    /// fewer pixels than a nudge of a thousandth of a pixel does (14% against 40% at the seahorse at
+    /// 1e6x: decomposition's cell edges are that dense), with none unexplained, in every df32 view
+    /// of Mandelbrot and Multibrot 3-8. (The ~15% the series once "moved" was those same pixels.)
     pub blocks_iter_skip: bool,
     /// Each BLA node carries its aggregate (the node's fourth vec4, `[span, trap min, sum TIA,
-    /// sum stripe]`), so BLA may skip with it accumulated past 1e28x. The final angle has none.
+    /// sum stripe]`), so BLA may skip with it accumulated past 1e28x. The final angle has none and
+    /// needs none ([`Self::at_escape`]).
     pub bla_aggregate: bool,
+    /// Read off the final z where the pixel escapes, never accumulated: the frame iterates as one
+    /// without statistics (no per-iteration work, the series and BLA as for Smooth, the walk in
+    /// passes, whose resolve writes it from the state's z), and pays one `atan2` at escape. The
+    /// final angle. BLA keeps it as the series does (B8, 2026-11-23: with BLA, and BLA and the
+    /// series together, the angle changed fewer pixels than the nudge in every floatexp view of the
+    /// matrix, Mandelbrot at 1e30x, 9.3e78x and 7.4e143x, Multibrot 3-8 at 1e30x and the sixteen
+    /// folds at 2e28x, none unexplained).
+    pub at_escape: bool,
 }
 
 /// An orbit statistic. The variants' order is the table's order and gives the bits; the order
@@ -348,10 +362,10 @@ pub enum Stat {
 }
 
 const STATS: [StatSpec; 4] = [
-    StatSpec { key: "stripe", wgsl: "STAT_STRIPE", blocks_iter_skip: true, bla_aggregate: true },
-    StatSpec { key: "triangle", wgsl: "STAT_TRIANGLE", blocks_iter_skip: true, bla_aggregate: true },
-    StatSpec { key: "trap", wgsl: "STAT_TRAP", blocks_iter_skip: true, bla_aggregate: true },
-    StatSpec { key: "angle", wgsl: "STAT_ANGLE", blocks_iter_skip: true, bla_aggregate: false },
+    StatSpec { key: "stripe", wgsl: "STAT_STRIPE", blocks_iter_skip: true, bla_aggregate: true, at_escape: false },
+    StatSpec { key: "triangle", wgsl: "STAT_TRIANGLE", blocks_iter_skip: true, bla_aggregate: true, at_escape: false },
+    StatSpec { key: "trap", wgsl: "STAT_TRAP", blocks_iter_skip: true, bla_aggregate: true, at_escape: false },
+    StatSpec { key: "angle", wgsl: "STAT_ANGLE", blocks_iter_skip: false, bla_aggregate: false, at_escape: true },
 ];
 
 impl Stat {
@@ -378,10 +392,11 @@ impl StatSet {
     pub const NONE: StatSet = StatSet(0);
     /// The full G-buffer (coloring plan B3): every statistic BLA folds (stripe, triangle
     /// inequality, trap). Every one of them also blocks the series, so a frame that accumulates any
-    /// statistic at all runs under the same rules with these added: it pays only their operations,
-    /// and a switch between the methods that read them can recolor. The final angle is not in it:
-    /// it has no BLA aggregate, so it would turn BLA off for the others (B8 measures whether it can
-    /// join).
+    /// of them runs under the same rules with these added: it pays only their operations, and a
+    /// switch between the methods that read them can recolor. (Every such frame holds the final
+    /// angle too: `aux_pack` writes it.) The final angle is not in it although BLA keeps it (B8): a
+    /// Decomposition frame carrying the G-buffer would pay these three statistics' work on every
+    /// iteration and lose the walk in passes, which the angle alone keeps.
     pub const GBUFFER: StatSet = StatSet::folded_by_bla();
     const fn folded_by_bla() -> StatSet {
         let mut set = StatSet::NONE;
@@ -431,16 +446,32 @@ impl StatSet {
         }
         false
     }
-    /// BLA folds every statistic in the set ([`StatSpec::bla_aggregate`]); true for none.
-    pub const fn bla_aggregate(self) -> bool {
+    /// BLA may skip with the set accumulated: it folds each statistic in it with the node's
+    /// aggregate ([`StatSpec::bla_aggregate`]), or the statistic is read off the final z
+    /// ([`StatSpec::at_escape`]). True for none.
+    pub const fn rides_bla(self) -> bool {
         let mut i = 0;
         while i < Stat::ALL.len() {
-            if self.has(Stat::ALL[i]) && !Stat::ALL[i].spec().bla_aggregate {
+            let s = Stat::ALL[i].spec();
+            if self.has(Stat::ALL[i]) && !s.bla_aggregate && !s.at_escape {
                 return false;
             }
             i += 1;
         }
         true
+    }
+    /// Some statistic in the set is accumulated as the orbit runs (not [`StatSpec::at_escape`]):
+    /// the iteration carries the aux machinery (`aux_on` bit 0), and the walk in passes cannot
+    /// serve the frame (its state carries no statistics). False for the final angle alone.
+    pub const fn accumulates(self) -> bool {
+        let mut i = 0;
+        while i < Stat::ALL.len() {
+            if self.has(Stat::ALL[i]) && !Stat::ALL[i].spec().at_escape {
+                return true;
+            }
+            i += 1;
+        }
+        false
     }
     /// The statistics in the set, in the table's order.
     pub fn iter(self) -> impl Iterator<Item = Stat> {

@@ -24,11 +24,17 @@ fn old_weight(mag2: f32, power_f: f32) -> f32 {
 fn the_shader_blends_by_band_pos_everywhere() {
     let wgsl = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/mandelbrot.wgsl"));
     assert!(wgsl.contains(EXPR), "band_pos changed: update EXPR and this test's mirror");
-    for (name, src) in [("mandelbrot.wgsl", wgsl), ("custom.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/custom.rs")))] {
-        assert!(!src.contains("aux_pack(aux, fract(smit)"), "{name} still blends by fract(smit)");
+    let custom = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/custom.rs"));
+    for (name, src) in [("mandelbrot.wgsl", wgsl), ("custom.rs", custom)] {
+        for call in ["aux_pack(aux, fract(smit)", "aux_escape(aux, fract(smit)"] {
+            assert!(!src.contains(call), "{name} still blends by fract(smit)");
+        }
     }
-    // The three escape paths and the custom module each blend by it.
-    assert_eq!(wgsl.matches("aux_pack(aux, band_pos(").count(), 3);
+    // The three escape paths and the custom module each blend by it, through `aux_escape` (which
+    // passes it to `aux_pack` when the frame accumulates, coloring plan B8).
+    assert_eq!(wgsl.matches("aux_escape(aux, band_pos(").count(), 3);
+    assert_eq!(custom.matches("aux_escape(aux, band_pos(").count(), 1);
+    assert!(wgsl.contains("if ((iu.aux_on & 1u) == 1u) { return aux_pack(a, frac, zf); }"), "aux_escape no longer hands the weight on");
 }
 
 #[test]

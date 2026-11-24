@@ -1486,8 +1486,9 @@ fn aux_init(z0: vec2<f32>) -> Aux {
     return a;
 }
 // Fold one orbit point z into the running statistics — only those the frame ACCUMULATES (the
-// `orbit_stats` bits: stripe→aux.x, TIA→aux.y, trap→aux.z; the final angle, aux.w, is written by
-// aux_pack and accumulates nothing). Computing every statistic every iteration — atan2+sin AND pow AND a
+// `orbit_stats` bits: stripe→aux.x, TIA→aux.y, trap→aux.z; the final angle, aux.w, is written at
+// escape by aux_pack or aux_escape and accumulates nothing). Runs only under `aux_on` bit 0, which a
+// frame carrying the final angle alone leaves off. Computing every statistic every iteration — atan2+sin AND pow AND a
 // trap distance — when a frame reads one cost ~10-17× at depth (stripe at 1e30× carried a pointless
 // per-iteration `pow`). The statistics touch disjoint fields (TIA alone reads and writes
 // `prev_abs`), so each keeps its own exact accumulation order with or without the others: a lane's
@@ -1583,10 +1584,39 @@ fn aux_pack(a: Aux, frac: f32, zf: vec2<f32>) -> vec4<f32> {
     let tia_avg = a.tia_sum / tn;
     let tia_prev = a.tia_prev / max(a.n - 2.0, 1.0);
     let tia = mix(tia_prev, tia_avg, frac);
-    let decomp = atan2(zf.y, zf.x) * 0.15915494 + 0.5; // angle → 0..1
-    return vec4<f32>(stripe, tia, a.trap, decomp);
+    return vec4<f32>(stripe, tia, a.trap, final_angle(zf));
 }
 const AUX_NONE: vec4<f32> = vec4<f32>(0.0, 0.0, 1.0e30, 0.0);
+
+// The final z's angle in turns, 0..1: decomposition's value. One expression for every path that
+// writes it (aux_pack, aux_escape, the chunked resolve), so they agree bit for bit on the same z.
+fn final_angle(zf: vec2<f32>) -> f32 {
+    return atan2(zf.y, zf.x) * 0.15915494 + 0.5;
+}
+// The aux target of an ESCAPED pixel (`frac`, where it sits in its band; see `band_pos`): the running
+// statistics and the final angle when the frame accumulates them (`aux_on` bit 0); else the final
+// angle alone when the frame carries it (`orbit_stats`' STAT_ANGLE, coloring plan B8: read off the
+// final z, so the frame iterated as one without statistics, the series, BLA and the renormalized step
+// included); else nothing.
+fn aux_escape(a: Aux, frac: f32, zf: vec2<f32>) -> vec4<f32> {
+    if ((iu.aux_on & 1u) == 1u) { return aux_pack(a, frac, zf); }
+    return aux_angle(zf);
+}
+// The final angle alone, when the frame carries it (else nothing): what an escaped pixel of a frame
+// without running statistics gets, from the single-pass loops (`aux_escape`) and the chunked
+// resolve alike.
+fn aux_angle(zf: vec2<f32>) -> vec4<f32> {
+    if ((iu.orbit_stats & STAT_ANGLE) != 0u) { return vec4<f32>(0.0, 0.0, 1.0e30, final_angle(zf)); }
+    return AUX_NONE;
+}
+// The aux target of a pixel that reached the iteration limit: the running statistics when the frame
+// accumulates them (the trap colors the inside), else nothing. Not the final angle alone: the color
+// pass colors an interior texel by the interior mode, never by its angle, and the chunked resolve
+// writes none there either, so the two paths agree.
+fn aux_interior(a: Aux, zf: vec2<f32>) -> vec4<f32> {
+    if ((iu.aux_on & 1u) == 1u) { return aux_pack(a, 0.0, zf); }
+    return AUX_NONE;
+}
 
 // Where an escaped pixel sits inside its iteration band, 0..1: the weight `aux_pack` blends the
 // stripe and triangle-inequality averages over N and N−1 terms with (Härkönen's d),
@@ -1802,7 +1832,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
             trap_hist_commit(aux, gx, gy, true);
-            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
+            let aux_out = aux_interior(aux, zf);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
         if (newton) {
@@ -1824,7 +1854,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             de = de_log2(mag2, vec2<f32>(dz.re.x, dz.im.x), 0.0);
         }
         trap_hist_commit(aux, gx, gy, false);
-        let aux_out = select(AUX_NONE, aux_pack(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf), (iu.aux_on & 1u) == 1u);
+        let aux_out = aux_escape(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));
@@ -2338,7 +2368,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
             trap_hist_commit(aux, gx, gy, true);
-            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
+            let aux_out = aux_interior(aux, zf);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
         let mag2 = dot(zf, zf);
@@ -2351,7 +2381,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             de = de_log2(mag2, vec2<f32>(D.m.re.x, D.m.im.x), f32(D.e));
         }
         trap_hist_commit(aux, gx, gy, false);
-        let aux_out = select(AUX_NONE, aux_pack(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf), (iu.aux_on & 1u) == 1u);
+        let aux_out = aux_escape(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));
@@ -2578,7 +2608,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         if (!escaped) {
             atomicAdd(&counters[CTR_MAXITER], 1u);
             trap_hist_commit(aux, gx, gy, true);
-            let aux_out = select(AUX_NONE, aux_pack(aux, 0.0, zf), (iu.aux_on & 1u) == 1u);
+            let aux_out = aux_interior(aux, zf);
             return FragOut(vec4<f32>(-1.0, 0.0, 0.0, 1.0e30), aux_out);
         }
         let mag2 = dot(zf, zf);
@@ -2593,7 +2623,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
             de = de_log2(mag2, vec2<f32>(D.m.re.x, D.m.im.x), f32(D.e));
         }
         trap_hist_commit(aux, gx, gy, false);
-        let aux_out = select(AUX_NONE, aux_pack(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf), (iu.aux_on & 1u) == 1u);
+        let aux_out = aux_escape(aux, band_pos(mag2, power_f, bail2_of(iu.formula)), zf);
         esc_range_commit(smit);
         esc_count_commit(vec2<i32>(i32(gx), i32(gy)));
         norm_hist_commit(smit, vec2<i32>(i32(gx), i32(gy)));
@@ -3856,7 +3886,9 @@ fn fs_resolve(in: VsOut) -> FragOut {
         }
     }
     // @@STRIP_RESOLVE_OUT_BEGIN — a strip's module writes its count, fraction and angle here.
-    return FragOut(vec4<f32>(sm.z, nrm.x, nrm.y, de), AUX_NONE);
+    // The final angle when the frame carries it (B8: a frame that accumulates running statistics
+    // never chunks, so this is `aux_escape`'s answer for every frame that reaches here).
+    return FragOut(vec4<f32>(sm.z, nrm.x, nrm.y, de), aux_angle(zf));
     // @@STRIP_RESOLVE_OUT_END
 }
 

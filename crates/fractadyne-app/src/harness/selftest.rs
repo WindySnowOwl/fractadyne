@@ -66,7 +66,7 @@ const GOLDEN_MEAN_CROSS_GPU: f64 = 24.0;
 /// The check groups `--selftest-list` prints: every `want("…")` tag in this file
 /// (`every_want_group_is_listed`), so a group can be found and run on its own.
 pub(crate) const GROUPS: &[&str] = &[
-    "numeric", "symmetry", "abs-family", "custom-formula", "custom-dip", "life", "lsystem", "multibrot-sa", "bla", "aux-bla", "aux-series",
+    "numeric", "symmetry", "abs-family", "custom-formula", "custom-dip", "life", "lsystem", "multibrot-sa", "bla", "aux-bla", "aux-series", "angle",
     "consistency", "counters", "iter-budget", "iter-chunk", "renorm", "live-split", "worker", "nr-zoom", "coords",
     "curated-poi", "ref-pick", "ref-reuse", "ref-overlap", "orbit-cache", "script", "metadata", "view-coloring",
     "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams", "palette-aa",
@@ -7620,6 +7620,251 @@ impl FractadyneApp {
                 self.render_cfg.series_approx,
                 self.render_cfg.use_bla,
             ) = saved;
+        }
+
+        // ---- angle: decomposition's final angle, read at escape (coloring plan B8) ----
+        // The angle is a function of the final z alone, so a frame that carries it alone iterates as
+        // Smooth does: the series, BLA and the walk in passes, whose resolve writes it from the
+        // state's z. Two claims, each checked where it can fail:
+        // 1. The live chunked walk writes the one pass's angle, bit for bit (mode 2, where the walk
+        //    and the pass agree for Smooth, the `worker` group), on texels that escape after the
+        //    walk's first window, so the angle came from a resumed state. The params are the app's
+        //    own (`build_params` with Decomposition on screen), their statistics the angle alone, and
+        //    the app would walk such a frame.
+        // 2. BLA and the series move the angle no more than a nudge of a thousandth of a pixel does
+        //    (the coloring matrix's rule for a chaotic picture; B8 measured every view of the matrix
+        //    so): at corpus 07 at 1e30x (floatexp: BLA and the short escaper's series) and the
+        //    seahorse at 1e6x (df32: the series), the export as the app builds it, the same request
+        //    with neither, and that one nudged.
+        if want("angle") {
+            use fractadyne_core::coloring::{Stat, StatSet};
+            const AX: &str = "-1.178853950372678747911373866849720956148855";
+            const AY: &str = "0.1853420232408490265512092752061929308714979";
+            {
+                const LW: u32 = 192;
+                const LH: u32 = 120;
+                const LITER: u32 = 20_000;
+                let saved_vp = self.viewport.clone();
+                let saved = (self.fractal, self.julia_mode, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method);
+                // A fresh frame state, cold reference cache and no build in flight, as the `worker`
+                // group builds its params (`build_params` mutates far more than a field list would
+                // restore); the session's are put back whole afterwards.
+                let fresh = crate::Perf {
+                    ts_supported: self.perf.ts_supported,
+                    wall_fallback: self.perf.wall_fallback,
+                    actuators: self.perf.actuators,
+                    ..Default::default()
+                };
+                let saved_perf = std::mem::replace(&mut self.perf, fresh);
+                let saved_cache = self.ref_cache.clone();
+                let saved_rx = std::mem::take(&mut self.recompute_rx);
+                self.ref_cache[0] = Default::default();
+                self.fractal = FractalKind::Mandelbrot;
+                self.julia_mode = false;
+                self.render_cfg.max_iter = LITER;
+                self.render_cfg.auto_iter = false;
+                self.coloring.color_method = crate::ColorMethod::Decomposition;
+                let walks = !self.coloring.accumulates_as_it_runs();
+                self.viewport.set_size(LW as f64, LH as f64);
+                self.viewport.set_center_log2mag(fractadyne_core::parse_bf(AX).unwrap(), fractadyne_core::parse_bf(AY).unwrap(), 100.0);
+                let live = |app: &mut Self| {
+                    app.perf.frame_idx += 1;
+                    let center_bf = [app.viewport.center_x.clone(), app.viewport.center_y.clone()];
+                    let center = app.viewport.center_f64();
+                    let span = app.viewport.complex_span_fe();
+                    let mag = app.viewport.magnification();
+                    let l2 = app.viewport.log2_magnification();
+                    app.build_params(center_bf, center, span, mag, l2, app.fractal, false, LITER, false, 1, [LW, LH], 0, None)
+                };
+                let mut warm = 0;
+                while self.ref_cache[0].ref_pt.is_none() && warm < 400 {
+                    let _ = live(self);
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    warm += 1;
+                }
+                let have_ref = self.ref_cache[0].ref_pt.is_some();
+                let pr = live(self);
+                self.viewport = saved_vp;
+                (self.fractal, self.julia_mode, self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method) = saved;
+                self.perf = saved_perf;
+                self.ref_cache = saved_cache;
+                self.recompute_rx = saved_rx;
+
+                let mut base = pr.headless();
+                base.tile = None;
+                base.chunk_range = None;
+                base.chunk_idx = 0;
+                base.split = [1, 0];
+                base.ss = 1;
+                base.jitter = [0.0, 0.0];
+                base.resolution = [LW, LH];
+                let max_iter = base.max_iter;
+                let render = |passes: &[fractadyne_gpu::MandelbrotParams]| -> Result<fractadyne_gpu::GBuffer, String> {
+                    let mut t = fractadyne_gpu::LiveTwin::new(device, queue);
+                    for p in passes {
+                        t.frame(device, queue, p).map_err(|e| e.to_string())?;
+                    }
+                    t.gbuffer(device, queue, base.view_id, true).map_err(|e| e.to_string())
+                };
+                let bits = |a: &[f32], b: &[f32]| a.iter().zip(b).filter(|(x, y)| x.to_bits() != y.to_bits()).count();
+                let one = render(&[base.clone()]);
+                // The walk's windows end inside this frame's escapes (the quintiles of the one pass's
+                // counts), so pixels pause and resume from state; then the walk's empty tail.
+                let mut counts: Vec<f32> =
+                    one.as_ref().map(|g| g.iter.chunks(4).map(|t| t[0]).filter(|v| *v >= 0.0).collect()).unwrap_or_default();
+                counts.sort_by(|a, b| a.total_cmp(b));
+                let mut cuts: Vec<u32> =
+                    (1..5).filter_map(|k| counts.get(counts.len() * k / 5).map(|v| *v as u32)).filter(|&c| c > 0 && c < max_iter).collect();
+                cuts.dedup();
+                cuts.push(max_iter);
+                let first = cuts[0];
+                let mut walk = Vec::new();
+                let mut s0 = 0;
+                for e in cuts {
+                    let mut p = base.clone();
+                    p.chunk_range = Some([s0, e]);
+                    p.chunk_idx = walk.len() as u32;
+                    walk.push(p);
+                    s0 = e;
+                }
+                let mut tail = base.clone();
+                tail.chunk_range = Some([max_iter, max_iter]);
+                tail.chunk_idx = walk.len() as u32;
+                walk.push(tail);
+                let walked = render(&walk);
+                let alone = base.iter_stats() == StatSet::of(Stat::Angle);
+                let (pass, result) = match (&one, &walked) {
+                    (Ok(a), Ok(w)) if a.iter.len() == w.iter.len() && a.aux.len() == w.aux.len() && !a.aux.is_empty() => {
+                        let d = bits(&a.iter, &w.iter) + bits(&a.aux, &w.aux);
+                        // Texels that escaped after the first window (their angle came from a resumed
+                        // state), and how many distinct angles the walk wrote: a resolve writing
+                        // nothing would leave AUX_NONE's one value.
+                        let paused = w.iter.chunks(4).filter(|t| t[0] > first as f32).count();
+                        let mut angles: Vec<u32> =
+                            w.iter.chunks(4).zip(w.aux.chunks(4)).filter(|(t, _)| t[0] >= 0.0).map(|(_, x)| x[3].to_bits()).collect();
+                        angles.sort_unstable();
+                        angles.dedup();
+                        (
+                            d == 0 && have_ref && base.mode == 2 && walks && alone && paused > 0 && angles.len() > 100,
+                            format!(
+                                "{d} of {} channels differ; {} distinct angles; {paused} texels escaped after the first window; statistics {}; the app walks it: {walks}",
+                                a.iter.len() * 2,
+                                angles.len(),
+                                base.iter_stats()
+                            ),
+                        )
+                    }
+                    (Ok(_), Ok(_)) => (false, "the two G-buffers differ in size, or carry no aux plane".into()),
+                    (Err(e), _) | (_, Err(e)) => (false, format!("render failed: {e}")),
+                };
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "Angle",
+                    name: "decomposition's final angle on the live chunked walk is the one pass's, bit for bit".into(),
+                    params: format!("corpus07 1.3e30x, {max_iter} iter, {LW}x{LH}, mode {}, the app's params", base.mode),
+                    result: if have_ref { result } else { format!("{result}; the reference never arrived") },
+                    threshold: "0 channels differ (iter + aux), mode 2, the angle alone, the app walks it, texels resumed, >100 angles".into(),
+                    pass,
+                });
+            }
+            {
+                let saved = (
+                    self.fractal,
+                    self.julia_mode,
+                    self.coloring.color_method,
+                    self.coloring.use_custom_palette,
+                    self.render_cfg.max_iter,
+                    self.render_cfg.auto_iter,
+                    self.render_cfg.series_approx,
+                    self.render_cfg.use_bla,
+                );
+                self.fractal = FractalKind::Mandelbrot;
+                self.julia_mode = false;
+                self.coloring.color_method = crate::ColorMethod::Decomposition;
+                self.coloring.use_custom_palette = false;
+                self.render_cfg.auto_iter = false;
+                self.render_cfg.series_approx = true;
+                self.render_cfg.use_bla = true;
+                let (w, h) = (320u32, 200u32);
+                let progress = std::sync::atomic::AtomicU32::new(0);
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                const SHX: &str = "-0.7436438870371587047521915061147707";
+                const SHY: &str = "0.131825904205311970493132056385139";
+                for (label, cx, cy, mag, iters) in [("corpus07 1e30x", AX, AY, 1e30, 25_000u32), ("seahorse 1e6x", SHX, SHY, 1e6, 4_000)] {
+                    self.render_cfg.max_iter = iters;
+                    let at = |s: &str| fractadyne_core::parse_bf_prec(s, 256).expect("the view's coordinate");
+                    let mut vp = Viewport::new(w as f64, h as f64);
+                    vp.set_center_mag(at(cx), at(cy), mag);
+                    let mut req = self.current_export_request_for(&vp, false);
+                    req.width = w;
+                    req.height = h;
+                    req.ss = 1;
+                    req.aa_palette = fractadyne_gpu::PaletteAa::Off;
+                    let (bla, skip, mode) = (req.bla_on == 1, req.sa_skip, req.mode);
+                    let mut plain = req.clone();
+                    plain.bla_on = 0;
+                    plain.sa_skip = 0;
+                    let mut nudged = plain.clone();
+                    nudged.jitter = [1.0e-3, 1.0e-3];
+                    let px = |r: &fractadyne_gpu::ExportRequest| match fractadyne_gpu::render_export(device, queue, r, &progress, &cancel) {
+                        Ok(x) => Some(x.pixels),
+                        Err(e) => {
+                            eprintln!("[selftest] GPU ERROR (render_export): {e}");
+                            None
+                        }
+                    };
+                    let name = format!("{label}: decomposition with BLA and the series moves no more pixels than a nudge");
+                    let params = format!("{w}x{h}, {iters} iter, mode {mode}, BLA {}, series skip {skip}; vs neither, and that nudged 0.001 px", if bla { "on" } else { "off" });
+                    match (px(&req), px(&plain), px(&nudged)) {
+                        (Some(a), Some(p), Some(n)) if a.len() == p.len() && n.len() == p.len() && !p.is_empty() => {
+                            let changed = |x: &[f32]| {
+                                x.chunks_exact(4).zip(p.chunks_exact(4)).filter(|(u, v)| (0..3).any(|c| !((u[c] - v[c]).abs() <= 0.02))).count()
+                                    as f64
+                                    / (p.len() / 4) as f64
+                            };
+                            let (by_accel, by_nudge) = (changed(&a), changed(&n));
+                            // ⚠ANTI-VACUITY: a flat picture passes "no more than the nudge" at 0% against
+                            // 0% (a build whose resolve wrote no angle drew this view one color through
+                            // the chunked export: 0.0% and 0.2%). So the picture must have colors, and
+                            // the nudge must move a real share of them (24% and 42% here).
+                            let mut colors: Vec<[u8; 3]> =
+                                p.chunks_exact(4).map(|v| [0, 1, 2].map(|c| (v[c].clamp(0.0, 1.0) * 255.0) as u8)).collect();
+                            colors.sort_unstable();
+                            colors.dedup();
+                            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                                category: "Angle",
+                                name,
+                                params,
+                                result: format!(
+                                    "{:.1}% of pixels changed by the accelerators, {:.1}% by the nudge; the plain render has {} colors",
+                                    by_accel * 100.0,
+                                    by_nudge * 100.0,
+                                    colors.len()
+                                ),
+                                threshold: "BLA or the series engaged; accelerators' share <= the nudge's; the nudge moves >= 5% of a picture of > 100 colors".into(),
+                                pass: (bla || skip > 0) && by_accel <= by_nudge && by_nudge >= 0.05 && colors.len() > 100,
+                            });
+                        }
+                        _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
+                            category: "Angle",
+                            name,
+                            params,
+                            result: "render failed".into(),
+                            threshold: "three renders".into(),
+                            pass: false,
+                        }),
+                    }
+                }
+                (
+                    self.fractal,
+                    self.julia_mode,
+                    self.coloring.color_method,
+                    self.coloring.use_custom_palette,
+                    self.render_cfg.max_iter,
+                    self.render_cfg.auto_iter,
+                    self.render_cfg.series_approx,
+                    self.render_cfg.use_bla,
+                ) = saved;
+            }
         }
 
         // ---- invariance & consistency (Phase 3) — oracle-free, targets the tier crossovers ----

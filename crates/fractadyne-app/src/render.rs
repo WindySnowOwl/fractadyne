@@ -4027,9 +4027,9 @@ impl FractadyneApp {
     fn bla_eligible(&self, mode: RenderMode, julia: bool) -> bool {
         // Accumulated statistics block iteration-skipping — EXCEPT those whose per-BLA-node
         // aggregate is folded on each skip (GPU-validated: the fold render matches the full render),
-        // which ride BLA at full speed instead of paying full floatexp iterations. The final angle
-        // isn't skip-safe (decomposition's cells shift under the approximation): a frame that
-        // accumulates it stays gated.
+        // which ride BLA at full speed instead of paying full floatexp iterations, and the final
+        // angle, read off the final z, which BLA keeps (coloring plan B8: measured within a nudge of
+        // a thousandth of a pixel in every floatexp view of the coloring matrix).
         let orbit_stats = self.coloring.orbit_stats(mode);
         // Statistics with a GPU-validated BLA-skip fold: orbit-trap (all trap types — the `agg_trap`
         // lane is built for the live trap_type), triangle-inequality (reference-intrinsic aggregate),
@@ -4039,7 +4039,7 @@ impl FractadyneApp {
             && mode.is_floatexp()
             && !julia
             && self.fractal.caps().bla
-            && (!orbit_stats.blocks_iter_skip() || orbit_stats.bla_aggregate())
+            && orbit_stats.rides_bla()
     }
 
     /// The series approximation view `vi`'s live frames apply: the reference's own, when the view
@@ -7231,11 +7231,12 @@ impl FractadyneApp {
     /// applies and the floatexp walk can serve the frame: floatexp WITHOUT the BLA iterates every step
     /// at several times df32's cost. So: a built-in family with BLA and resumable passes (not a custom
     /// formula, whose floatexp loop has no BLA), not a Julia view (the BLA is Mandelbrot-mode only),
-    /// the BLA on, no coloring that carries orbit statistics (neither walk serves one), and a device
+    /// the BLA on, no coloring that accumulates orbit statistics as the orbit runs (neither walk
+    /// serves one; decomposition's final angle alone, the resolve writes, B8), and a device
     /// that granted floatexp's fourth state target — without it a floatexp frame cannot be split, and
     /// a df32 one can.
     pub(crate) fn band_bla(&self, fractal: FractalKind, julia: bool) -> bool {
-        self.band_bla_if(fractal, julia, self.coloring.accumulates_any())
+        self.band_bla_if(fractal, julia, self.coloring.accumulates_as_it_runs())
     }
 
     /// [`Self::band_bla`] for a frame that does or does not accumulate orbit statistics, whatever
@@ -9162,13 +9163,14 @@ impl FractadyneApp {
         // probe running to starve.
         let can_tile = self.allow_tiled_settle && !offscreen && !interacting && !will_reproject;
         // Whether this frame could be spread over a chunked walk at all (the same three tests as
-        // `chunk_over` below). A frame that cannot — orbit statistics (stripe, triangle inequality,
-        // orbit trap, decomposition), a formula without resumable passes, a device without the
-        // state targets — reaches native resolution ONLY through tiles; see the arm below.
+        // `chunk_over` below). A frame that cannot — orbit statistics accumulated as the orbit runs
+        // (stripe, triangle inequality, orbit trap; not decomposition's final angle, which the
+        // resolve writes), a formula without resumable passes, a device without the state targets —
+        // reaches native resolution ONLY through tiles; see the arm below.
         let band = self.live_render_mode(fractal, julia, magnification);
         let walk_possible = actuators::can_chunk(self.perf.actuators.as_ref(), band)
             && self.resumable(fractal)
-            && !self.coloring.accumulates_any();
+            && !self.coloring.accumulates_as_it_runs();
         // Everything the ITERATE's output depends on that isn't covered by orbit_id / gen /
         // resolution, folded to one hash. The GPU re-renders whenever ITS IterKey changes
         // (color method, stripe frequency, trap type, SA/BLA toggles, Julia c, …) — but under a
@@ -9343,7 +9345,7 @@ impl FractadyneApp {
         let chunk_mode = self.live_render_mode(fractal, julia, magnification);
         let chunk_over = actuators::can_chunk(self.perf.actuators.as_ref(), chunk_mode)
             && self.resumable(fractal)
-            && !self.coloring.accumulates_any()
+            && !self.coloring.accumulates_as_it_runs()
             && !offscreen
             // ⚠ONE budget — `tdr_steps`, NOT the multi-tile allowance. This gate used the
             // allowance, which handed the settled compose to TILES whenever the converged
