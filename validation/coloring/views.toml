@@ -581,7 +581,7 @@ reason = "The stripe tail is approximate across the series seed: its prefix fold
 [[known]]
 cell = "*-deep-*/trap-*"
 check = "flat"
-reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe."
+reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe. The shapes through the origin or along the real axis (the point, the cross, and since F4 part 3 the line, the sine wave and the S curve) are flat at more of these views than the closed ones: the deep orbits pass near 0 (2026-11-24: Burning Ship, Buffalo 2 to 4 and Celtic 4, the plain render as flat)."
 
 [[known]]
 cell = "*-deep-*/stripe"
@@ -601,7 +601,7 @@ reason = "At depth every pixel's orbit follows the reference for all but its las
 [[known]]
 cell = "mandelbrot-minibrot-9.3e78/trap-*"
 check = "flat"
-reason = "The true picture is one color. Every pixel's orbit passes within ~1e-40 of the point and of the axes (CPU at 1,000 bits, 2026-11-15: 2.3e-40 to 1.7e-39 and 7e-41 to 2e-40 for three pixels), far under the 1e-20 floor of the trap's log map, so every pixel takes the floor's color, through BLA and in the plain render alike. (Through BLA it was another flat color until 2026-11-15: the BLA nodes read the orbit's extended-range dips as lane sums.)"
+reason = "The true picture is one color. Every pixel's orbit passes within ~1e-40 of the point and of the axes (CPU at 1,000 bits, 2026-11-15: 2.3e-40 to 1.7e-39 and 7e-41 to 2e-40 for three pixels), far under the 1e-20 floor of the trap's log map, so every pixel takes the floor's color, through BLA and in the plain render alike. (Through BLA it was another flat color until 2026-11-15: the BLA nodes read the orbit's extended-range dips as lane sums.) The line, the sine wave and the S curve pass through the origin too (F4 part 3, 2026-11-24) and are as flat; the closed shapes, which do not, are not."
 
 [[known]]
 cell = "mandelbrot-misiurewicz-7.4e143/triangle"

@@ -573,42 +573,18 @@ fn star_params(t: TrapType) -> Option<(f64, f64, f64, f64)> {
     }
 }
 
-/// `p` turned by −`a`.
-fn unturn(x: f64, y: f64, a: f64) -> (f64, f64) {
-    let (s, c) = a.sin_cos();
-    (c * x + s * y, c * y - s * x)
-}
-
-/// The distance from `(x, y)` to the segment from `a` to `b`.
-fn seg_dist(x: f64, y: f64, a: (f64, f64), b: (f64, f64)) -> f64 {
-    let (vx, vy) = (b.0 - a.0, b.1 - a.1);
-    let t = (((x - a.0) * vx + (y - a.1) * vy) / (vx * vx + vy * vy)).clamp(0.0, 1.0);
-    (x - a.0 - t * vx).hypot(y - a.1 - t * vy)
-}
-
-/// The star-shaped outline's distance: the angle folded into one mirror sector `[0, π/n]`, measured
-/// to the one edge there, from the outer corner to the inner one (the study's `star_outline`).
-fn star_dist(x: f64, y: f64, n: f64, ro: f64, ri: f64) -> f64 {
-    let sector = std::f64::consts::TAU / n;
-    let mut a = y.atan2(x).rem_euclid(sector);
-    if a > 0.5 * sector {
-        a = sector - a;
+/// The S curve's top bowl (the shader's `trap_s_bowl`): the arc of radius [`S_RADIUS`] about
+/// `(0, S_RADIUS)` from angle 0 counterclockwise to 270 degrees, in its own frame.
+fn s_bowl(x: f64, y: f64) -> f64 {
+    use std::f64::consts::FRAC_1_SQRT_2;
+    let r = S_RADIUS;
+    let (px, py) = (x, y - r);
+    let (qx, qy) = ((FRAC_1_SQRT_2 * (px + py)).abs(), FRAC_1_SQRT_2 * (py - px));
+    let (sx, sy) = (FRAC_1_SQRT_2, -FRAC_1_SQRT_2);
+    if sy * qx > sx * qy {
+        return (qx - sx * r).hypot(qy - sy * r);
     }
-    let r = x.hypot(y);
-    let (sn, cs) = (0.5 * sector).sin_cos();
-    seg_dist(r * a.cos(), r * a.sin(), (ro, 0.0), (ri * cs, ri * sn))
-}
-
-/// The distance to the arc of center `(cx, cy)` and radius `r` from angle `a0` counterclockwise over
-/// `span` (the study's `arc`).
-fn arc_dist(x: f64, y: f64, cx: f64, cy: f64, r: f64, a0: f64, span: f64) -> f64 {
-    let (dx, dy) = (x - cx, y - cy);
-    if (dy.atan2(dx) - a0).rem_euclid(std::f64::consts::TAU) <= span {
-        return (dx.hypot(dy) - r).abs();
-    }
-    let e0 = (dx - r * a0.cos()).hypot(dy - r * a0.sin());
-    let e1 = (dx - r * (a0 + span).cos()).hypot(dy - r * (a0 + span).sin());
-    e0.min(e1)
+    (qx.hypot(qy) - r).abs()
 }
 
 impl TrapType {
@@ -650,29 +626,42 @@ impl TrapType {
     }
     /// How far `z` is from the unit shape at the origin: the shader's distance in `aux_step`.
     pub fn unit_dist(self, zx: f64, zy: f64) -> f64 {
-        use std::f64::consts::{FRAC_PI_2, PI};
+        use std::f64::consts::{FRAC_1_SQRT_2, PI};
         match self {
             TrapType::Cross => zx.abs().min(zy.abs()),
             TrapType::Circle => ((zx * zx + zy * zy).sqrt() - 1.0).abs(),
             TrapType::Point => (zx * zx + zy * zy).sqrt(),
             TrapType::Line => zy.abs(),
-            TrapType::Square | TrapType::Hexagon | TrapType::Star => {
-                let (n, ro, ri, a) = star_params(self).expect("a star-shaped trap");
-                let (x, y) = unturn(zx, zy, a);
-                star_dist(x, y, n, ro, ri)
+            // The shader's forms, with no angle taken (see `trap_unit_dist` in mandelbrot.wgsl).
+            TrapType::Square => {
+                let (qx, qy) = (zx.abs() - FRAC_1_SQRT_2, zy.abs() - FRAC_1_SQRT_2);
+                (qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0)).abs()
+            }
+            TrapType::Hexagon => {
+                let (kx, ky) = (-(3.0f64.sqrt()) / 2.0, 0.5);
+                let (mut px, mut py) = (zx.abs(), zy.abs());
+                let t = 2.0 * (kx * px + ky * py).min(0.0);
+                (px, py) = (px - t * kx, py - t * ky);
+                (px - px.clamp(-0.5, 0.5)).hypot(py - 3.0f64.sqrt() / 2.0)
+            }
+            TrapType::Star => {
+                let (c, s) = ((PI / 5.0).cos(), (PI / 5.0).sin());
+                let (k1, k2) = ((c, -s), (-c, -s));
+                let (mut px, mut py) = (zx.abs(), zy);
+                let t = 2.0 * (k1.0 * px + k1.1 * py).max(0.0);
+                (px, py) = (px - t * k1.0, py - t * k1.1);
+                let t = 2.0 * (k2.0 * px + k2.1 * py).max(0.0);
+                (px, py) = (px - t * k2.0, py - t * k2.1);
+                (px, py) = (px.abs(), py - 1.0);
+                let (bx, by) = (STAR_INNER * s, STAR_INNER * c - 1.0);
+                let h = ((px * bx + py * by) / (bx * bx + by * by)).clamp(0.0, 1.0);
+                (px - bx * h).hypot(py - by * h)
             }
             TrapType::Sine => {
                 let (s, c) = (SINE_FREQ * zx).sin_cos();
                 (zy - SINE_AMP * s).abs() / (1.0 + (SINE_AMP * SINE_FREQ * c).powi(2)).sqrt()
             }
-            TrapType::SCurve => {
-                let r = S_RADIUS;
-                // The top bowl from the right over the top to its bottom (the origin), the bottom
-                // bowl from the left under the bottom up to its top (the origin).
-                let top = arc_dist(zx, zy, 0.0, r, r, 0.0, 3.0 * FRAC_PI_2);
-                let bottom = arc_dist(zx, zy, 0.0, -r, r, PI, 3.0 * FRAC_PI_2);
-                top.min(bottom)
-            }
+            TrapType::SCurve => s_bowl(zx, zy).min(s_bowl(-zx, -zy)),
         }
     }
 

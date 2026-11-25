@@ -269,6 +269,27 @@ fn iter_uniform_matches_the_shader() {
     assert_eq!(wgsl_field_offset(&fields, "trap_in_type"), row + 4);
 }
 
+/// The renderer module survives the pipeline-constant step wgpu runs when it builds a pipeline with
+/// its overrides set (`EFT_ADD_RESIDUALS`, `PRODUCT_BARRIER`, `RN_BLA`), which re-validates every
+/// function: naga's validation alone passed a shader that step then refused at start-up (2026-11-24:
+/// `trap_s_bowl`, a `let` of a constant vector read by component).
+#[test]
+fn the_renderer_module_survives_its_pipeline_constants() {
+    use egui_wgpu::wgpu::naga;
+    let src = super::renderer_wgsl();
+    let module = naga::front::wgsl::parse_str(src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(src)));
+    let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{e:?}"));
+    for on in [0.0, 1.0] {
+        let constants: naga::back::PipelineConstants =
+            ["EFT_ADD_RESIDUALS", "PRODUCT_BARRIER", "RN_BLA"].iter().map(|k| (k.to_string(), on)).collect();
+        if let Err(e) = naga::back::pipeline_constants::process_overrides(&module, &info, &constants) {
+            panic!("the overrides at {on}: {e:?}");
+        }
+    }
+}
+
 /// The inside's own trap reaches the shader only while the trap is accumulated, with its shape.
 #[test]
 fn the_inside_trap_uniform_is_off_unless_accumulated() {

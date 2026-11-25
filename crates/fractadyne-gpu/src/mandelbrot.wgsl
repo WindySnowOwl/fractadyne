@@ -1546,43 +1546,57 @@ fn trap_unit_dist(w: vec2<f32>, ty: u32) -> f32 {
     if (ty == TRAP_CROSS) { return min(abs(w.x), abs(w.y)); }
     if (ty == TRAP_CIRCLE) { return abs(length(w) - 1.0); }
     if (ty == TRAP_LINE) { return abs(w.y); }
-    // The square's corners at 45 degrees (its sides along the axes), the star's first point up.
-    if (ty == TRAP_SQUARE) { return trap_star(vec2<f32>(0.70710678 * (w.x + w.y), 0.70710678 * (w.y - w.x)), 4.0, 0.70710678); }
-    if (ty == TRAP_HEXAGON) { return trap_star(w, 6.0, 0.86602540); }
-    if (ty == TRAP_STAR) { return trap_star(vec2<f32>(w.y, -w.x), 5.0, TRAP_STAR_INNER); }
+    // Exact distances with no angle taken (reflections and dot products), so the shapes add few
+    // registers to the loop every trap frame runs: the angle-based forms cost the point, cross and
+    // circle frames 3% (measured 2026-11-24). Core's `TrapType::unit_dist` has the same forms.
+    if (ty == TRAP_SQUARE) {
+        // Inscribed in the unit circle, sides along the axes: half-side 1/sqrt 2.
+        let q = abs(w) - vec2<f32>(0.70710678, 0.70710678);
+        return abs(length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0));
+    }
+    if (ty == TRAP_HEXAGON) {
+        // Corners on the unit circle, one on the real axis: apothem cos 30 degrees.
+        let k = vec2<f32>(-0.86602540, 0.5);
+        var p = abs(w);
+        p = p - 2.0 * min(dot(k, p), 0.0) * k;
+        p = p - vec2<f32>(clamp(p.x, -0.5, 0.5), 0.86602540);
+        return length(p);
+    }
+    if (ty == TRAP_STAR) {
+        // Points on the unit circle, one up; inner corners TRAP_STAR_INNER out.
+        let k1 = vec2<f32>(0.80901699, -0.58778525);
+        let k2 = vec2<f32>(-0.80901699, -0.58778525);
+        var p = vec2<f32>(abs(w.x), w.y);
+        p = p - 2.0 * max(dot(k1, p), 0.0) * k1;
+        p = p - 2.0 * max(dot(k2, p), 0.0) * k2;
+        p = vec2<f32>(abs(p.x), p.y - 1.0);
+        let ba = TRAP_STAR_INNER * vec2<f32>(0.58778525, 0.80901699) - vec2<f32>(0.0, 1.0);
+        let h = clamp(dot(p, ba) / dot(ba, ba), 0.0, 1.0);
+        return length(p - ba * h);
+    }
     if (ty == TRAP_SINE) {
         let k = TRAP_SINE_FREQ * w.x;
         let slope = TRAP_SINE_AMP * TRAP_SINE_FREQ * cos(k);
         return abs(w.y - TRAP_SINE_AMP * sin(k)) / sqrt(1.0 + slope * slope);
     }
     if (ty == TRAP_S_CURVE) {
-        let r = TRAP_S_RADIUS;
-        return min(trap_arc(w, vec2<f32>(0.0, r), r, 0.0, 4.71238898), trap_arc(w, vec2<f32>(0.0, -r), r, 3.14159265, 4.71238898));
+        // The bottom bowl is the top one turned half a turn about the origin.
+        return min(trap_s_bowl(w), trap_s_bowl(-w));
     }
     return length(w);
 }
-// A star-shaped outline with n outer corners on the unit circle, the first on the +x axis, and
-// inner corners at radius `ri` between them (a regular polygon: ri = cos(pi/n)): the angle folded
-// into one mirror sector [0, pi/n], measured to the one edge there.
-fn trap_star(p: vec2<f32>, n: f32, ri: f32) -> f32 {
-    let sector = 6.28318531 / n;
-    var a = atan2(p.y, p.x);
-    a = a - sector * floor(a / sector);
-    if (a > 0.5 * sector) { a = sector - a; }
-    let r = length(p);
-    let u = vec2<f32>(r * cos(a) - 1.0, r * sin(a));
-    let v = vec2<f32>(ri * cos(0.5 * sector) - 1.0, ri * sin(0.5 * sector));
-    let t = clamp(dot(u, v) / dot(v, v), 0.0, 1.0);
-    return length(u - t * v);
-}
-// The arc of center `cc` and radius r from angle a0 counterclockwise over `span`.
-fn trap_arc(p: vec2<f32>, cc: vec2<f32>, r: f32, a0: f32, span: f32) -> f32 {
-    let d = p - cc;
-    let ang = atan2(d.y, d.x) - a0;
-    if (ang - 6.28318531 * floor(ang / 6.28318531) <= span) { return abs(length(d) - r); }
-    let e0 = length(d - r * vec2<f32>(cos(a0), sin(a0)));
-    let e1 = length(d - r * vec2<f32>(cos(a0 + span), sin(a0 + span)));
-    return min(e0, e1);
+// The S curve's top bowl: the arc of radius TRAP_S_RADIUS about (0, TRAP_S_RADIUS) from angle 0
+// counterclockwise to 270 degrees, measured in its own frame (its bisector, 135 degrees, turned up;
+// the folded half's end at 135 degrees from up).
+fn trap_s_bowl(w: vec2<f32>) -> f32 {
+    let r = TRAP_S_RADIUS;
+    let p = w - vec2<f32>(0.0, r);
+    let q = vec2<f32>(abs(0.70710678 * (p.x + p.y)), 0.70710678 * (p.y - p.x));
+    // Past the bowl's end, (sin, cos) of 135 degrees times r, the end is nearest. ⛔Written with
+    // plain numbers: a `let` of a constant vector read by component made wgpu's pipeline-constant
+    // step call this function invalid at start-up (2026-11-24), which naga's own validation passed.
+    if (q.y < -q.x) { return length(q - vec2<f32>(0.70710678 * r, -0.70710678 * r)); }
+    return abs(length(q) - r);
 }
 fn trap_dist(zf: vec2<f32>) -> f32 {
     return trap_dist_of(zf, iu.trap_type, iu.trap_on, iu.trap_c, iu.trap_turn, iu.trap_size, iu.trap_inv);
