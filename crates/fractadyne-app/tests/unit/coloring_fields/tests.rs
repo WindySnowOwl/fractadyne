@@ -170,6 +170,9 @@ fn the_trap_method_keeps_its_trap_with_any_inside() {
         apply_view(&mut got, &get, true, &mut Vec::new());
         assert_eq!((got.trap_type.as_str(), got.trap_x, got.trap_rotation, got.trap_size), ("star", 0.25, 30.0, 1.5), "inside {inside:?}");
     }
+    // The sine wave's phase too (merged with the phase, 2026-11-25).
+    let sine = ColoringSpec { color_method: "trap".into(), interior: "solid".into(), trap_type: "sine".into(), trap_phase: 60.0, ..Default::default() };
+    assert!(view_lines(&sine).lines().any(|l| l == "trap_phase=60"), "{}", view_lines(&sine));
     // Another method with the inside not the trap draws no trap: none written.
     let smooth = ColoringSpec { color_method: "smooth".into(), trap_type: "star".into(), ..Default::default() };
     assert!(!view_lines(&smooth).contains("trap="), "{}", view_lines(&smooth));

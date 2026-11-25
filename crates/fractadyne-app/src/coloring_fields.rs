@@ -254,7 +254,7 @@ pub(crate) const FIELDS: [Field; 58] = [
         doc: "The sine wave trap's phase, in degrees: the wave shifted along itself, a full wave every 360 (the shapes with a phase: the sine wave).",
         access: Access::Real(|s| s.trap_phase, |s, v| s.trap_phase = v, *slider_range::TRAP_PHASE.start(), *slider_range::TRAP_PHASE.end()),
         parents: &["method", "interior", "trap"],
-        shows: |s| interior_trap(s) && TrapType::from_key(&s.trap_type).spec().phased,
+        shows: |s| trap_drawn(s) && TrapType::from_key(&s.trap_type).spec().phased,
     },
     Field {
         key: "interior_trap",
