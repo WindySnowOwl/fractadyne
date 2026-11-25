@@ -105,7 +105,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 56] = [
+pub(crate) const FIELDS: [Field; 58] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -241,6 +241,14 @@ pub(crate) const FIELDS: [Field; 56] = [
         shows: |s| interior_trap(s) && TrapType::from_key(&s.trap_type).spec().sized,
     },
     Field {
+        key: "trap_phase",
+        name: "trap phase",
+        doc: "The sine wave trap's phase, in degrees: the wave shifted along itself, a full wave every 360 (the shapes with a phase: the sine wave).",
+        access: Access::Real(|s| s.trap_phase, |s, v| s.trap_phase = v, *slider_range::TRAP_PHASE.start(), *slider_range::TRAP_PHASE.end()),
+        parents: &["method", "interior", "trap"],
+        shows: |s| interior_trap(s) && TrapType::from_key(&s.trap_type).spec().phased,
+    },
+    Field {
         key: "interior_trap",
         name: "inside trap",
         doc: "The inside's own trap shape, point, cross, circle, line, square, hexagon, star, sine or s-curve, when the trap method colors the inside by a trap (the inside's own placement in the four keys after). Left out: the method's trap.",
@@ -281,6 +289,14 @@ pub(crate) const FIELDS: [Field; 56] = [
         access: Access::Real(|s| s.interior_trap_size, |s, v| s.interior_trap_size = v, *slider_range::TRAP_SIZE.start(), *slider_range::TRAP_SIZE.end()),
         parents: &["method", "interior", "interior_trap"],
         shows: |s| inside_own_trap(s) && TrapType::from_key(&s.interior_trap).spec().sized,
+    },
+    Field {
+        key: "interior_trap_phase",
+        name: "inside trap phase",
+        doc: "The inside's own trap's phase, as `trap_phase`.",
+        access: Access::Real(|s| s.interior_trap_phase, |s, v| s.interior_trap_phase = v, *slider_range::TRAP_PHASE.start(), *slider_range::TRAP_PHASE.end()),
+        parents: &["method", "interior", "interior_trap"],
+        shows: |s| inside_own_trap(s) && TrapType::from_key(&s.interior_trap).spec().phased,
     },
     Field {
         key: "light",

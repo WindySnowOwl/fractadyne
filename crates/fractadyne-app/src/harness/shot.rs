@@ -148,6 +148,7 @@ impl crate::FractadyneApp {
             self.fullscreen = false;
             self.anim.palette_anim = crate::PaletteAnim::Off; // a moving palette is not reproducible
             self.effects.light_anim = false;
+            self.coloring.trap_phase_anim = false; // a clock, as the two above
             // `--size` is in PIXELS, which is what someone sizing an image means, but
             // `InnerSize` is in logical POINTS. On this 1.5x display a requested
             // 1920x1200 first came out as a 2880x1800 file — silently scaled, and the

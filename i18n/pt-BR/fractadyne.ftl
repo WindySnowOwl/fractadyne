@@ -2860,6 +2860,11 @@ panel-tail-length = Compr. da cauda
 panel-tail-length-unit = it
 panel-tail-length-hover = Comprimento da janela em iterações. Janelas curtas (8–32) dão as faixas fortes clássicas em qualquer profundidade; as mais longas voltam a tender a uma cor chapada, já que o termo de listras de uma órbita caótica longa se anula na média.
 panel-trap-shape = Forma da armadilha
+# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+panel-trap-phase = Fase
+panel-trap-phase-hover = Desloca a onda senoidal ao longo de si mesma: uma onda completa a cada 360°. Cada fase desenha seu próprio padrão de faixas.
+panel-trap-phase-animate = Animar a fase
+panel-trap-phase-animate-hover = Percorre a fase ao longo do tempo, no ritmo do controle Velocidade. Cada quadro recalcula a vista, então uma vista profunda anima devagar.
 panel-inside = Interior
 panel-inside-hover = O que colore o interior do conjunto.
 panel-inside-color-hover = A cor do interior do conjunto.

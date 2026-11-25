@@ -239,6 +239,12 @@ pub struct ColoringSpec {
     pub interior_trap_rotation: f32,
     #[serde(default = "default_trap_size")]
     pub interior_trap_size: f32,
+    /// The sine wave trap's phase, in degrees (a full wave every 360°), the method's and the
+    /// inside's own; 0, and absent from every session from before it: as before.
+    #[serde(default)]
+    pub trap_phase: f32,
+    #[serde(default)]
+    pub interior_trap_phase: f32,
     /// Custom gradient stops `[pos, r, g, b]` (DISPLAY-space RGB) from the gradient editor.
     #[serde(default)]
     pub custom_palette: Vec<[f32; 4]>,
@@ -548,6 +554,9 @@ pub struct SessionState {
     /// Rotate the relief light direction over time.
     #[serde(default)]
     pub light_anim: bool,
+    /// Cycle the sine wave trap's phase over time (the palette's Speed): each frame iterates again.
+    #[serde(default)]
+    pub trap_phase_anim: bool,
     #[serde(default)]
     pub de_anim: bool,
     /// Show the minimap overview ("you are here").
@@ -947,6 +956,8 @@ impl Default for ColoringSpec {
             interior_trap_y: 0.0,
             interior_trap_rotation: 0.0,
             interior_trap_size: default_trap_size(),
+            trap_phase: 0.0,
+            interior_trap_phase: 0.0,
             custom_palette: Vec::new(),
             custom_palette_flat: false,
             custom_segments: Vec::new(),
@@ -1031,6 +1042,7 @@ impl Default for SessionState {
             palette_anim: default_palette_anim(),
             palette_anim_speed: default_palette_anim_speed(),
             light_anim: false,
+            trap_phase_anim: false,
             de_anim: false,
             minimap: false,
             right_panel_open: true,

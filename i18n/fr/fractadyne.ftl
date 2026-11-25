@@ -2861,6 +2861,11 @@ panel-tail-length = Longueur de queue
 panel-tail-length-unit = it
 panel-tail-length-hover = Longueur de la fenêtre en itérations. Les fenêtres courtes (8–32) donnent les bandes marquées classiques à toute profondeur ; les plus longues tendent de nouveau vers une couleur uniforme, car le terme de rayures d’une longue orbite chaotique se moyenne.
 panel-trap-shape = Forme du piège
+# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+panel-trap-phase = Phase
+panel-trap-phase-hover = Décale l’onde sinusoïdale le long d’elle-même : une onde complète tous les 360°. Chaque phase dessine son propre motif de bandes.
+panel-trap-phase-animate = Animer la phase
+panel-trap-phase-animate-hover = Fait défiler la phase au fil du temps, au rythme du curseur Vitesse. Chaque image recalcule la vue : une vue profonde s’anime lentement.
 panel-inside = Intérieur
 panel-inside-hover = Ce qui colore l’intérieur de l’ensemble.
 panel-inside-color-hover = La couleur de l’intérieur de l’ensemble.

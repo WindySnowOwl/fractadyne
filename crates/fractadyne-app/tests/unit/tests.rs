@@ -363,8 +363,8 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "iter_div",
     "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "interior_fit", "trap",
     // Written only with a trap moved, turned or sized (F4).
-    "trap_x", "trap_y", "trap_rotation", "trap_size",
-    "interior_trap", "interior_trap_x", "interior_trap_y", "interior_trap_rotation", "interior_trap_size",
+    "trap_x", "trap_y", "trap_rotation", "trap_size", "trap_phase",
+    "interior_trap", "interior_trap_x", "interior_trap_y", "interior_trap_rotation", "interior_trap_size", "interior_trap_phase",
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
     // Written only with the relief light on, and its slope from the distance (C5).
     "light_steep", "light_steep_px", "light_highlight", "light_shininess", "light_highlight_color",
@@ -1568,7 +1568,7 @@ fn the_iteration_hash_keys_what_is_accumulated() {
         crate::render::iter_coloring_hash(orbit_stats, 1.0, false, 16, t, &mut h);
         h.finish()
     };
-    let moved = crate::TrapPlace { center: [0.25, 0.0], rotation: 30.0, size: 1.0 };
+    let moved = crate::TrapPlace { center: [0.25, 0.0], rotation: 30.0, size: 1.0, phase: 0.0 };
     let unturned = crate::TrapPlace { rotation: 0.0, ..moved };
     assert_ne!(placed(trap, crate::Trap::of(TrapType::Point)), placed(trap, crate::Trap::new(TrapType::Point, moved)));
     assert_eq!(placed(none, crate::Trap::of(TrapType::Point)), placed(none, crate::Trap::new(TrapType::Point, moved)));

@@ -141,7 +141,9 @@ pub(crate) struct TrapU {
     pub(crate) size: f32,
     pub(crate) inv_size: f32,
     pub(crate) on: u32,
-    pub(crate) pad: u32,
+    /// The phase in radians (the sine wave's, [`fractadyne_core::coloring::TrapPlace::phase`]): what
+    /// was the block's padding word, so nothing moved.
+    pub(crate) phase: f32,
 }
 
 /// The inside's own trap for the shader (`trap_in`, `trap_in_row`): its placement and
@@ -170,7 +172,7 @@ pub(crate) fn trap_uniform(place: fractadyne_core::coloring::TrapPlace) -> TrapU
         size: place.size,
         inv_size: (1.0 / f64::from(place.size)) as f32,
         on: 1,
-        pad: 0,
+        phase: place.phase_radians() as f32,
     }
 }
 
@@ -822,9 +824,9 @@ struct IterKey {
     trap_type: u32,
     /// The trap's placement (F4, `TrapPlace::bits`): moving the trap re-iterates, while the trap
     /// is accumulated (zeros otherwise).
-    trap_place: [u32; 4],
+    trap_place: [u32; 5],
     /// The inside's own trap, while the trap is accumulated.
-    trap_in: Option<(u32, [u32; 4])>,
+    trap_in: Option<(u32, [u32; 5])>,
     sa_skip: u32,
     bla_on: u32,
     /// Sub-pixel jitter (progressive SSAA): a changed jitter is a new sample and must re-iterate,
@@ -4159,7 +4161,7 @@ impl MandelbrotParams {
             stripe_tail: stripe && self.stripe_tail,
             stripe_tail_len: if stripe { self.stripe_tail_len } else { 0 },
             trap_type: if orbit_stats.has(Stat::Trap) { self.trap_type } else { 0 },
-            trap_place: if orbit_stats.has(Stat::Trap) { self.trap_place.bits() } else { [0; 4] },
+            trap_place: if orbit_stats.has(Stat::Trap) { self.trap_place.bits() } else { [0; 5] },
             trap_in: self.trap_in.filter(|_| orbit_stats.has(Stat::Trap)).map(|(s, p)| (s.gpu_id(), p.bits())),
             sa_skip: self.sa_skip,
             bla_on: self.bla_on,

@@ -515,6 +515,8 @@ pub struct TrapSpec {
     /// Its shader code is compiled in only for a pipeline that draws it (the shader's `TRAP_EXTRA`):
     /// the shapes of F4 part 3, whose code present in every trap frame cost the others 2-3%.
     pub gated: bool,
+    /// A phase shifts it along itself ([`TrapPlace::phase`]): the sine wave, a full wave every 360°.
+    pub phased: bool,
 }
 
 /// The radius of the polygon and star shapes' outer corners at size 1, and the star's inner ones
@@ -525,6 +527,12 @@ pub const SINE_AMP: f64 = 0.3;
 pub const SINE_FREQ: f64 = 4.0;
 /// The S curve's two bowls' radius at size 1: the curve spans −1..1 vertically.
 pub const S_RADIUS: f64 = 0.5;
+
+/// `deg` wrapped into [-180, 180).
+pub fn wrap_degrees(deg: f32) -> f32 {
+    let w = (deg + 180.0).rem_euclid(360.0) - 180.0;
+    if w.is_finite() { w } else { 0.0 }
+}
 
 /// An orbit-trap shape (the orbit-trap method's). Like [`ColorMethod`], the order gives the GPU
 /// numbers for one build.
@@ -553,15 +561,15 @@ pub enum TrapType {
 }
 
 const TRAPS: [TrapSpec; 9] = [
-    TrapSpec { key: "point", wgsl: "TRAP_POINT", turns: false, sized: false, closed: false, gated: false },
-    TrapSpec { key: "cross", wgsl: "TRAP_CROSS", turns: true, sized: false, closed: false, gated: false },
-    TrapSpec { key: "circle", wgsl: "TRAP_CIRCLE", turns: false, sized: true, closed: true, gated: false },
-    TrapSpec { key: "line", wgsl: "TRAP_LINE", turns: true, sized: false, closed: false, gated: true },
-    TrapSpec { key: "square", wgsl: "TRAP_SQUARE", turns: true, sized: true, closed: true, gated: true },
-    TrapSpec { key: "hexagon", wgsl: "TRAP_HEXAGON", turns: true, sized: true, closed: true, gated: true },
-    TrapSpec { key: "star", wgsl: "TRAP_STAR", turns: true, sized: true, closed: true, gated: true },
-    TrapSpec { key: "sine", wgsl: "TRAP_SINE", turns: true, sized: true, closed: false, gated: true },
-    TrapSpec { key: "s-curve", wgsl: "TRAP_S_CURVE", turns: true, sized: true, closed: false, gated: true },
+    TrapSpec { key: "point", wgsl: "TRAP_POINT", turns: false, sized: false, closed: false, gated: false, phased: false },
+    TrapSpec { key: "cross", wgsl: "TRAP_CROSS", turns: true, sized: false, closed: false, gated: false, phased: false },
+    TrapSpec { key: "circle", wgsl: "TRAP_CIRCLE", turns: false, sized: true, closed: true, gated: false, phased: false },
+    TrapSpec { key: "line", wgsl: "TRAP_LINE", turns: true, sized: false, closed: false, gated: true, phased: false },
+    TrapSpec { key: "square", wgsl: "TRAP_SQUARE", turns: true, sized: true, closed: true, gated: true, phased: false },
+    TrapSpec { key: "hexagon", wgsl: "TRAP_HEXAGON", turns: true, sized: true, closed: true, gated: true, phased: false },
+    TrapSpec { key: "star", wgsl: "TRAP_STAR", turns: true, sized: true, closed: true, gated: true, phased: false },
+    TrapSpec { key: "sine", wgsl: "TRAP_SINE", turns: true, sized: true, closed: false, gated: true, phased: true },
+    TrapSpec { key: "s-curve", wgsl: "TRAP_S_CURVE", turns: true, sized: true, closed: false, gated: true, phased: false },
 ];
 
 /// The polygon and star shapes in their own frame: `(n, outer radius, inner radius, the first outer
@@ -627,6 +635,15 @@ impl TrapType {
     /// The shape a key names, or the point trap for one it does not know.
     pub fn from_key(s: &str) -> TrapType {
         TrapType::parse_key(s).unwrap_or_default()
+    }
+    /// [`unit_dist`](Self::unit_dist) with the sine wave shifted by `phase` radians along itself,
+    /// `y = A·sin(F·x + phase)`; every other shape has no phase.
+    pub fn unit_dist_at(self, zx: f64, zy: f64, phase: f64) -> f64 {
+        if self == TrapType::Sine && phase != 0.0 {
+            let (s, c) = (SINE_FREQ * zx + phase).sin_cos();
+            return (zy - SINE_AMP * s).abs() / (1.0 + (SINE_AMP * SINE_FREQ * c).powi(2)).sqrt();
+        }
+        self.unit_dist(zx, zy)
     }
     /// How far `z` is from the unit shape at the origin: the shader's distance in `aux_step`.
     pub fn unit_dist(self, zx: f64, zy: f64) -> f64 {
@@ -710,6 +727,9 @@ pub struct TrapPlace {
     pub rotation: f32,
     /// Its size: the circle's radius. 1: the unit shape.
     pub size: f32,
+    /// Its phase, in degrees: the sine wave shifted along itself, a full wave every 360°
+    /// ([`TrapSpec::phased`]; user 2026-11-25). Wrapped into [-180, 180).
+    pub phase: f32,
 }
 
 impl Default for TrapPlace {
@@ -720,7 +740,7 @@ impl Default for TrapPlace {
 
 impl TrapPlace {
     /// Each shape as it always was: at the origin, unturned, of size 1.
-    pub const DEFAULT: TrapPlace = TrapPlace { center: [0.0, 0.0], rotation: 0.0, size: 1.0 };
+    pub const DEFAULT: TrapPlace = TrapPlace { center: [0.0, 0.0], rotation: 0.0, size: 1.0, phase: 0.0 };
     /// The sizes a placement computes with; [`for_shape`](Self::for_shape) clamps into them.
     pub const SIZE_MIN: f32 = 1.0e-4;
     pub const SIZE_MAX: f32 = 1.0e4;
@@ -737,15 +757,20 @@ impl TrapPlace {
             center: [fin(self.center[0], 0.0), fin(self.center[1], 0.0)],
             rotation: if spec.turns { fin(self.rotation, 0.0) } else { 0.0 },
             size: if spec.sized { fin(self.size, 1.0).clamp(Self::SIZE_MIN, Self::SIZE_MAX) } else { 1.0 },
+            phase: if spec.phased { wrap_degrees(fin(self.phase, 0.0)) + 0.0 } else { 0.0 },
         }
     }
     /// Each shape as it always was.
     pub fn is_default(self) -> bool {
         self == Self::DEFAULT
     }
-    /// The four numbers' bits, for keys: `[center re, center im, rotation, size]`.
-    pub fn bits(self) -> [u32; 4] {
-        [self.center[0].to_bits(), self.center[1].to_bits(), self.rotation.to_bits(), self.size.to_bits()]
+    /// The five numbers' bits, for keys: `[center re, center im, rotation, size, phase]`.
+    pub fn bits(self) -> [u32; 5] {
+        [self.center[0].to_bits(), self.center[1].to_bits(), self.rotation.to_bits(), self.size.to_bits(), self.phase.to_bits()]
+    }
+    /// The phase in radians.
+    pub fn phase_radians(self) -> f64 {
+        f64::from(self.phase).to_radians()
     }
     /// The turn's cosine and sine.
     pub fn turn(self) -> (f64, f64) {
@@ -761,7 +786,7 @@ impl TrapPlace {
         let (c, s) = self.turn();
         let (dx, dy) = (zx - f64::from(self.center[0]), zy - f64::from(self.center[1]));
         let k = f64::from(self.size);
-        k * shape.unit_dist((c * dx + s * dy) / k, (c * dy - s * dx) / k)
+        k * shape.unit_dist_at((c * dx + s * dy) / k, (c * dy - s * dx) / k, self.phase_radians())
     }
 
     /// This trap moved onto a point of `cycle` (coloring plan F4, part 2; `crate::cycle`), its
@@ -832,7 +857,7 @@ impl Trap {
     }
     /// What keys hash: the shape's GPU number for this build and the placement's bits, and the
     /// inside's own the same way.
-    pub fn key_bits(self) -> (u32, [u32; 4], Option<(u32, [u32; 4])>) {
+    pub fn key_bits(self) -> (u32, [u32; 5], Option<(u32, [u32; 5])>) {
         (self.shape.gpu_id(), self.place.bits(), self.inside.map(|(s, p)| (s.gpu_id(), p.bits())))
     }
 }

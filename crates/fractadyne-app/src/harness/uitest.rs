@@ -445,6 +445,11 @@ enum Screen {
     /// ...then the star (F4 part 3): another picture, the live view's iterate pipeline built with the
     /// shapes compiled in (`TRAP_EXTRA`; without them the star would measure as the point).
     TrapShapeStar,
+    /// The sine wave trap at phase 0...
+    TrapSinePhase0,
+    /// ...then shifted a quarter wave (user 2026-11-25): another picture, the phase reaching the
+    /// live view's iteration; the panel's Phase row and its Animate box.
+    TrapSinePhase,
     /// Edge shading (coloring plan C3): the Julia-link point in Smooth, point sampled, the shading
     /// off (the base)...
     EdgeShadeOff,
@@ -1450,6 +1455,8 @@ fn build_steps() -> Vec<Step> {
         screen("inside-own-trap", Screen::InsideOwnTrap),
         screen("trap-shape-point", Screen::TrapShapePoint),
         screen("trap-shape-star", Screen::TrapShapeStar),
+        screen("trap-sine-phase-0", Screen::TrapSinePhase0),
+        screen("trap-sine-phase", Screen::TrapSinePhase),
         screen("edge-shade-off", Screen::EdgeShadeOff),
         screen("edge-shade", Screen::EdgeShade),
         screen("edge-shade-inside", Screen::EdgeShadeInside),
@@ -1946,6 +1953,24 @@ impl FractadyneApp {
             name: "trap-shape-star-drawn-live".into(),
             verdict: if d.is_some_and(|d| d >= 3.0) { Verdict::Pass } else { Verdict::Fail },
             detail: format!("against {before}, the mean difference in levels: {d:?}"),
+        });
+    }
+
+    /// The sine wave a quarter wave on draws another picture live than at phase 0 (a mean
+    /// difference of 3 levels or more), and the trap carries the phase.
+    fn uitest_trap_phase_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, checks: &mut Vec<Check>) {
+        let before = "trap-sine-phase-0";
+        let b = ut.results.iter().rev().find(|r| r.name == before);
+        let d = view.zip(b).and_then(|((px, _), b)| {
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            let s: f64 = px.chunks_exact(4).zip(prev.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            Some(s / (3 * (px.len() / 4)).max(1) as f64)
+        });
+        let phase = self.coloring.trap().place.phase;
+        checks.push(Check {
+            name: "trap-sine-phase-drawn-live".into(),
+            verdict: if d.is_some_and(|d| d >= 3.0) && phase == 90.0 { Verdict::Pass } else { Verdict::Fail },
+            detail: format!("against {before}, the mean difference in levels: {d:?}; the trap's phase {phase}"),
         });
     }
 
@@ -3446,6 +3471,18 @@ impl FractadyneApp {
                 self.coloring.trap_type = if matches!(s, Screen::TrapShapeStar) { crate::TrapType::Star } else { crate::TrapType::Point };
                 self.dialogs.right_panel_open = true;
             }
+            // The star's view, the sine wave at phase 0 and then a quarter wave on; the animation off
+            // (a clock: the step must settle).
+            Screen::TrapSinePhase0 | Screen::TrapSinePhase => {
+                self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+                self.coloring.interior = None;
+                self.coloring.interior_trap = None;
+                self.coloring.trap_type = crate::TrapType::Sine;
+                let phase = if matches!(s, Screen::TrapSinePhase) { 90.0 } else { 0.0 };
+                self.coloring.trap_place = crate::TrapPlace { phase, ..crate::TrapPlace::DEFAULT };
+                self.coloring.trap_phase_anim = false;
+                self.dialogs.right_panel_open = true;
+            }
             // C3: the Julia-link point again (filaments enough to shade), Smooth, point sampled; the
             // shading off, on toward white, then toward the inside's near-black, one change a step.
             Screen::EdgeShadeOff | Screen::EdgeShade | Screen::EdgeShadeInside | Screen::EdgeShadePanel => {
@@ -4201,6 +4238,8 @@ impl FractadyneApp {
                     | Screen::EqualizeTrap
                     | Screen::TrapShapePoint
                     | Screen::TrapShapeStar
+                    | Screen::TrapSinePhase0
+                    | Screen::TrapSinePhase
                     | Screen::EdgeShadeOff
                     | Screen::EdgeShade
                     | Screen::EdgeShadeInside
@@ -5147,6 +5186,9 @@ impl FractadyneApp {
         }
         if let StepKind::Screen(Screen::TrapShapeStar) = step.kind {
             self.uitest_trap_shape_checks(ut, inside_view.as_ref(), &mut checks);
+        }
+        if let StepKind::Screen(Screen::TrapSinePhase) = step.kind {
+            self.uitest_trap_phase_checks(ut, inside_view.as_ref(), &mut checks);
         }
 
         // ---- edge shading (coloring plan C3) ----

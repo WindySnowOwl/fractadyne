@@ -349,11 +349,11 @@ fn a_placed_trap_is_measured_in_the_orbits_plane() {
     let (cx, cy) = (f64::from(c[0]), f64::from(c[1]));
     let near = |a: f64, b: f64| (a - b).abs() < 1e-6;
     // The point: |z - center|, whatever the turn and size, which it does not use.
-    let point = TrapPlace { center: c, rotation: 30.0, size: 3.0 }.for_shape(TrapType::Point);
+    let point = TrapPlace { center: c, rotation: 30.0, size: 3.0, phase: 0.0 }.for_shape(TrapType::Point);
     assert_eq!((point.rotation, point.size), (0.0, 1.0));
     assert!(near(point.dist(TrapType::Point, cx + 0.3, cy + 0.4), 0.5));
     // The circle: radius = size, centered; a turn changes nothing.
-    let circle = TrapPlace { center: c, rotation: 77.0, size: 0.5 }.for_shape(TrapType::Circle);
+    let circle = TrapPlace { center: c, rotation: 77.0, size: 0.5, phase: 0.0 }.for_shape(TrapType::Circle);
     assert_eq!(circle.rotation, 0.0);
     for a in [0.0f64, 1.0, 2.5, 4.0] {
         assert!(near(circle.dist(TrapType::Circle, cx + 0.5 * a.cos(), cy + 0.5 * a.sin()), 0.0), "on the rim at {a}");
@@ -362,7 +362,7 @@ fn a_placed_trap_is_measured_in_the_orbits_plane() {
     assert!(near(circle.dist(TrapType::Circle, cx + 2.0, cy), 1.5));
     // The cross turned by 30 degrees: its arms run at 30 and 120 degrees through the center, and a
     // point at 75 degrees, between them, is r * sin 45 degrees from either.
-    let cross = TrapPlace { center: c, rotation: 30.0, size: 9.0 }.for_shape(TrapType::Cross);
+    let cross = TrapPlace { center: c, rotation: 30.0, size: 9.0, phase: 0.0 }.for_shape(TrapType::Cross);
     assert_eq!(cross.size, 1.0);
     let at = |deg: f64, r: f64| {
         let a = deg.to_radians();
@@ -373,7 +373,7 @@ fn a_placed_trap_is_measured_in_the_orbits_plane() {
     }
     assert!(near(at(75.0, 1.0), std::f64::consts::FRAC_1_SQRT_2));
     // Unturned, the cross through the center is the axes moved there.
-    let plain = TrapPlace { center: c, rotation: 0.0, size: 1.0 };
+    let plain = TrapPlace { center: c, rotation: 0.0, size: 1.0, phase: 0.0 };
     assert!(near(plain.dist(TrapType::Cross, cx + 0.25, cy - 0.5), 0.25));
 }
 
@@ -381,9 +381,9 @@ fn a_placed_trap_is_measured_in_the_orbits_plane() {
 /// size is clamped, and a negative zero is a zero (keys hash the bits).
 #[test]
 fn a_placement_for_a_shape_is_finite_and_clamped() {
-    let wild = TrapPlace { center: [f32::NAN, -0.0], rotation: f32::INFINITY, size: 0.0 };
+    let wild = TrapPlace { center: [f32::NAN, -0.0], rotation: f32::INFINITY, size: 0.0, phase: 0.0 };
     let c = wild.for_shape(TrapType::Circle);
-    assert_eq!(c, TrapPlace { center: [0.0, 0.0], rotation: 0.0, size: TrapPlace::SIZE_MIN });
+    assert_eq!(c, TrapPlace { center: [0.0, 0.0], rotation: 0.0, size: TrapPlace::SIZE_MIN, phase: 0.0 });
     assert_eq!(c.center[1].to_bits(), 0.0f32.to_bits(), "no negative zero");
     let x = wild.for_shape(TrapType::Cross);
     assert_eq!((x.rotation, x.size), (0.0, 1.0));
@@ -396,14 +396,14 @@ fn a_placement_for_a_shape_is_finite_and_clamped() {
 /// trap itself, so a view whose inside "has its own" equal to the method's computes as one without.
 #[test]
 fn an_inside_trap_equal_to_the_trap_is_none() {
-    let moved = TrapPlace { center: [0.3, -0.2], rotation: 40.0, size: 2.0 };
+    let moved = TrapPlace { center: [0.3, -0.2], rotation: 40.0, size: 2.0, phase: 0.0 };
     let t = Trap::new(TrapType::Cross, moved);
     assert_eq!(t.with_inside(TrapType::Cross, moved).inside, None, "the same trap");
     // The point ignores the turn and size, so a point with them is the plain point at that center.
     let p = Trap::new(TrapType::Point, TrapPlace { center: [0.3, -0.2], ..TrapPlace::DEFAULT });
     assert_eq!(p.with_inside(TrapType::Point, moved).inside, None, "the same point, as the point uses it");
     let inside = t.with_inside(TrapType::Circle, moved).inside.expect("a circle inside a cross");
-    assert_eq!(inside, (TrapType::Circle, TrapPlace { center: [0.3, -0.2], rotation: 0.0, size: 2.0 }));
+    assert_eq!(inside, (TrapType::Circle, TrapPlace { center: [0.3, -0.2], rotation: 0.0, size: 2.0, phase: 0.0 }));
     assert_ne!(t.with_inside(TrapType::Circle, moved).key_bits(), t.key_bits());
 }
 
@@ -504,7 +504,7 @@ fn a_closed_shapes_radius_meets_its_outline() {
 #[test]
 fn the_new_shapes_are_placed_on_the_cycle() {
     let cycle = [[-0.02483685875720304, -0.2416742977846682], [-0.975163141242797, 0.2416742977846682]];
-    let turned = TrapPlace { center: [0.1, 0.0], rotation: 20.0, size: 1.0 };
+    let turned = TrapPlace { center: [0.1, 0.0], rotation: 20.0, size: 1.0, phase: 0.0 };
     for t in [TrapType::Square, TrapType::Hexagon, TrapType::Star] {
         let (p, k) = turned.on_cycle(t, &cycle);
         assert_eq!((p.center, p.rotation), ([0.1, 0.0], 20.0), "{t:?} keeps its center and turn");
@@ -515,4 +515,27 @@ fn the_new_shapes_are_placed_on_the_cycle() {
         assert_eq!(p.center, [cycle[k][0] as f32, cycle[k][1] as f32], "{t:?} is centered on the point");
         assert!(p.dist(t, cycle[k][0], cycle[k][1]) < 1e-6, "{t:?} passes through its center");
     }
+}
+
+/// The sine wave's phase shifts it along itself (user 2026-11-25): the wave at phase φ is the
+/// unshifted one moved by φ/F along x, a full wave every 360°; no other shape has one; at 0 it is the
+/// default, which measures exactly as before; and it is in the key.
+#[test]
+fn the_sine_wave_s_phase_shifts_it_along_itself() {
+    let phased = |deg: f32| TrapPlace { phase: deg, ..TrapPlace::DEFAULT }.for_shape(TrapType::Sine);
+    let shift = 75.0f64.to_radians() / SINE_FREQ;
+    for (x, y) in [(0.1, 0.2), (-0.7, -0.05), (0.33, 0.29), (1.4, -0.31)] {
+        let (a, b) = (phased(75.0).dist(TrapType::Sine, x, y), TrapType::Sine.unit_dist(x + shift, y));
+        assert!((a - b).abs() < 1e-12, "at ({x}, {y}): {a} vs the moved wave's {b}");
+    }
+    assert_eq!(phased(360.0).phase, 0.0, "a full wave");
+    assert_eq!(phased(190.0).phase, -170.0);
+    assert_eq!(phased(-180.0).phase, -180.0);
+    assert!(phased(0.0).is_default() && !phased(10.0).is_default());
+    assert_ne!(phased(10.0).bits(), phased(20.0).bits());
+    for t in TrapType::ALL.into_iter().filter(|&t| t != TrapType::Sine) {
+        assert!(!t.spec().phased, "{t:?}");
+        assert_eq!(TrapPlace { phase: 40.0, ..TrapPlace::DEFAULT }.for_shape(t).phase, 0.0, "{t:?} keeps no phase");
+    }
+    assert!(TrapType::Sine.spec().phased);
 }

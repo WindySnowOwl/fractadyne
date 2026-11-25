@@ -7464,6 +7464,7 @@ impl FractadyneApp {
                 (M::OrbitTrap, T::Hexagon, 1.0, at, "orbit-trap-hexagon"),
                 (M::OrbitTrap, T::Star, 1.0, at, "orbit-trap-star"),
                 (M::OrbitTrap, T::Sine, 1.0, at, "orbit-trap-sine"),
+                (M::OrbitTrap, T::Sine, 1.0, P { phase: 75.0, ..at }, "orbit-trap-sine-phased"),
                 (M::OrbitTrap, T::SCurve, 1.0, at, "orbit-trap-s-curve"),
                 (M::TriangleIneq, T::Point, 1.0, at, "triangle-ineq"),
                 (M::Stripe, T::Point, 5.0, at, "stripe"),
@@ -7979,6 +7980,8 @@ impl FractadyneApp {
                 (T::Hexagon, d, "hexagon"),
                 (T::Star, d, "star"),
                 (T::Sine, d, "sine wave"),
+                // Shifted along itself (user 2026-11-25): the phase must reach the GPU and the aggregates.
+                (T::Sine, P { phase: 75.0, ..d }, "sine wave at phase 75"),
                 (T::SCurve, d, "S curve"),
             ] {
                 self.coloring.trap_type = shape;
@@ -8186,7 +8189,7 @@ impl FractadyneApp {
                 self.render_cfg.auto_iter = false;
                 let cross = (T::Cross, P { center: [-0.2, 0.15], rotation: 35.0, ..P::DEFAULT });
                 // A shape of F4 part 3 for the inside, so the raw lanes' pipeline must carry it (`TRAP_EXTRA`).
-                let star = (T::Star, P { center: [0.1, 0.4], rotation: 15.0, size: 0.3 });
+                let star = (T::Star, P { center: [0.1, 0.4], rotation: 15.0, size: 0.3, phase: 0.0 });
                 const MRE: &str = "-9.5615882490732676063982994499490578147935343195074805633443741253353130261608583401177598055702619474609439701446982e-2";
                 const MIM: &str = "9.2407201125877521262558092669605306283394020346180079142271967031202190501107148187554958943606565429410592657638281e-1";
                 let at = |s: &str| fractadyne_core::parse_bf_prec(s, 512).expect("a coordinate");
@@ -11472,9 +11475,9 @@ zoom = \"1e94\"
                 stripe_tail: true,
                 stripe_tail_len: 900,
                 trap: TrapType::Circle,
-                trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6 },
+                trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6, phase: 0.0 },
                 interior_trap: Some(TrapType::Cross),
-                interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5 },
+                interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5, phase: 0.0 },
                 light: true,
                 light_angle: -1.25,
                 light_height: 3.5,
@@ -11560,7 +11563,7 @@ zoom = \"1e94\"
                     ViewColoring {
                         method: ColorMethod::OrbitTrap,
                         trap: TrapType::Cross,
-                        trap_place: crate::TrapPlace { center: [0.25, -0.5], rotation: 30.0, size: 1.0 },
+                        trap_place: crate::TrapPlace { center: [0.25, -0.5], rotation: 30.0, size: 1.0, phase: 0.0 },
                         ..d.clone()
                     },
                     &["method=trap", "trap=cross", "trap_x=0.25", "trap_y=-0.5", "trap_rotation=30"][..],
@@ -11569,7 +11572,7 @@ zoom = \"1e94\"
                     ViewColoring {
                         method: ColorMethod::OrbitTrap,
                         trap: TrapType::Circle,
-                        trap_place: crate::TrapPlace { center: [0.0, 0.125], rotation: 0.0, size: 0.5 },
+                        trap_place: crate::TrapPlace { center: [0.0, 0.125], rotation: 0.0, size: 0.5, phase: 0.0 },
                         ..d.clone()
                     },
                     &["method=trap", "trap=circle", "trap_y=0.125", "trap_size=0.5"][..],
@@ -11742,6 +11745,8 @@ zoom = \"1e94\"
                 interior_trap_y: 0.35,
                 interior_trap_rotation: -20.0,
                 interior_trap_size: 1.5,
+                trap_phase: 0.0,
+                interior_trap_phase: 0.0,
                 custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
                 custom_palette_flat: true,
                 custom_segments: vec![fractadyne_state::PaletteSegment {

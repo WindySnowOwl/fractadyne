@@ -67,11 +67,13 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `trap_y` | float, -4 to 4 | 0 | Where the orbit trap sits in the orbit's plane, its imaginary coordinate (with the trap). |
 | `trap_rotation` | float, -180 to 180 | 0 | The trap's turn, in degrees counterclockwise (the shapes that turn: not the point or the circle). |
 | `trap_size` | float, 0.01 to 10 | 1 | The trap's size: the circle's radius, the polygons' and the star's outer corners' distance from its center (the shapes with a size: not the point, the cross or the line). |
+| `trap_phase` | float, -180 to 180 | 0 | The sine wave trap's phase, in degrees: the wave shifted along itself, a full wave every 360 (the shapes with a phase: the sine wave). |
 | `interior_trap` | string: point \| cross \| circle \| line \| square \| hexagon \| star \| sine \| s-curve | (left out) | The inside's own trap shape, point, cross, circle, line, square, hexagon, star, sine or s-curve, when the trap method colors the inside by a trap (the inside's own placement in the four keys after). Left out: the method's trap. |
 | `interior_trap_x` | float, -4 to 4 | 0 | The inside's own trap's center, its real coordinate (with `interior_trap`). |
 | `interior_trap_y` | float, -4 to 4 | 0 | The inside's own trap's center, its imaginary coordinate (with `interior_trap`). |
 | `interior_trap_rotation` | float, -180 to 180 | 0 | The inside's own trap's turn, as `trap_rotation`. |
 | `interior_trap_size` | float, 0.01 to 10 | 1 | The inside's own trap's size, as `trap_size`. |
+| `interior_trap_phase` | float, -180 to 180 | 0 | The inside's own trap's phase, as `trap_phase`. |
 | `light` | bool | false | Relief lighting from the distance estimate. |
 | `light_angle` | float | 2.2 | The light's direction in radians (with `light`). |
 | `light_height` | float, 0.2 to 4 | 1.2 | Relief strength: smaller is sharper (with `light`). |

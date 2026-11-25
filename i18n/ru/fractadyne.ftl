@@ -2918,6 +2918,11 @@ panel-tail-length = Длина хвоста
 panel-tail-length-unit = ит
 panel-tail-length-hover = Длина окна в итерациях. Короткие окна (8–32) дают классические чёткие полосы на любой глубине; более длинные снова усредняются к ровному цвету, поскольку член полос длинной хаотической орбиты усредняется.
 panel-trap-shape = Форма ловушки
+# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+panel-trap-phase = Фаза
+panel-trap-phase-hover = Сдвигает синусоиду вдоль неё самой: полная волна каждые 360°. Каждая фаза рисует свой узор полос.
+panel-trap-phase-animate = Анимировать фазу
+panel-trap-phase-animate-hover = Меняет фазу со временем, со скоростью ползунка «Скорость». Каждый кадр вычисляет вид заново, поэтому глубокий вид анимируется медленно.
 panel-inside = Внутри
 panel-inside-hover = Чем окрашена внутренность множества.
 panel-inside-color-hover = Цвет внутренности множества.
