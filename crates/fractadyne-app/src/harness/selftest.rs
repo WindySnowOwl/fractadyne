@@ -12180,6 +12180,77 @@ zoom = \"1e94\"
             ) = was;
         }
 
+        // ---- the overview map follows every coloring setting, not an animation (2026-11-25) ----
+        // The user changed the inside's trap from the S curve to the sine wave under Triangle
+        // inequality and the map kept the S: its key listed the palette and the inside's colors and
+        // nothing the iteration measures. No render: the map's key is asked before and after each
+        // change. Controls: nothing changed keeps it, and the palette's offset and the light's angle
+        // turned by their animations do not redraw it (the map would stall them).
+        if want("color-sig") {
+            use crate::{ColorMethod as M, InteriorMode, TrapType as T};
+            let was = (
+                (self.coloring.color_method, self.coloring.interior, self.coloring.trap_type, self.coloring.trap_place),
+                (self.coloring.stripe_freq, self.coloring.cycle, self.coloring.offset),
+                (self.anim.palette_anim, self.anim.palette_anim_speed),
+                (self.effects.light, self.effects.light_anim, self.effects.light_angle),
+            );
+            self.coloring.color_method = M::TriangleIneq;
+            self.coloring.interior = Some(InteriorMode::Trap);
+            self.coloring.trap_type = T::SCurve;
+            self.coloring.trap_place = crate::TrapPlace::DEFAULT;
+            self.anim.palette_anim = crate::PaletteAnim::Off;
+            let base = self.minimap_key_now();
+            let stable = self.minimap_key_now() == base;
+            let mut rows: Vec<(&str, bool)> = Vec::new();
+            let mut moved = |app: &mut Self, what: &'static str, change: &dyn Fn(&mut Self)| {
+                let before = app.minimap_key_now();
+                change(app);
+                rows.push((what, app.minimap_key_now() != before));
+            };
+            moved(self, "the inside's trap, S curve to sine wave (Triangle inequality)", &|a| a.coloring.trap_type = T::Sine);
+            moved(self, "the trap moved", &|a| a.coloring.trap_place.center = [0.25, -0.5]);
+            self.coloring.color_method = M::OrbitTrap;
+            self.coloring.interior = None;
+            moved(self, "the method's trap shape (Orbit trap)", &|a| a.coloring.trap_type = T::Star);
+            self.coloring.color_method = M::Stripe;
+            moved(self, "the stripe density", &|a| a.coloring.stripe_freq += 1.5);
+            moved(self, "the cycle", &|a| a.coloring.cycle *= 1.5);
+            moved(self, "the offset", &|a| a.coloring.offset = (a.coloring.offset + 0.25).rem_euclid(1.0));
+            // Turned by an animation: the map holds.
+            self.anim.palette_anim = crate::PaletteAnim::Forward;
+            self.anim.palette_anim_speed = 0.15;
+            let animating = self.minimap_key_now();
+            self.coloring.offset = (self.coloring.offset + 0.1).rem_euclid(1.0);
+            let offset_held = self.minimap_key_now() == animating;
+            self.effects.light = true;
+            self.effects.light_anim = true;
+            let lit = self.minimap_key_now();
+            self.effects.light_angle = (self.effects.light_angle + 0.5).rem_euclid(std::f32::consts::TAU);
+            let light_held = self.minimap_key_now() == lit;
+            let all_moved = rows.iter().all(|(_, m)| *m);
+            let yn = |b: bool| if b { "yes" } else { "NO" };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "consistency",
+                name: "the overview map redraws for every coloring setting, and holds while an animation turns one".into(),
+                params: "the map's key before and after each change".into(),
+                result: format!(
+                    "unchanged key stable: {}; {}; held while the palette animates the offset: {}, while the light turns: {}",
+                    yn(stable),
+                    rows.iter().map(|(w, m)| format!("{w}: {}", yn(*m))).collect::<Vec<_>>().join("; "),
+                    yn(offset_held),
+                    yn(light_held)
+                ),
+                threshold: "stable, redrawn by each change, held by each animation",
+                pass: stable && all_moved && offset_held && light_held,
+            });
+            (
+                (self.coloring.color_method, self.coloring.interior, self.coloring.trap_type, self.coloring.trap_place),
+                (self.coloring.stripe_freq, self.coloring.cycle, self.coloring.offset),
+                (self.anim.palette_anim, self.anim.palette_anim_speed),
+                (self.effects.light, self.effects.light_anim, self.effects.light_angle),
+            ) = was;
+        }
+
         // ---- Color > Reset coloring settings puts the tuned values back and keeps the choices ----
         // No render: every value it resets is set away from a new session's, every choice it keeps is
         // set to something not the default too, then the reset runs and both lists are read back.

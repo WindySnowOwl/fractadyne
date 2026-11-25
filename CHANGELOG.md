@@ -235,6 +235,11 @@ detail is in the git history.
   bookmark and a Share text left out the trap's shape and where it sat, and opened on whatever trap
   was set before. They keep it now. A view saved that way before still lacks it; set the trap and
   save it again.
+- **The overview map keeps up with the coloring.** The map in the corner was drawn again for a new
+  palette or a new method, but not when the orbit trap's shape or place, the stripe density, the
+  cycle or the offset changed, so it could still show an S curve after the trap had become a sine
+  wave. It follows every coloring setting now. While an animation turns the palette or the light,
+  the map holds still and catches up when the animation stops.
 - **The distance to the set is right near deep minibrots.** Past about 10^77× near a minibrot,
   where an orbit passes closer to zero once a period than ordinary floating point can hold, the
   distance to the set came out far too large (a true 0.00005 pixels read as 4). Everything that reads

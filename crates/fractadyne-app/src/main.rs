@@ -7205,8 +7205,9 @@ struct DialogState {
 
 /// What the overview map was drawn for: the formula id, the custom formula's key (every custom
 /// formula is id 1000), the palette (an index or a sentinel), the method, the palette's revision,
-/// and the inside's coloring (`inside_coloring_sig`). See `FractadyneApp::minimap_key_now`.
-type MinimapKey = (u32, u64, usize, u32, u32, u64, u64);
+/// the inside's coloring (`inside_coloring_sig`), the palette's adjustments, and the whole coloring
+/// (`minimap_coloring_sig`). See `FractadyneApp::minimap_key_now`.
+type MinimapKey = (u32, u64, usize, u32, u32, u64, u64, u64);
 
 // ================================================================================================
 // FractadyneApp - all application state
@@ -16261,7 +16262,40 @@ impl FractadyneApp {
             self.inside_coloring_sig(self.coloring.color_method, self.shown_interior_palette()),
             // The palette's brightness, contrast and saturation (the map is drawn with them).
             self.palette_adjust_sig(),
+            // Every other coloring setting the map is drawn with.
+            self.minimap_coloring_sig(),
         )
+    }
+
+    /// The coloring the overview map is drawn with, as a key: everything a view keeps of it
+    /// (`coloring_spec`), so the map follows every setting, one added later included. Found
+    /// 2026-11-25: the inside's trap changed from the S curve to the sine wave and the map kept the
+    /// S, its key listing the palette and the inside's colors but no trap, stripe density, cycle or
+    /// offset. Less what an animation is turning: the map is a still drawn on this thread, and
+    /// redrawn every frame it would stall the animation; the value counts again once it stops.
+    pub(crate) fn minimap_coloring_sig(&self) -> u64 {
+        use std::hash::Hasher;
+        struct Sink(std::collections::hash_map::DefaultHasher);
+        impl std::io::Write for Sink {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.write(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut s = self.coloring_spec();
+        let turning = self.anim.palette_anim_speed > 0.0;
+        if turning && !matches!(self.anim.palette_anim, PaletteAnim::Off | PaletteAnim::Random) {
+            s.offset = 0.0;
+        }
+        if turning && self.effects.light && self.effects.light_anim {
+            s.light_angle = 0.0;
+        }
+        let mut sink = Sink(Default::default());
+        let _ = serde_json::to_writer(&mut sink, &s);
+        sink.0.finish()
     }
 
     /// The Help window: a left-hand table of contents + a scrollable content pane.
