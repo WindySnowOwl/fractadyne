@@ -72,7 +72,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "display", "catalog", "goldens", "bench-matrix", "live-res", "appearance", "band-seams", "palette-aa",
     "checklist", "replay", "settings-quarantine", "expmap", "assemble", "de-pixels", "de-dip",
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
-    "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe",
+    "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe", "round-trip",
     "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize", "palette-oklab",
     "tour-equalize", "video-equalize", "trap-equalize", "lossy-formats",
 ];
@@ -12296,6 +12296,15 @@ zoom = \"1e94\"
             ) = was;
         }
 
+        // ---- round-trip: every drawing and its coloring out and back in by every way (2026-11-25) ----
+        // Judged by the picture after each way, read back onto a session scrambled away from it in
+        // every setting (`round_trip`).
+        if want("round-trip") {
+            for c in self.round_trip_checks(device, queue) {
+                push_check(&mut checks, &mut last_check_t, c);
+            }
+        }
+
         // ---- Color > Reset coloring settings puts the tuned values back and keeps the choices ----
         // No render: every value it resets is set away from a new session's, every choice it keeps is
         // set to something not the default too, then the reset runs and both lists are read back.
@@ -16313,3 +16322,5 @@ mod wait_alive_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/harness/selftest/frame_signature_tests.rs"]
 mod frame_signature_tests;
+
+mod round_trip;

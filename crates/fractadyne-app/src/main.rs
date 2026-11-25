@@ -7246,6 +7246,133 @@ struct DialogState {
     export_notice: bool,
 }
 
+/// The coloring a session restores: at start-up, and a farm child's from its job's session
+/// (`fractadyne_farm::RenderSettings::to_session`). Split out of `new_state` so the self-test
+/// `round-trip` takes a coloring through this same reader (2026-11-25). The whole session, for the
+/// trap phase's animation, kept beside the other animations' switches. `args` for `--normalize`
+/// and `--log-palette`.
+fn coloring_from_session(s: &fractadyne_state::SessionState, args: &[String]) -> ColoringConfig {
+    let c = &s.coloring;
+    ColoringConfig {
+        // By id; a session saved before ids (or by a newer build, with a palette this one
+        // lacks) falls back to its number, read through the frozen table.
+        palette_idx: fractadyne_color::preset_by_id(&c.palette_id)
+            .or_else(|| fractadyne_color::preset_by_legacy_number(c.palette_idx))
+            .unwrap_or(0),
+        cycle: c.cycle,
+        iter_div: c.iter_div.clamp(1, fractadyne_state::ITER_DIV_MAX),
+        offset: c.offset,
+        custom_palette: c.custom_palette.clone(),
+        custom_palette_flat: c.custom_palette_flat,
+        // ⚠Migrated below by `rebuild_segments_from_palette` when a legacy session
+        // carries stops but no segments — see that method.
+        custom_segments: c.custom_segments.clone(),
+        use_custom_palette: c.use_custom_palette,
+        palette_editor_open: false,
+        sel_stop: 0,
+        sel_segment: 0,
+        drag_stop: None,
+        rot_drag: None,
+        drag_handle: None,
+        eyedrop: None,
+        eyedrop_into: None,
+        seamless: false,
+        ring_view: false,
+        gradient_name: String::new(),
+        editor_baseline: None,
+        paste_open: false,
+        paste_text: String::new(),
+        paste_msg: None,
+        ugr_choices: Vec::new(),
+        ugr_file: String::new(),
+        palette_rev: 0,
+        palette_preview: Default::default(),
+        interior_preview: Default::default(),
+        use_duotone: c.use_duotone,
+        use_binary: c.use_binary,
+        duotone_lo: c.duotone_lo,
+        duotone_hi: c.duotone_hi,
+        color_method: ColorMethod::from_key(&c.color_method),
+        stripe_freq: c.stripe_freq,
+        stripe_tail: c.stripe_tail,
+        stripe_tail_len: c.stripe_tail_len.clamp(4, 1 << 20),
+        trap_type: TrapType::from_key(&c.trap_type),
+        trap_place: trap_place_of(c),
+        interior_trap: TrapType::parse_key(&c.interior_trap),
+        interior_trap_place: interior_trap_place_of(c),
+        trap_phase_anim: s.trap_phase_anim,
+        interior: InteriorMode::parse_key(&c.interior),
+        interior_palette: fractadyne_color::preset_by_id(&c.interior_palette),
+        interior_color: c.interior_color,
+        interior_fit: c.interior_fit,
+        palette_aa: c.palette_aa,
+        palette_adjust: fractadyne_color::adjust::PaletteAdjust {
+            brightness: c.palette_brightness,
+            contrast: c.palette_contrast,
+            saturation: c.palette_saturation,
+        }
+        .clamped(),
+        palette_oklab: c.palette_oklab,
+        julia_linked: c.julia_linked,
+        normalize: args.iter().any(|a| a == "--normalize"),
+        normalize_live: c.normalize_live,
+        normalize_fit: c.normalize_fit,
+        transfer: {
+            let asked = args.iter().any(|a| a == "--log-palette");
+            // ⚠`--log-palette` only chooses HOW the normalized mapping spreads the
+            // palette; with no normalization there is no mapping and it changes nothing.
+            // Say so rather than letting a supplied option be silently inert — the same
+            // rule the silent-CLI-defaults audit applied to every other option.
+            if asked
+                && !args.iter().any(|a| a == "--normalize")
+                && !c.normalize_live
+            {
+                eprintln!(
+                    "fractadyne: --log-palette has no effect without normalization — \
+                     add --normalize (or enable Color ▸ Normalize deep colors)."
+                );
+            }
+            if asked { fractadyne_core::coloring::Transfer::Log } else { transfer_of_spec(c) }
+        },
+        wrap: fractadyne_core::coloring::Wrap::parse_key(&c.wrap).unwrap_or_default(),
+        steps: c.steps.min(fractadyne_core::coloring::MAX_STEPS),
+        equalize: equalize_of(c.equalize),
+        orbit_stats_override: None,
+        hook: Default::default(),
+    }
+}
+
+/// The effects a session restores (see [`coloring_from_session`]).
+fn effects_from_session(s: &fractadyne_state::SessionState) -> EffectsConfig {
+    EffectsConfig {
+        light: s.coloring.light,
+        light_angle: s.coloring.light_angle,
+        light_height: s.coloring.light_height,
+        light_anim: s.light_anim,
+        light_steep: s.coloring.light_steep,
+        light_steep_px: s.coloring.light_steep_px.clamp(*slider_range::RELIEF_STEEP_PX.start(), *slider_range::RELIEF_STEEP_PX.end()),
+        light_highlight: s.coloring.light_highlight.clamp(*slider_range::RELIEF_HIGHLIGHT.start(), *slider_range::RELIEF_HIGHLIGHT.end()),
+        light_shininess: s.coloring.light_shininess.clamp(*slider_range::RELIEF_SHININESS.start(), *slider_range::RELIEF_SHININESS.end()),
+        light_highlight_color: s.coloring.light_highlight_color,
+        de: s.coloring.de,
+        de_strength: s.coloring.de_strength,
+        de_width: s.coloring.de_width,
+        de_anim: s.de_anim,
+        de_phase: 0.0,
+        edge: s.coloring.edge,
+        edge_inside: s.coloring.edge_inside,
+        edge_width: s.coloring.edge_width.clamp(*slider_range::EDGE_WIDTH.start(), *slider_range::EDGE_WIDTH.end()),
+        edge_strength: s.coloring.edge_strength.clamp(0.0, 1.0),
+        edge_curve: fractadyne_core::coloring::EdgeCurve::parse_key(&s.coloring.edge_curve).unwrap_or_default(),
+        edge_color: s.coloring.edge_color,
+        grid: s.coloring.equipotentials,
+        grid_spacing: s.coloring.equipotential_spacing.clamp(*slider_range::GRID_SPACING.start(), *slider_range::GRID_SPACING.end()),
+        grid_width: s.coloring.equipotential_width.clamp(*slider_range::GRID_WIDTH.start(), *slider_range::GRID_WIDTH.end()),
+        grid_strength: s.coloring.equipotential_strength.clamp(0.0, 1.0),
+        grid_color: s.coloring.equipotential_color,
+    }
+}
+
 /// What the overview map was drawn for: the formula id, the custom formula's key (every custom
 /// formula is id 1000), the palette (an index or a sentinel), the method, the palette's revision,
 /// the inside's coloring (`inside_coloring_sig`), the palette's adjustments, and the whole coloring
@@ -8757,93 +8884,7 @@ impl FractadyneApp {
             reticle_tex: None,
             reticle_key: None,
             reticle_anchor: None,
-            coloring: ColoringConfig {
-                // By id; a session saved before ids (or by a newer build, with a palette this one
-                // lacks) falls back to its number, read through the frozen table.
-                palette_idx: fractadyne_color::preset_by_id(&s.coloring.palette_id)
-                    .or_else(|| fractadyne_color::preset_by_legacy_number(s.coloring.palette_idx))
-                    .unwrap_or(0),
-                cycle: s.coloring.cycle,
-                iter_div: s.coloring.iter_div.clamp(1, fractadyne_state::ITER_DIV_MAX),
-                offset: s.coloring.offset,
-                custom_palette: s.coloring.custom_palette.clone(),
-                custom_palette_flat: s.coloring.custom_palette_flat,
-                // ⚠Migrated below by `rebuild_segments_from_palette` when a legacy session
-                // carries stops but no segments — see that method.
-                custom_segments: s.coloring.custom_segments.clone(),
-                use_custom_palette: s.coloring.use_custom_palette,
-                palette_editor_open: false,
-                sel_stop: 0,
-                sel_segment: 0,
-                drag_stop: None,
-                rot_drag: None,
-                drag_handle: None,
-                eyedrop: None,
-                eyedrop_into: None,
-                seamless: false,
-                ring_view: false,
-                gradient_name: String::new(),
-                editor_baseline: None,
-                paste_open: false,
-                paste_text: String::new(),
-                paste_msg: None,
-                ugr_choices: Vec::new(),
-                ugr_file: String::new(),
-                palette_rev: 0,
-                palette_preview: Default::default(),
-                interior_preview: Default::default(),
-                use_duotone: s.coloring.use_duotone,
-                use_binary: s.coloring.use_binary,
-                duotone_lo: s.coloring.duotone_lo,
-                duotone_hi: s.coloring.duotone_hi,
-                color_method: ColorMethod::from_key(&s.coloring.color_method),
-                stripe_freq: s.coloring.stripe_freq,
-                stripe_tail: s.coloring.stripe_tail,
-                stripe_tail_len: s.coloring.stripe_tail_len.clamp(4, 1 << 20),
-                trap_type: TrapType::from_key(&s.coloring.trap_type),
-                trap_place: trap_place_of(&s.coloring),
-                interior_trap: TrapType::parse_key(&s.coloring.interior_trap),
-                interior_trap_place: interior_trap_place_of(&s.coloring),
-                trap_phase_anim: s.trap_phase_anim,
-                interior: InteriorMode::parse_key(&s.coloring.interior),
-                interior_palette: fractadyne_color::preset_by_id(&s.coloring.interior_palette),
-                interior_color: s.coloring.interior_color,
-                interior_fit: s.coloring.interior_fit,
-                palette_aa: s.coloring.palette_aa,
-                palette_adjust: fractadyne_color::adjust::PaletteAdjust {
-                    brightness: s.coloring.palette_brightness,
-                    contrast: s.coloring.palette_contrast,
-                    saturation: s.coloring.palette_saturation,
-                }
-                .clamped(),
-                palette_oklab: s.coloring.palette_oklab,
-                julia_linked: s.coloring.julia_linked,
-                normalize: args.iter().any(|a| a == "--normalize"),
-                normalize_live: s.coloring.normalize_live,
-                normalize_fit: s.coloring.normalize_fit,
-                transfer: {
-                    let asked = args.iter().any(|a| a == "--log-palette");
-                    // ⚠`--log-palette` only chooses HOW the normalized mapping spreads the
-                    // palette; with no normalization there is no mapping and it changes nothing.
-                    // Say so rather than letting a supplied option be silently inert — the same
-                    // rule the silent-CLI-defaults audit applied to every other option.
-                    if asked
-                        && !args.iter().any(|a| a == "--normalize")
-                        && !s.coloring.normalize_live
-                    {
-                        eprintln!(
-                            "fractadyne: --log-palette has no effect without normalization — \
-                             add --normalize (or enable Color ▸ Normalize deep colors)."
-                        );
-                    }
-                    if asked { fractadyne_core::coloring::Transfer::Log } else { transfer_of_spec(&s.coloring) }
-                },
-                wrap: fractadyne_core::coloring::Wrap::parse_key(&s.coloring.wrap).unwrap_or_default(),
-                steps: s.coloring.steps.min(fractadyne_core::coloring::MAX_STEPS),
-                equalize: equalize_of(s.coloring.equalize),
-                orbit_stats_override: None,
-                hook: Default::default(),
-            },
+            coloring: coloring_from_session(&s, args),
             perf: Perf {
                 // ⭐**Off unless the user has asked for it**, remembered in the session so the
                 // asking happens once. ⚠An explicit flag outranks the stored answer without
@@ -8879,33 +8920,7 @@ impl FractadyneApp {
                 finish_sound: s.finish_sound,
                 aa: s.aa,
             },
-            effects: EffectsConfig {
-                light: s.coloring.light,
-                light_angle: s.coloring.light_angle,
-                light_height: s.coloring.light_height,
-                light_anim: s.light_anim,
-                light_steep: s.coloring.light_steep,
-                light_steep_px: s.coloring.light_steep_px.clamp(*slider_range::RELIEF_STEEP_PX.start(), *slider_range::RELIEF_STEEP_PX.end()),
-                light_highlight: s.coloring.light_highlight.clamp(*slider_range::RELIEF_HIGHLIGHT.start(), *slider_range::RELIEF_HIGHLIGHT.end()),
-                light_shininess: s.coloring.light_shininess.clamp(*slider_range::RELIEF_SHININESS.start(), *slider_range::RELIEF_SHININESS.end()),
-                light_highlight_color: s.coloring.light_highlight_color,
-                de: s.coloring.de,
-                de_strength: s.coloring.de_strength,
-                de_width: s.coloring.de_width,
-                de_anim: s.de_anim,
-                de_phase: 0.0,
-                edge: s.coloring.edge,
-                edge_inside: s.coloring.edge_inside,
-                edge_width: s.coloring.edge_width.clamp(*slider_range::EDGE_WIDTH.start(), *slider_range::EDGE_WIDTH.end()),
-                edge_strength: s.coloring.edge_strength.clamp(0.0, 1.0),
-                edge_curve: fractadyne_core::coloring::EdgeCurve::parse_key(&s.coloring.edge_curve).unwrap_or_default(),
-                edge_color: s.coloring.edge_color,
-                grid: s.coloring.equipotentials,
-                grid_spacing: s.coloring.equipotential_spacing.clamp(*slider_range::GRID_SPACING.start(), *slider_range::GRID_SPACING.end()),
-                grid_width: s.coloring.equipotential_width.clamp(*slider_range::GRID_WIDTH.start(), *slider_range::GRID_WIDTH.end()),
-                grid_strength: s.coloring.equipotential_strength.clamp(0.0, 1.0),
-                grid_color: s.coloring.equipotential_color,
-            },
+            effects: effects_from_session(&s),
             watermark: s.watermark,
             show_location: s.show_location
                 || args.iter().any(|a| a == "--show-location" || a == "--hud"),
@@ -9105,20 +9120,9 @@ impl FractadyneApp {
         // outranks both, and a file that does not build there ends the run (a render would silently
         // be the method's colors).
         let saved = &app.last_state;
-        if !saved.coloring.coloring_hook.is_empty() {
-            let (text, params) = (saved.coloring.coloring_hook.clone(), saved.coloring.coloring_hook_params.clone());
-            let from_file = (!saved.coloring_hook_path.is_empty())
-                .then(|| std::path::PathBuf::from(&saved.coloring_hook_path))
-                .and_then(|p| coloring_hook::read_hook_file(&p).ok().map(|t| (t, p)));
-            let restored = match from_file {
-                Some((file_text, path)) => app.coloring.hook.set_text(&file_text, Some(&params), Some(path)),
-                None => app.coloring.hook.set_text(&text, Some(&params), None),
-            };
-            if let Err(e) = restored {
-                diag::log_line("hook", &format!("the session's coloring hook does not build, so it is off: {e}"));
-                app.coloring.hook.turn_off();
-            }
-        }
+        let (hook_saved, params_saved, path_saved) =
+            (saved.coloring.coloring_hook.clone(), saved.coloring.coloring_hook_params.clone(), saved.coloring_hook_path.clone());
+        app.restore_session_hook(&hook_saved, &params_saved, &path_saved);
         if let Some(i) = args.iter().position(|a| a == "--coloring-hook") {
             let Some(p) = args.get(i + 1).filter(|p| !p.starts_with("--")) else {
                 eprintln!("fractadyne: --coloring-hook needs a .wgsl file");
@@ -16315,6 +16319,26 @@ impl FractadyneApp {
                 let tex = ctx.load_texture("fractadyne.minimap", img, egui::TextureOptions::LINEAR);
                 self.minimap_tex = Some(tex);
                 self.minimap_key = Some(key);
+            }
+        }
+    }
+
+    /// The session's coloring hook, as start-up restores it: from its file when that still builds,
+    /// else the text the session kept; one that does not build is turned off. Split out of
+    /// `new_state` for the self-test `round-trip` (2026-11-25).
+    pub(crate) fn restore_session_hook(&mut self, hook_saved: &str, params_saved: &[f32], path_saved: &str) {
+        if !hook_saved.is_empty() {
+            let (text, params) = (hook_saved, params_saved);
+            let from_file = (!path_saved.is_empty())
+                .then(|| std::path::PathBuf::from(&path_saved))
+                .and_then(|p| coloring_hook::read_hook_file(&p).ok().map(|t| (t, p)));
+            let restored = match from_file {
+                Some((file_text, path)) => self.coloring.hook.set_text(&file_text, Some(&params), Some(path)),
+                None => self.coloring.hook.set_text(&text, Some(&params), None),
+            };
+            if let Err(e) = restored {
+                diag::log_line("hook", &format!("the session's coloring hook does not build, so it is off: {e}"));
+                self.coloring.hook.turn_off();
             }
         }
     }
