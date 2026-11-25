@@ -94,6 +94,10 @@ impl crate::FractadyneApp {
             None => return true,
             Some(s) => s,
         };
+        // Time this thread spends here (the first frame's wait; on OpenGL the build) is not GPU work:
+        // discounted from the next frame's interval like the speed probe's, or the frame budget reads
+        // a 195 s OpenGL build as one frame it never priced (PLUTO's 3070 on OpenGL, 2026-11-24).
+        let t = Instant::now();
         let built = match &mut self.startup_gpu {
             StartupGpu::Ready => None,
             StartupGpu::Building { rx, waited, .. } => {
@@ -119,6 +123,8 @@ impl crate::FractadyneApp {
         };
         match built {
             Some(b) => {
+                // Only this frame's: the screen's frames return before any interval is measured.
+                self.perf.startup_probe_ms += t.elapsed().as_secs_f64() * 1000.0;
                 self.finish_startup_gpu(rs, b, since);
                 true
             }

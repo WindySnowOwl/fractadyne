@@ -534,7 +534,9 @@ impl FractadyneApp {
         // Its time lies inside the next frame interval, and is no frame's dispatch: discounted from
         // it like a pipeline compile (`Perf::startup_probe_ms`). Counted, it read as a 10 s frame
         // the GPU timestamps could not see (`FRAME BUDGET IS BLIND`, Eris dev.8, 2026-11-10).
-        self.perf.startup_probe_ms = ms;
+        // ⛔Added, never assigned: the same frame's start-up shader build put its own time there
+        // first (`startup_shaders`), and `=` threw away an OpenGL build's 152 s (2026-11-24).
+        self.perf.startup_probe_ms += ms;
         crate::diag::log_line(
             "wgpu",
             &format!(

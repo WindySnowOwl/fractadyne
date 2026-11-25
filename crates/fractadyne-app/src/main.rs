@@ -1754,8 +1754,9 @@ struct Perf {
     /// the stall guards shed licenses and reset the budget for a GPU that was idle.
     ui_compile_ms: f64,
     /// Milliseconds the start-up speed probe took (`render::speed_probe`), or its re-check where that
-    /// runs on this thread (OpenGL, `render::speed_probe::recheck`), run this frame BEFORE its
-    /// interval is measured: handed to `ui_compile_ms` once it is, so the NEXT interval discounts it.
+    /// runs on this thread (OpenGL, `render::speed_probe::recheck`), or start-up's shader build or
+    /// the wait for it (`startup_shaders`), run this frame BEFORE its interval is measured: handed to
+    /// `ui_compile_ms` once it is, so the NEXT interval discounts it.
     pub(crate) startup_probe_ms: f64,
     /// ⭐DIAGNOSTIC INSTRUMENT (`FRACTADYNE_BLA_DROP_FRAMES=N`, default off). Frames of BLA
     /// suppression remaining for this view after an arithmetic-mode switch.
