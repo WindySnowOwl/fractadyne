@@ -95,6 +95,14 @@ fn interior_trap(s: &ColoringSpec) -> bool {
     InteriorMode::parse_key(&s.interior).unwrap_or(InteriorMode::of_method(method(s))) == InteriorMode::Trap
 }
 
+/// The trap is drawn: the trap method colors the outside by it, whatever colors the inside, and an
+/// inside colored by the trap (any method's) is drawn by it. Its shape and place then matter.
+/// (Fixed 2026-11-25: the trap's rows asked `interior_trap`, so the trap method with another
+/// inside, a solid color, left them out of a view, which reopened on the session's trap.)
+fn trap_drawn(s: &ColoringSpec) -> bool {
+    method(s) == ColorMethod::OrbitTrap || interior_trap(s)
+}
+
 /// The trap method's inside has a trap of its own (`interior_trap`).
 fn inside_own_trap(s: &ColoringSpec) -> bool {
     method(s) == ColorMethod::OrbitTrap && interior_trap(s) && TrapType::parse_key(&s.interior_trap).is_some()
@@ -186,7 +194,7 @@ pub(crate) const FIELDS: [Field; 56] = [
             TrapType::ALL.iter().map(|t| t.key()).collect()
         }),
         parents: &["method", "interior"],
-        shows: interior_trap,
+        shows: trap_drawn,
     },
     Field {
         key: "trap_x",
@@ -199,7 +207,7 @@ pub(crate) const FIELDS: [Field; 56] = [
             *slider_range::TRAP_CENTER.end(),
         ),
         parents: &["method", "interior"],
-        shows: interior_trap,
+        shows: trap_drawn,
     },
     Field {
         key: "trap_y",
@@ -212,7 +220,7 @@ pub(crate) const FIELDS: [Field; 56] = [
             *slider_range::TRAP_CENTER.end(),
         ),
         parents: &["method", "interior"],
-        shows: interior_trap,
+        shows: trap_drawn,
     },
     Field {
         key: "trap_rotation",
@@ -225,7 +233,7 @@ pub(crate) const FIELDS: [Field; 56] = [
             *slider_range::TRAP_ROTATION.end(),
         ),
         parents: &["method", "interior", "trap"],
-        shows: |s| interior_trap(s) && TrapType::from_key(&s.trap_type).spec().turns,
+        shows: |s| trap_drawn(s) && TrapType::from_key(&s.trap_type).spec().turns,
     },
     Field {
         key: "trap_size",
@@ -238,7 +246,7 @@ pub(crate) const FIELDS: [Field; 56] = [
             *slider_range::TRAP_SIZE.end(),
         ),
         parents: &["method", "interior", "trap"],
-        shows: |s| interior_trap(s) && TrapType::from_key(&s.trap_type).spec().sized,
+        shows: |s| trap_drawn(s) && TrapType::from_key(&s.trap_type).spec().sized,
     },
     Field {
         key: "interior_trap",

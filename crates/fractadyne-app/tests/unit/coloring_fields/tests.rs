@@ -143,3 +143,34 @@ fn the_default_writes_nothing_and_each_row_reads_back() {
         }
     }
 }
+
+/// The trap method draws the outside by its trap whatever colors the inside, so a view keeps the
+/// trap's shape and place with every inside, and reads them back (found 2026-11-25: with the
+/// inside Solid, `trap` and its placement were left out, and the view reopened on the session's
+/// trap).
+#[test]
+fn the_trap_method_keeps_its_trap_with_any_inside() {
+    for inside in crate::InteriorMode::ALL {
+        let s = ColoringSpec {
+            color_method: "trap".into(),
+            interior: inside.key().into(),
+            trap_type: "star".into(),
+            trap_x: 0.25,
+            trap_rotation: 30.0,
+            trap_size: 1.5,
+            ..Default::default()
+        };
+        let lines = view_lines(&s);
+        for want in ["trap=star", "trap_x=0.25", "trap_rotation=30", "trap_size=1.5"] {
+            assert!(lines.lines().any(|l| l == want), "inside {inside:?}: {want} missing from {lines:?}");
+        }
+        // Read back onto a session with another trap: the view's.
+        let get = |k: &str| lines.lines().find_map(|l| l.strip_prefix(k).and_then(|r| r.strip_prefix('=')).map(str::to_string));
+        let mut got = ColoringSpec { trap_type: "cross".into(), trap_x: -1.0, ..Default::default() };
+        apply_view(&mut got, &get, true, &mut Vec::new());
+        assert_eq!((got.trap_type.as_str(), got.trap_x, got.trap_rotation, got.trap_size), ("star", 0.25, 30.0, 1.5), "inside {inside:?}");
+    }
+    // Another method with the inside not the trap draws no trap: none written.
+    let smooth = ColoringSpec { color_method: "smooth".into(), trap_type: "star".into(), ..Default::default() };
+    assert!(!view_lines(&smooth).contains("trap="), "{}", view_lines(&smooth));
+}

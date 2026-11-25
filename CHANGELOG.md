@@ -223,6 +223,11 @@ detail is in the git history.
   its toolbar button and its Tools menu item are grayed out, and resting the pointer on them showed
   nothing. They now say why, and how to get it back: show one picture under Fractal ▸ Show, or turn
   off the "Both, linked" button on the toolbar.
+- **A view colored by the orbit trap keeps its trap with any inside.** With the Orbit trap method
+  and the inside set to something other than the trap (a solid color, say), a saved view, a
+  bookmark and a Share text left out the trap's shape and where it sat, and opened on whatever trap
+  was set before. They keep it now. A view saved that way before still lacks it; set the trap and
+  save it again.
 - **The distance to the set is right near deep minibrots.** Past about 10^77× near a minibrot,
   where an orbit passes closer to zero once a period than ordinary floating point can hold, the
   distance to the set came out far too large (a true 0.00005 pixels read as 4). Everything that reads
