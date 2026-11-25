@@ -16293,6 +16293,11 @@ impl FractadyneApp {
         if turning && self.effects.light && self.effects.light_anim {
             s.light_angle = 0.0;
         }
+        // The sine wave's phase, which its animation turns (the method's trap's and the inside's).
+        if turning && self.coloring.trap_phase_anim {
+            s.trap_phase = 0.0;
+            s.interior_trap_phase = 0.0;
+        }
         let mut sink = Sink(Default::default());
         let _ = serde_json::to_writer(&mut sink, &s);
         sink.0.finish()

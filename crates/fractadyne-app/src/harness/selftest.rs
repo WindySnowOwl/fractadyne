@@ -11745,8 +11745,9 @@ zoom = \"1e94\"
                 interior_trap_y: 0.35,
                 interior_trap_rotation: -20.0,
                 interior_trap_size: 1.5,
-                trap_phase: 0.0,
-                interior_trap_phase: 0.0,
+                // The sine wave's phase, kept whatever the shape, as the other placements.
+                trap_phase: 30.0,
+                interior_trap_phase: -45.0,
                 custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
                 custom_palette_flat: true,
                 custom_segments: vec![fractadyne_state::PaletteSegment {
@@ -12227,6 +12228,14 @@ zoom = \"1e94\"
             let lit = self.minimap_key_now();
             self.effects.light_angle = (self.effects.light_angle + 0.5).rem_euclid(std::f32::consts::TAU);
             let light_held = self.minimap_key_now() == lit;
+            // The sine wave's phase turned by its animation.
+            let was_phase = (self.coloring.trap_type, self.coloring.trap_place, self.coloring.trap_phase_anim);
+            self.coloring.trap_type = T::Sine;
+            self.coloring.trap_phase_anim = true;
+            let turning = self.minimap_key_now();
+            self.coloring.trap_place.phase = fractadyne_core::coloring::wrap_degrees(self.coloring.trap_place.phase + 40.0);
+            let phase_held = self.minimap_key_now() == turning;
+            (self.coloring.trap_type, self.coloring.trap_place, self.coloring.trap_phase_anim) = was_phase;
             let all_moved = rows.iter().all(|(_, m)| *m);
             let yn = |b: bool| if b { "yes" } else { "NO" };
             push_check(&mut checks, &mut last_check_t, SelfCheck {
@@ -12234,14 +12243,15 @@ zoom = \"1e94\"
                 name: "the overview map redraws for every coloring setting, and holds while an animation turns one".into(),
                 params: "the map's key before and after each change".into(),
                 result: format!(
-                    "unchanged key stable: {}; {}; held while the palette animates the offset: {}, while the light turns: {}",
+                    "unchanged key stable: {}; {}; held while the palette animates the offset: {}, while the light turns: {}, while the sine's phase turns: {}",
                     yn(stable),
                     rows.iter().map(|(w, m)| format!("{w}: {}", yn(*m))).collect::<Vec<_>>().join("; "),
                     yn(offset_held),
-                    yn(light_held)
+                    yn(light_held),
+                    yn(phase_held)
                 ),
                 threshold: "stable, redrawn by each change, held by each animation",
-                pass: stable && all_moved && offset_held && light_held,
+                pass: stable && all_moved && offset_held && light_held && phase_held,
             });
             (
                 (self.coloring.color_method, self.coloring.interior, self.coloring.trap_type, self.coloring.trap_place),
