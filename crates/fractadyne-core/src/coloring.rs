@@ -587,7 +587,8 @@ fn s_bowl(x: f64, y: f64) -> f64 {
     if sy * qx > sx * qy {
         return (qx - sx * r).hypot(qy - sy * r);
     }
-    (qx.hypot(qy) - r).abs()
+    // The arc's distance from the unturned p, as the shader must take it (see `trap_s_bowl`).
+    (px.hypot(py) - r).abs()
 }
 
 impl TrapType {

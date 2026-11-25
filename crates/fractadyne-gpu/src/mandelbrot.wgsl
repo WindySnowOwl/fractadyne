@@ -1604,7 +1604,11 @@ fn trap_s_bowl(w: vec2<f32>) -> f32 {
     // plain numbers: a `let` of a constant vector read by component made wgpu's pipeline-constant
     // step call this function invalid at start-up (2026-11-24), which naga's own validation passed.
     if (q.y < -q.x) { return length(q - vec2<f32>(0.70710678 * r, -0.70710678 * r)); }
-    return abs(length(q) - r);
+    // ⛔The arc's distance from the UNTURNED p: in f32 the turn by 0.70710678 does not keep the
+    // length, and |q| - r left 3e-8 where the curve passes the origin, the floor of every orbit that
+    // returns to zero (a minibrot's inside read it as its trap, its BLA from core's f64 as 0:
+    // 70% of the 9.3e78 minibrot's pixels differed, 2026-11-24).
+    return abs(length(p) - r);
 }
 fn trap_dist(zf: vec2<f32>) -> f32 {
     return trap_dist_of(zf, iu.trap_type, iu.trap_on, iu.trap_c, iu.trap_turn, iu.trap_size, iu.trap_inv);
