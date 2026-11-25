@@ -7457,6 +7457,14 @@ impl FractadyneApp {
                 (M::OrbitTrap, T::Point, 1.0, P { center: [0.3, -0.2], ..at }, "orbit-trap-point-placed"),
                 (M::OrbitTrap, T::Cross, 1.0, P { center: [-0.2, 0.15], rotation: 35.0, ..at }, "orbit-trap-cross-placed"),
                 (M::OrbitTrap, T::Circle, 1.0, P { center: [0.1, 0.4], size: 0.3, ..at }, "orbit-trap-circle-placed"),
+                // The shapes of F4 part 3: the shader's `trap_extra_dist` against core's `unit_dist`,
+                // which the aggregates fold.
+                (M::OrbitTrap, T::Line, 1.0, at, "orbit-trap-line"),
+                (M::OrbitTrap, T::Square, 1.0, at, "orbit-trap-square"),
+                (M::OrbitTrap, T::Hexagon, 1.0, at, "orbit-trap-hexagon"),
+                (M::OrbitTrap, T::Star, 1.0, at, "orbit-trap-star"),
+                (M::OrbitTrap, T::Sine, 1.0, at, "orbit-trap-sine"),
+                (M::OrbitTrap, T::SCurve, 1.0, at, "orbit-trap-s-curve"),
                 (M::TriangleIneq, T::Point, 1.0, at, "triangle-ineq"),
                 (M::Stripe, T::Point, 5.0, at, "stripe"),
             ] {
@@ -7915,9 +7923,9 @@ impl FractadyneApp {
         // neither BLA nor the series, and that nudged 0.001 px: the accelerated render may change no
         // more pixels than the nudge does, and a placed trap must change >= 5% of the pixels of the
         // same shape unmoved (else the placement never reached the frame). Anti-vacuity for a trap's
-        // smooth field, not the angle group's chaotic one: > 50 colors and a nudge that moves >= 1%
-        // (measured 2026-11-24: 78 to 144 colors, the nudge 2.7% to 5.3%, BLA 1.3% to 2.7%; a flat
-        // picture, as at the aux-bla view, is 3 or 4 colors and 0%).
+        // smooth field, not the angle group's chaotic one: > 50 colors and a nudge that moves >= 0.25%
+        // (measured 2026-11-24: 78 to 176 colors, the nudge 0.7% (the square) to 6.5% (the hexagon),
+        // BLA 0.4% to 3.4%; a flat picture, as at the aux-bla view, is 3 or 4 colors and 0%).
         if want("trap-place") {
             use crate::{TrapPlace as P, TrapType as T};
             let saved = (
@@ -7958,11 +7966,20 @@ impl FractadyneApp {
                     / (p.len() / 4).max(1) as f64
             };
             let d = P::DEFAULT;
+            // The point's plain picture: each shape of F4 part 3 must make one of its own (the study's
+            // rank correlations with the old shapes, 0.22-0.67).
+            let mut point_plain: Option<Vec<f32>> = None;
             for (shape, place, label) in [
                 (T::Point, d, "point"),
                 (T::Point, P { center: [0.3, -0.2], ..d }, "point at 0.3,-0.2"),
                 (T::Cross, P { center: [-0.2, 0.15], rotation: 35.0, ..d }, "cross at -0.2,0.15 turned 35"),
                 (T::Circle, P { center: [0.1, 0.4], size: 0.3, ..d }, "circle at 0.1,0.4, radius 0.3"),
+                (T::Line, d, "line"),
+                (T::Square, d, "square"),
+                (T::Hexagon, d, "hexagon"),
+                (T::Star, d, "star"),
+                (T::Sine, d, "sine wave"),
+                (T::SCurve, d, "S curve"),
             ] {
                 self.coloring.trap_type = shape;
                 self.coloring.trap_place = place;
@@ -7986,6 +8003,8 @@ impl FractadyneApp {
                     (Some(a), Some(p), Some(n), u) if a.len() == p.len() && n.len() == p.len() && !p.is_empty() => {
                         let (by_accel, by_nudge) = (changed(&a, &p), changed(&n, &p));
                         let by_move = u.as_deref().map(|u| changed(&p, u));
+                        let new_shape = !matches!(shape, T::Point | T::Cross | T::Circle);
+                        let vs_point = if new_shape { point_plain.as_deref().map(|q| changed(&p, q)) } else { None };
                         let mut colors: Vec<[u8; 3]> =
                             p.chunks_exact(4).map(|v| [0, 1, 2].map(|c| (v[c].clamp(0.0, 1.0) * 255.0) as u8)).collect();
                         colors.sort_unstable();
@@ -7998,20 +8017,25 @@ impl FractadyneApp {
                                 "{:.1}% of pixels changed by BLA, {:.1}% by the nudge{}; the plain render has {} colors",
                                 by_accel * 100.0,
                                 by_nudge * 100.0,
-                                by_move.map_or(String::new(), |m| format!(", {:.1}% by the move", m * 100.0)),
+                                by_move.map_or(String::new(), |m| format!(", {:.1}% by the move", m * 100.0))
+                                    + &vs_point.map_or(String::new(), |v| format!(", {:.1}% from the point's picture", v * 100.0)),
                                 colors.len()
                             ),
                             threshold: if placed {
-                                "BLA engaged; BLA's share <= the nudge's; the nudge moves >= 1% of > 50 colors; the move changes >= 5%".into()
+                                "BLA engaged; BLA's share <= the nudge's; the nudge moves >= 0.25% of > 50 colors; the move changes >= 5%".into()
                             } else {
-                                "BLA engaged; BLA's share <= the nudge's; the nudge moves >= 1% of > 50 colors".into()
+                                "BLA engaged; BLA's share <= the nudge's; the nudge moves >= 0.25% of > 50 colors; a new shape differs from the point on 20%+".into()
                             },
                             pass: bla
                                 && by_accel <= by_nudge
-                                && by_nudge >= 0.01
+                                && by_nudge >= 0.0025
                                 && colors.len() > 50
-                                && (!placed || by_move.is_some_and(|m| m >= 0.05)),
+                                && (!placed || by_move.is_some_and(|m| m >= 0.05))
+                                && (!new_shape || vs_point.is_some_and(|v| v >= 0.2)),
                         });
+                        if label == "point" {
+                            point_plain = Some(p.clone());
+                        }
                     }
                     _ => push_check(&mut checks, &mut last_check_t, SelfCheck {
                         category: "Trap",
@@ -8161,7 +8185,8 @@ impl FractadyneApp {
                 self.coloring.interior = None; // the trap method's own inside: its trap
                 self.render_cfg.auto_iter = false;
                 let cross = (T::Cross, P { center: [-0.2, 0.15], rotation: 35.0, ..P::DEFAULT });
-                let circle = (T::Circle, P { center: [0.1, 0.4], size: 0.3, ..P::DEFAULT });
+                // A shape of F4 part 3 for the inside, so the raw lanes' pipeline must carry it (`TRAP_EXTRA`).
+                let star = (T::Star, P { center: [0.1, 0.4], rotation: 15.0, size: 0.3 });
                 const MRE: &str = "-9.5615882490732676063982994499490578147935343195074805633443741253353130261608583401177598055702619474609439701446982e-2";
                 const MIM: &str = "9.2407201125877521262558092669605306283394020346180079142271967031202190501107148187554958943606565429410592657638281e-1";
                 let at = |s: &str| fractadyne_core::parse_bf_prec(s, 512).expect("a coordinate");
@@ -8185,14 +8210,26 @@ impl FractadyneApp {
                             .ok()
                             .map(|r| (r.pixels, r.aux, req.bla_on == 1 && req.mode == 2, on))
                     };
-                    let both = lanes(self, cross, Some(circle));
+                    let both = lanes(self, cross, Some(star));
                     let outer = lanes(self, cross, None);
-                    let inner = lanes(self, circle, None);
+                    let inner = lanes(self, star, None);
+                    // What a pipeline without the shapes would measure the placed star as: the point at
+                    // its center (the turn and size change only the rounding).
+                    let point = lanes(self, (T::Point, P { center: star.1.center, ..P::DEFAULT }), None);
                     let name = format!("{label}: the inside's own trap colors the inside, the method's the outside");
                     match (both, outer, inner) {
                         (Some((tm, ta, bla, on)), Some((_, oa, ..)), Some((_, ia, ..)))
-                            if !tm.is_empty() && ta.len() == tm.len() && oa.len() == ta.len() && ia.len() == ta.len() =>
+                            if !tm.is_empty()
+                                && ta.len() == tm.len()
+                                && oa.len() == ta.len()
+                                && ia.len() == ta.len()
+                                && point.as_ref().is_some_and(|q| q.1.len() == ta.len()) =>
                         {
+                            let pa = &point.as_ref().expect("the point's lanes").1;
+                            // The star is not that point: its lanes differ by more than 1e-3 on most pixels.
+                            let not_point = (0..tm.len() / 4)
+                                .filter(|&k| (ia[4 * k + 2] - pa[4 * k + 2]).abs() > 1.0e-3 * pa[4 * k + 2].abs().max(1.0e-30))
+                                .count();
                             let n = tm.len() / 4;
                             let (mut inside, mut esc_bad, mut in_bad, mut moved) = (0usize, 0usize, 0usize, 0usize);
                             for k in 0..n {
@@ -8208,17 +8245,18 @@ impl FractadyneApp {
                             push_check(&mut checks, &mut last_check_t, SelfCheck {
                                 category: "Trap",
                                 name,
-                                params: format!("{w}x{h}, {iters} iter, method's trap a turned cross, the inside's a circle; BLA {}", if bla { "engaged" } else { "off" }),
+                                params: format!("{w}x{h}, {iters} iter, method's trap a turned cross, the inside's a star; BLA {}", if bla { "engaged" } else { "off" }),
                                 result: format!(
-                                    "{inside} of {n} pixels inside; {esc_bad} escaped and {in_bad} interior lanes off; the inside's own differs from the method trap's on {moved}"
+                                    "{inside} of {n} pixels inside; {esc_bad} escaped and {in_bad} interior lanes off; the inside's own differs from the method trap's on {moved}; the star from the point at its center on {not_point}"
                                 ),
-                                threshold: "the inside trap on; 0 lanes off; 500+ pixels inside and 500+ escaped; it differs on half the inside or more; BLA engaged at depth".into(),
+                                threshold: "the inside trap on; 0 lanes off; 500+ pixels inside and 500+ escaped; it differs on half the inside or more; the star is not the point on half the frame; BLA engaged at depth".into(),
                                 pass: on
                                     && esc_bad == 0
                                     && in_bad == 0
                                     && inside >= 500
                                     && n - inside >= 500
                                     && moved * 2 >= inside
+                                    && not_point * 2 >= tm.len() / 4
                                     && (!deep || bla),
                             });
                         }

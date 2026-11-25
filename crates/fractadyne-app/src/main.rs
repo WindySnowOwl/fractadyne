@@ -3330,6 +3330,12 @@ impl ColoringLabel for TrapType {
             TrapType::Point => tr!(trap_point),
             TrapType::Cross => tr!(trap_cross),
             TrapType::Circle => tr!(trap_circle),
+            TrapType::Line => tr!(trap_line),
+            TrapType::Square => tr!(trap_square),
+            TrapType::Hexagon => tr!(trap_hexagon),
+            TrapType::Star => tr!(trap_star),
+            TrapType::Sine => tr!(trap_sine),
+            TrapType::SCurve => tr!(trap_s_curve),
         }
     }
 }
@@ -7667,6 +7673,8 @@ impl FractadyneApp {
         let fusion = fractadyne_gpu::detect_product_fusion(&render_state.device, &render_state.queue);
         diag::breadcrumb("start-up: building the renderer's pipelines".into());
         install_renderer(render_state);
+        // The trap shapes' own pipelines, compiled on a worker while the window starts (seconds cold).
+        fractadyne_gpu::warm_trap_shapes(render_state);
         // The memory timeline: this device counted for the whole run, a reading a minute.
         diag::mem_timeline::register_device("main", &render_state.device);
         diag::mem_timeline::start();

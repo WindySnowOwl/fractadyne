@@ -505,9 +505,26 @@ pub struct TrapSpec {
     /// A turn changes it ([`TrapPlace::rotation`]): not the point or the circle, which look the
     /// same turned.
     pub turns: bool,
-    /// Its size changes it ([`TrapPlace::size`]): not the point or the cross, which have none.
+    /// Its size changes it ([`TrapPlace::size`]): not the point, the cross or the line, which look
+    /// the same at any size.
     pub sized: bool,
+    /// A closed outline around its center (the circle, the polygons, the star): placed on a cycle
+    /// point it keeps its center and is scaled to pass through it ([`TrapPlace::on_cycle`]); every
+    /// other shape passes through its own center and is moved there.
+    pub closed: bool,
+    /// Its shader code is compiled in only for a pipeline that draws it (the shader's `TRAP_EXTRA`):
+    /// the shapes of F4 part 3, whose code present in every trap frame cost the others 2-3%.
+    pub gated: bool,
 }
+
+/// The radius of the polygon and star shapes' outer corners at size 1, and the star's inner ones
+/// (the trap-shape study's 5-point star: 0.9 and 0.38).
+pub const STAR_INNER: f64 = 0.38 / 0.9;
+/// The sine wave's amplitude and angular frequency at size 1 (the study's: 0.3 and 4).
+pub const SINE_AMP: f64 = 0.3;
+pub const SINE_FREQ: f64 = 4.0;
+/// The S curve's two bowls' radius at size 1: the curve spans −1..1 vertically.
+pub const S_RADIUS: f64 = 0.5;
 
 /// An orbit-trap shape (the orbit-trap method's). Like [`ColorMethod`], the order gives the GPU
 /// numbers for one build.
@@ -520,17 +537,73 @@ pub enum TrapType {
     Cross,
     /// Distance to the unit circle, ||z| - 1|.
     Circle,
+    /// Distance to the real axis, |y| (coloring plan F4, part 3: the shapes from the trap-shape
+    /// study, each its own picture in the seahorse valley).
+    Line,
+    /// A square inscribed in the unit circle, its sides parallel to the axes.
+    Square,
+    /// A regular hexagon inscribed in the unit circle, a corner on the real axis.
+    Hexagon,
+    /// A 5-point star, outer corners on the unit circle ([`STAR_INNER`] inside), a point up.
+    Star,
+    /// The sine wave y = [`SINE_AMP`]·sin([`SINE_FREQ`]·x) (its first-order distance).
+    Sine,
+    /// An S of two half-open bowls of radius [`S_RADIUS`], from y = −1 to 1 through the origin.
+    SCurve,
 }
 
-const TRAPS: [TrapSpec; 3] = [
-    TrapSpec { key: "point", wgsl: "TRAP_POINT", turns: false, sized: false },
-    TrapSpec { key: "cross", wgsl: "TRAP_CROSS", turns: true, sized: false },
-    TrapSpec { key: "circle", wgsl: "TRAP_CIRCLE", turns: false, sized: true },
+const TRAPS: [TrapSpec; 9] = [
+    TrapSpec { key: "point", wgsl: "TRAP_POINT", turns: false, sized: false, closed: false, gated: false },
+    TrapSpec { key: "cross", wgsl: "TRAP_CROSS", turns: true, sized: false, closed: false, gated: false },
+    TrapSpec { key: "circle", wgsl: "TRAP_CIRCLE", turns: false, sized: true, closed: true, gated: false },
+    TrapSpec { key: "line", wgsl: "TRAP_LINE", turns: true, sized: false, closed: false, gated: true },
+    TrapSpec { key: "square", wgsl: "TRAP_SQUARE", turns: true, sized: true, closed: true, gated: true },
+    TrapSpec { key: "hexagon", wgsl: "TRAP_HEXAGON", turns: true, sized: true, closed: true, gated: true },
+    TrapSpec { key: "star", wgsl: "TRAP_STAR", turns: true, sized: true, closed: true, gated: true },
+    TrapSpec { key: "sine", wgsl: "TRAP_SINE", turns: true, sized: true, closed: false, gated: true },
+    TrapSpec { key: "s-curve", wgsl: "TRAP_S_CURVE", turns: true, sized: true, closed: false, gated: true },
 ];
+
+/// The polygon and star shapes in their own frame: `(n, outer radius, inner radius, the first outer
+/// corner's angle)`. A regular polygon's inner radius is its edge midpoint's, `cos(π/n)`.
+fn star_params(t: TrapType) -> Option<(f64, f64, f64, f64)> {
+    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+    match t {
+        TrapType::Square => Some((4.0, 1.0, (PI / 4.0).cos(), FRAC_PI_4)),
+        TrapType::Hexagon => Some((6.0, 1.0, (PI / 6.0).cos(), 0.0)),
+        TrapType::Star => Some((5.0, 1.0, STAR_INNER, FRAC_PI_2)),
+        _ => None,
+    }
+}
+
+/// The S curve's top bowl (the shader's `trap_s_bowl`): the arc of radius [`S_RADIUS`] about
+/// `(0, S_RADIUS)` from angle 0 counterclockwise to 270 degrees, in its own frame.
+fn s_bowl(x: f64, y: f64) -> f64 {
+    use std::f64::consts::FRAC_1_SQRT_2;
+    let r = S_RADIUS;
+    let (px, py) = (x, y - r);
+    let (qx, qy) = ((FRAC_1_SQRT_2 * (px + py)).abs(), FRAC_1_SQRT_2 * (py - px));
+    let (sx, sy) = (FRAC_1_SQRT_2, -FRAC_1_SQRT_2);
+    if sy * qx > sx * qy {
+        return (qx - sx * r).hypot(qy - sy * r);
+    }
+    // The arc's distance from the unturned p, as the shader must take it (see `trap_s_bowl`).
+    (px.hypot(py) - r).abs()
+}
 
 impl TrapType {
     /// Every shape, in the table's order.
-    pub const ALL: [TrapType; 3] = [TrapType::Point, TrapType::Cross, TrapType::Circle];
+    pub const ALL: [TrapType; 9] = [
+        TrapType::Point,
+        TrapType::Cross,
+        TrapType::Circle,
+        TrapType::Line,
+        TrapType::Square,
+        TrapType::Hexagon,
+        TrapType::Star,
+        TrapType::Sine,
+        TrapType::SCurve,
+    ];
     /// This shape's row of the table.
     pub const fn spec(self) -> &'static TrapSpec {
         &TRAPS[self as usize]
@@ -557,11 +630,65 @@ impl TrapType {
     }
     /// How far `z` is from the unit shape at the origin: the shader's distance in `aux_step`.
     pub fn unit_dist(self, zx: f64, zy: f64) -> f64 {
+        use std::f64::consts::{FRAC_1_SQRT_2, PI};
         match self {
             TrapType::Cross => zx.abs().min(zy.abs()),
             TrapType::Circle => ((zx * zx + zy * zy).sqrt() - 1.0).abs(),
             TrapType::Point => (zx * zx + zy * zy).sqrt(),
+            TrapType::Line => zy.abs(),
+            // The shader's forms, with no angle taken (see `trap_extra_dist` in mandelbrot.wgsl).
+            TrapType::Square => {
+                let (qx, qy) = (zx.abs() - FRAC_1_SQRT_2, zy.abs() - FRAC_1_SQRT_2);
+                (qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0)).abs()
+            }
+            TrapType::Hexagon => {
+                let (kx, ky) = (-(3.0f64.sqrt()) / 2.0, 0.5);
+                let (mut px, mut py) = (zx.abs(), zy.abs());
+                let t = 2.0 * (kx * px + ky * py).min(0.0);
+                (px, py) = (px - t * kx, py - t * ky);
+                (px - px.clamp(-0.5, 0.5)).hypot(py - 3.0f64.sqrt() / 2.0)
+            }
+            TrapType::Star => {
+                let (c, s) = ((PI / 5.0).cos(), (PI / 5.0).sin());
+                let (k1, k2) = ((c, -s), (-c, -s));
+                let (mut px, mut py) = (zx.abs(), zy);
+                let t = 2.0 * (k1.0 * px + k1.1 * py).max(0.0);
+                (px, py) = (px - t * k1.0, py - t * k1.1);
+                let t = 2.0 * (k2.0 * px + k2.1 * py).max(0.0);
+                (px, py) = (px - t * k2.0, py - t * k2.1);
+                (px, py) = (px.abs(), py - 1.0);
+                let (bx, by) = (STAR_INNER * s, STAR_INNER * c - 1.0);
+                let h = ((px * bx + py * by) / (bx * bx + by * by)).clamp(0.0, 1.0);
+                (px - bx * h).hypot(py - by * h)
+            }
+            TrapType::Sine => {
+                let (s, c) = (SINE_FREQ * zx).sin_cos();
+                (zy - SINE_AMP * s).abs() / (1.0 + (SINE_AMP * SINE_FREQ * c).powi(2)).sqrt()
+            }
+            TrapType::SCurve => s_bowl(zx, zy).min(s_bowl(-zx, -zy)),
         }
+    }
+
+    /// A closed shape's outline radius in direction `angle` at size 1 ([`TrapSpec::closed`]): how
+    /// far from its center the ray at that angle meets it. `None` for an open shape.
+    pub fn unit_radius(self, angle: f64) -> Option<f64> {
+        if self == TrapType::Circle {
+            return Some(1.0);
+        }
+        let (n, ro, ri, a0) = star_params(self)?;
+        let sector = std::f64::consts::TAU / n;
+        let mut a = (angle - a0).rem_euclid(sector);
+        if a > 0.5 * sector {
+            a = sector - a;
+        }
+        // The ray (cos a, sin a) against the edge from (ro, 0) to ri·(cos, sin)(sector/2).
+        let (sn, cs) = (0.5 * sector).sin_cos();
+        let (bx, by) = (ri * cs, ri * sn);
+        let (uy, ux) = a.sin_cos();
+        let (vx, vy) = (bx - ro, by);
+        // cross(u, A + t·V) = 0 for A = (ro, 0): t = uy·ro / (ux·vy − uy·vx).
+        let t = uy * ro / (ux * vy - uy * vx);
+        Some(ux * (ro + t * vx) + uy * (t * vy))
     }
 }
 
@@ -638,10 +765,12 @@ impl TrapPlace {
     }
 
     /// This trap moved onto a point of `cycle` (coloring plan F4, part 2; `crate::cycle`), its
-    /// outline through it: a point or a cross is centered there (the cross keeps its turn); a circle
-    /// keeps its center and takes the radius that reaches it. A trap already through one of the
-    /// points moves on to the next in orbit order, so placing it again walks the whole cycle; one
-    /// through none takes the nearest (to its center, or to its circle). Returns the placement and
+    /// outline through it: a shape that passes through its own center (a point, a cross, a line, the
+    /// sine wave, the S curve) is centered there, keeping its turn and size; a closed one (a
+    /// circle, a polygon, the star) keeps its center and turn and is scaled to pass through it. A trap
+    /// already through one of the points moves on to the next in orbit order, so placing it again
+    /// walks the whole cycle; one through none takes the nearest (to its center, or a closed one's to
+    /// its outline). Returns the placement and
     /// the index taken. `cycle` must not be empty; the size is clamped as [`for_shape`](Self::for_shape)
     /// clamps it.
     pub fn on_cycle(self, shape: TrapType, cycle: &[[f64; 2]]) -> (TrapPlace, usize) {
@@ -650,15 +779,19 @@ impl TrapPlace {
         let center = [f64::from(place.center[0]), f64::from(place.center[1])];
         let from = |z: [f64; 2]| (z[0] - center[0]).hypot(z[1] - center[1]);
         // How far a cycle point is from the trap's outline, and the tolerance of f32 there.
-        let off = |z: [f64; 2]| if shape.spec().sized { (from(z) - f64::from(place.size)).abs() } else { from(z) };
+        let closed = shape.spec().closed;
+        let off = |z: [f64; 2]| if closed { place.dist(shape, z[0], z[1]) } else { from(z) };
         let tol = |z: [f64; 2]| 1.0e-6 * z[0].hypot(z[1]).max(1.0);
         let k = match (0..cycle.len()).find(|&k| off(cycle[k]) <= tol(cycle[k])) {
             Some(on) => (on + 1) % cycle.len(),
             None => (0..cycle.len()).min_by(|&i, &j| off(cycle[i]).total_cmp(&off(cycle[j]))).unwrap_or(0),
         };
         let z = cycle[k];
-        let placed = if shape.spec().sized {
-            TrapPlace { size: from(z) as f32, ..place }
+        let placed = if closed {
+            // The outline's radius toward the point, in the shape's own frame.
+            let angle = (z[1] - center[1]).atan2(z[0] - center[0]) - f64::from(place.rotation).to_radians();
+            let unit = shape.unit_radius(angle).unwrap_or(1.0).max(1.0e-9);
+            TrapPlace { size: (from(z) / unit) as f32, ..place }
         } else {
             TrapPlace { center: [z[0] as f32, z[1] as f32], ..place }
         };
@@ -800,6 +933,12 @@ pub fn wgsl_ids() -> String {
     for t in TrapType::ALL {
         let _ = writeln!(s, "const {}: u32 = {}u;", t.spec().wgsl, t.gpu_id());
     }
+    // The shapes' dimensions at size 1 (F4 part 3), so the shader's `trap_dist_of` and the BLA
+    // aggregates (`TrapType::unit_dist`) measure the same outline.
+    let _ = writeln!(s, "const TRAP_STAR_INNER: f32 = {:?};", STAR_INNER as f32);
+    let _ = writeln!(s, "const TRAP_SINE_AMP: f32 = {:?};", SINE_AMP as f32);
+    let _ = writeln!(s, "const TRAP_SINE_FREQ: f32 = {:?};", SINE_FREQ as f32);
+    let _ = writeln!(s, "const TRAP_S_RADIUS: f32 = {:?};", S_RADIUS as f32);
     for st in Stat::ALL {
         let _ = writeln!(s, "const {}: u32 = {}u;", st.spec().wgsl, st.bit());
     }

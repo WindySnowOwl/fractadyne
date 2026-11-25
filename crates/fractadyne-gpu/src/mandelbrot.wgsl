@@ -960,7 +960,7 @@ struct IterU {
     // on screen, which only the color pass reads (`ColorU.color_method`). See lib.rs `iter_stats`.
     orbit_stats: u32,
     stripe_freq: f32,      // stripe-average angular frequency
-    trap_type: u32,        // orbit-trap shape: TRAP_POINT, TRAP_CROSS or TRAP_CIRCLE
+    trap_type: u32,        // orbit-trap shape: a TRAP_* (`trap_dist_of`)
     // Bitfield: bit 0 = accumulate orbit statistics into the aux target; bit 1 = stripe average
     // over the TAIL only (an exponential window, see `stripe_tail_on`); bits 2.. = that window's
     // length in iterations. Mirrors `aux_on_word` in lib.rs.
@@ -1525,10 +1525,16 @@ fn aux_init(z0: vec2<f32>) -> Aux {
 // per-iteration `pow`). The statistics touch disjoint fields (TIA alone reads and writes
 // `prev_abs`), so each keeps its own exact accumulation order with or without the others: a lane's
 // value does not depend on what else is accumulated.
-// How far z is from the orbit trap: its shape (point / axes-cross / unit circle) placed, turned and
-// sized (coloring plan F4; `trap_c` .. `trap_on`), measured in the shape's coordinates and scaled
-// back, so it stays a distance in the orbit's plane. Mirrors core `TrapPlace::dist`, whose f64 the
-// BLA aggregates fold. `trap_on` 0: the unit shape exactly as before F4, with no transform.
+// How far z is from the orbit trap: its shape (core `TrapType`) placed, turned and sized (coloring
+// plan F4; `trap_c` .. `trap_on`), measured in the shape's coordinates and scaled back, so it stays a
+// distance in the orbit's plane. Mirrors core `TrapPlace::dist`, whose f64 the BLA aggregates fold.
+// `trap_on` 0: the unit shape exactly as before F4, with no transform.
+// The trap shapes of F4 part 3 (line, square, hexagon, star, sine, S curve) are compiled in only for a
+// frame that draws one (lib.rs `iter_constants`): present but unused, their code cost the point, cross
+// and circle frames 2-3% (2026-11-24, as the u-space BLA's did, `RN_BLA`). With TRAP_EXTRA off the
+// chain below folds to the one before them, so those frames run the code they ran. Off, such a shape
+// would measure as the point: every pipeline that can draw one must be built with it on.
+override TRAP_EXTRA: bool = false;
 fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, size: f32, inv: f32) -> f32 {
     var w = zf;
     if (on != 0u) {
@@ -1538,9 +1544,71 @@ fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, siz
     var s: f32;
     if (ty == TRAP_CROSS) { s = min(abs(w.x), abs(w.y)); }
     else if (ty == TRAP_CIRCLE) { s = abs(length(w) - 1.0); }
+    else if (TRAP_EXTRA) { s = trap_extra_dist(w, ty); }
     else { s = length(w); }
     if (on != 0u) { s = s * size; }
     return s;
+}
+// The distance from w to shape `ty` at size 1, centered at the origin and unturned, for the shapes of
+// F4 part 3 (and the point, the one other shape that reaches here): core's `TrapType::unit_dist` in f32
+// (the BLA aggregates fold that one, so the two must agree). The shapes' dimensions are core's,
+// generated (`TRAP_STAR_INNER`, `TRAP_SINE_*`, `TRAP_S_RADIUS`). Exact distances with no angle taken
+// (reflections and dot products), so a frame that draws one carries few extra registers: the
+// angle-based forms cost 3% (measured 2026-11-24). Core's `TrapType::unit_dist` has the same forms.
+fn trap_extra_dist(w: vec2<f32>, ty: u32) -> f32 {
+    if (ty == TRAP_LINE) { return abs(w.y); }
+    if (ty == TRAP_SQUARE) {
+        // Inscribed in the unit circle, sides along the axes: half-side 1/sqrt 2.
+        let q = abs(w) - vec2<f32>(0.70710678, 0.70710678);
+        return abs(length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0));
+    }
+    if (ty == TRAP_HEXAGON) {
+        // Corners on the unit circle, one on the real axis: apothem cos 30 degrees.
+        let k = vec2<f32>(-0.86602540, 0.5);
+        var p = abs(w);
+        p = p - 2.0 * min(dot(k, p), 0.0) * k;
+        p = p - vec2<f32>(clamp(p.x, -0.5, 0.5), 0.86602540);
+        return length(p);
+    }
+    if (ty == TRAP_STAR) {
+        // Points on the unit circle, one up; inner corners TRAP_STAR_INNER out.
+        let k1 = vec2<f32>(0.80901699, -0.58778525);
+        let k2 = vec2<f32>(-0.80901699, -0.58778525);
+        var p = vec2<f32>(abs(w.x), w.y);
+        p = p - 2.0 * max(dot(k1, p), 0.0) * k1;
+        p = p - 2.0 * max(dot(k2, p), 0.0) * k2;
+        p = vec2<f32>(abs(p.x), p.y - 1.0);
+        let ba = TRAP_STAR_INNER * vec2<f32>(0.58778525, 0.80901699) - vec2<f32>(0.0, 1.0);
+        let h = clamp(dot(p, ba) / dot(ba, ba), 0.0, 1.0);
+        return length(p - ba * h);
+    }
+    if (ty == TRAP_SINE) {
+        let k = TRAP_SINE_FREQ * w.x;
+        let slope = TRAP_SINE_AMP * TRAP_SINE_FREQ * cos(k);
+        return abs(w.y - TRAP_SINE_AMP * sin(k)) / sqrt(1.0 + slope * slope);
+    }
+    if (ty == TRAP_S_CURVE) {
+        // The bottom bowl is the top one turned half a turn about the origin.
+        return min(trap_s_bowl(w), trap_s_bowl(-w));
+    }
+    return length(w);
+}
+// The S curve's top bowl: the arc of radius TRAP_S_RADIUS about (0, TRAP_S_RADIUS) from angle 0
+// counterclockwise to 270 degrees, measured in its own frame (its bisector, 135 degrees, turned up;
+// the folded half's end at 135 degrees from up).
+fn trap_s_bowl(w: vec2<f32>) -> f32 {
+    let r = TRAP_S_RADIUS;
+    let p = w - vec2<f32>(0.0, r);
+    let q = vec2<f32>(abs(0.70710678 * (p.x + p.y)), 0.70710678 * (p.y - p.x));
+    // Past the bowl's end, (sin, cos) of 135 degrees times r, the end is nearest. ⛔Written with
+    // plain numbers: a `let` of a constant vector read by component made wgpu's pipeline-constant
+    // step call this function invalid at start-up (2026-11-24), which naga's own validation passed.
+    if (q.y < -q.x) { return length(q - vec2<f32>(0.70710678 * r, -0.70710678 * r)); }
+    // ⛔The arc's distance from the UNTURNED p: in f32 the turn by 0.70710678 does not keep the
+    // length, and |q| - r left 3e-8 where the curve passes the origin, the floor of every orbit that
+    // returns to zero (a minibrot's inside read it as its trap, its BLA from core's f64 as 0:
+    // 70% of the 9.3e78 minibrot's pixels differed, 2026-11-24).
+    return abs(length(p) - r);
 }
 fn trap_dist(zf: vec2<f32>) -> f32 {
     return trap_dist_of(zf, iu.trap_type, iu.trap_on, iu.trap_c, iu.trap_turn, iu.trap_size, iu.trap_inv);

@@ -56,7 +56,7 @@ fn a_value_it_cannot_take_is_refused() {
         ("light = \"yes\"", "bool"),
         ("light = 2", "bool"),
         ("method = \"plasma\"", "smooth \\| stripe"),
-        ("trap = \"square\"", "point \\| cross \\| circle"),
+        ("trap = \"triangle\"", "point \\| cross \\| circle \\| line \\| square \\| hexagon \\| star \\| sine \\| s-curve"),
         ("palette_mode = \"off\"", "duotone \\| binary"),
         ("palette_lo = [0.1, 0.2]", "[r, g, b]"),
         ("palette_lo = [0.1, 0.2, 7.0]", "[r, g, b]"),

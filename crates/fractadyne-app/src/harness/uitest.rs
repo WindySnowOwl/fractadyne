@@ -440,6 +440,11 @@ enum Screen {
     /// inside a point of its own placed on the cycle; the panel's Inside trap rows. Leaves the traps
     /// placed; no later screen uses the trap (one that does sets its own).
     InsideOwnTrap,
+    /// The overview under the point trap...
+    TrapShapePoint,
+    /// ...then the star (F4 part 3): another picture, the live view's iterate pipeline built with the
+    /// shapes compiled in (`TRAP_EXTRA`; without them the star would measure as the point).
+    TrapShapeStar,
     /// Edge shading (coloring plan C3): the Julia-link point in Smooth, point sampled, the shading
     /// off (the base)...
     EdgeShadeOff,
@@ -1443,6 +1448,8 @@ fn build_steps() -> Vec<Step> {
         screen("trap-place-circle", Screen::TrapPlaceCircle),
         screen("trap-on-cycle", Screen::TrapOnCycle),
         screen("inside-own-trap", Screen::InsideOwnTrap),
+        screen("trap-shape-point", Screen::TrapShapePoint),
+        screen("trap-shape-star", Screen::TrapShapeStar),
         screen("edge-shade-off", Screen::EdgeShadeOff),
         screen("edge-shade", Screen::EdgeShade),
         screen("edge-shade-inside", Screen::EdgeShadeInside),
@@ -1921,6 +1928,24 @@ impl FractadyneApp {
                 "against {before} (mean difference in levels, passes caused): {r:?}; the drawn map has a table: {table}; the trap's distribution held: {held}; share {}",
                 self.coloring.equalize
             ),
+        });
+    }
+
+    /// The trap-shape-star step against trap-shape-point, the same view: another picture (mean
+    /// difference 3 levels or more; the star drew 7.7, the point as itself near 0). A live iterate pipeline built without the shapes of F4 part 3
+    /// would measure the star as the point and draw the same picture.
+    fn uitest_trap_shape_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, checks: &mut Vec<Check>) {
+        let before = "trap-shape-point";
+        let b = ut.results.iter().rev().find(|r| r.name == before);
+        let d = view.zip(b).and_then(|((px, _), b)| {
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            let s: f64 = px.chunks_exact(4).zip(prev.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            Some(s / (3 * (px.len() / 4)).max(1) as f64)
+        });
+        checks.push(Check {
+            name: "trap-shape-star-drawn-live".into(),
+            verdict: if d.is_some_and(|d| d >= 3.0) { Verdict::Pass } else { Verdict::Fail },
+            detail: format!("against {before}, the mean difference in levels: {d:?}"),
         });
     }
 
@@ -3406,6 +3431,21 @@ impl FractadyneApp {
                 self.queue_toast(msg);
                 self.dialogs.right_panel_open = true;
             }
+            // F4 part 3: the overview under the point trap, then the star.
+            Screen::TrapShapePoint | Screen::TrapShapeStar => {
+                if matches!(s, Screen::TrapShapePoint) {
+                    let at = |v: f64| fractadyne_core::BigFloat::from_f64(v, 64);
+                    self.viewport.set_center_mag(at(-0.6), at(0.0), 1.0);
+                    self.render_cfg.auto_iter = false;
+                    self.render_cfg.max_iter = 1_000;
+                }
+                self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+                self.coloring.interior = None;
+                self.coloring.interior_trap = None;
+                self.coloring.trap_place = crate::TrapPlace::DEFAULT;
+                self.coloring.trap_type = if matches!(s, Screen::TrapShapeStar) { crate::TrapType::Star } else { crate::TrapType::Point };
+                self.dialogs.right_panel_open = true;
+            }
             // C3: the Julia-link point again (filaments enough to shade), Smooth, point sampled; the
             // shading off, on toward white, then toward the inside's near-black, one change a step.
             Screen::EdgeShadeOff | Screen::EdgeShade | Screen::EdgeShadeInside | Screen::EdgeShadePanel => {
@@ -4159,6 +4199,8 @@ impl FractadyneApp {
                     | Screen::Equalize
                     | Screen::TrapFit
                     | Screen::EqualizeTrap
+                    | Screen::TrapShapePoint
+                    | Screen::TrapShapeStar
                     | Screen::EdgeShadeOff
                     | Screen::EdgeShade
                     | Screen::EdgeShadeInside
@@ -5102,6 +5144,9 @@ impl FractadyneApp {
         }
         if let StepKind::Screen(Screen::EqualizeTrap) = step.kind {
             self.uitest_equalize_trap_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
+        }
+        if let StepKind::Screen(Screen::TrapShapeStar) = step.kind {
+            self.uitest_trap_shape_checks(ut, inside_view.as_ref(), &mut checks);
         }
 
         // ---- edge shading (coloring plan C3) ----

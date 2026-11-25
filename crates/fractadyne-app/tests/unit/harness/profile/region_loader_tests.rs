@@ -59,7 +59,7 @@ fn out_of_range_input_is_refused_not_reshaped() {
 fn unknown_names_and_keys_are_refused() {
     for (extra, field) in [
         ("method = \"stripes\"\n", "method"),
-        ("trap = \"square\"\n", "trap"),
+        ("trap = \"triangle\"\n", "trap"),
         ("fractal = \"Mandlebrot\"\n", "fractal"),
         ("stripe_freq = 30.0\n", "stripe_freq"),
     ] {

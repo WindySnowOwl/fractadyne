@@ -210,7 +210,8 @@ pub struct ColoringSpec {
     /// Window length in iterations for `stripe_tail`.
     #[serde(default = "default_stripe_tail_len")]
     pub stripe_tail_len: u32,
-    /// Orbit-trap shape: "point" | "cross" | "circle" (method = "trap").
+    /// Orbit-trap shape, by key (`fractadyne_core::coloring::TrapType`: "point", "cross", "circle",
+    /// "line", "square", "hexagon", "star", "sine", "s-curve"; method = "trap").
     #[serde(default = "default_trap_type")]
     pub trap_type: String,
     /// Where the orbit trap sits in the orbit's plane, its turn in degrees counterclockwise and its

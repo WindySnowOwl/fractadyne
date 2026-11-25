@@ -3053,9 +3053,9 @@ panel-trap-center-x = Trap center x
 panel-trap-center-y = Trap center y
 panel-trap-center-hover = Where the trap sits among the points the orbits pass through, not a point of the picture. Moving it changes which orbits come close to it, so its bands and rings rearrange. 0, 0 is where the trap has always been. Also --trap-center X,Y for --render.
 panel-trap-rotation = Trap rotation
-panel-trap-rotation-hover = Turn the cross counterclockwise, in degrees. Also --trap-rotation for --render.
+panel-trap-rotation-hover = Turn the shape counterclockwise, in degrees. Also --trap-rotation for --render.
 panel-trap-size = Trap size
-panel-trap-size-hover = The circle's radius. Also --trap-size for --render.
+panel-trap-size-hover = The shape's size: the circle's radius, the polygons' and the star's outer corners' distance from the center, 1 as the shape comes. Also --trap-size for --render.
 # With the Orbit trap method and the inside colored by the trap: the inside's own trap, or the method's.
 panel-inside-trap = Inside trap
 panel-inside-trap-same = Same as the method
@@ -4084,6 +4084,12 @@ method-sheet-render-failed = It could not be calculated here.
 trap-point = Point
 trap-cross = Cross
 trap-circle = Circle
+trap-line = Line
+trap-square = Square
+trap-hexagon = Hexagon
+trap-star = Star
+trap-sine = Sine wave
+trap-s-curve = S curve
 # Palette animation: none.
 palette-anim-off = Off
 palette-anim-forward = Forward
