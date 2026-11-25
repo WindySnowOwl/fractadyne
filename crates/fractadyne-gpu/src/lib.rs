@@ -5730,12 +5730,28 @@ pub fn chunking_mode2_available(device: &wgpu::Device) -> bool {
 pub const STORAGE_BUFFERS_PER_STAGE: u32 = 2;
 
 pub fn install_renderer(render_state: &egui_wgpu::RenderState) {
-    let renderer = Renderer::new(&render_state.device, &render_state.queue, render_state.target_format);
-    render_state
-        .renderer
-        .write()
-        .callback_resources
-        .insert(renderer);
+    install_prepared_renderer(render_state, prepare_renderer(&render_state.device, &render_state.queue, render_state.target_format));
+}
+
+/// The live renderer with its pipelines built, by [`prepare_renderer`], for [`install_prepared_renderer`].
+pub struct PreparedRenderer(Renderer);
+
+/// Build the live renderer: its pipelines are most of start-up's time, seconds when the driver's
+/// shader cache is cold (10 s on the RTX 3080 and the RX 6800 XT after an update). Any thread but
+/// OpenGL's may call it (see [`compile_custom_async`]), so the window can show itself meanwhile.
+/// The product-fusion probe ([`detect_product_fusion`]) must have run on this device first.
+pub fn prepare_renderer(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> PreparedRenderer {
+    PreparedRenderer(Renderer::new(device, queue, format))
+}
+
+/// Give the window the renderer [`prepare_renderer`] built: from here on its paint callbacks draw.
+pub fn install_prepared_renderer(render_state: &egui_wgpu::RenderState, prepared: PreparedRenderer) {
+    render_state.renderer.write().callback_resources.insert(prepared.0);
+}
+
+/// Whether the window has its renderer yet ([`install_prepared_renderer`]).
+pub fn renderer_installed(render_state: &egui_wgpu::RenderState) -> bool {
+    render_state.renderer.read().callback_resources.get::<Renderer>().is_some()
 }
 
 /// A custom formula's pipelines, compiled off the render thread by [`compile_custom_async`].

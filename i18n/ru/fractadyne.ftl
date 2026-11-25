@@ -828,6 +828,16 @@ gpu-fallback-body = Vulkan не смог открыть окно Fractadyne на
 # $reason: what ended that start-up, in English (such as a native crash in the graphics driver, at start-up, while preparing the graphics shaders).
 gpu-fallback-crash-body = Последний запуск Fractadyne через Vulkan на этой видеокарте не завершился ({ $reason }), поэтому теперь Fractadyne запускается через OpenGL и на этом компьютере будет и дальше использовать OpenGL. Более новый графический драйвер, более новый загрузчик Vulkan или новая версия Fractadyne снова попробуют Vulkan.
 
+## The screen while start-up builds the graphics shaders, before the window shows anything else
+## (startup_shaders.rs)
+
+startup-shaders-title = Подготовка графических шейдеров…
+startup-shaders-body = Первый запуск после установки или обновления Fractadyne или графического драйвера занимает больше времени. Последующие запуски быстрые.
+# Under the body on OpenGL only, where the window's own thread builds the shaders and cannot redraw it.
+startup-shaders-gl-note = Окно может не отвечать, пока это не закончится.
+# $seconds: whole seconds since the window opened (not shown on OpenGL, where the window cannot redraw).
+startup-shaders-elapsed = { $seconds } с
+
 ## File ▸ Gallery…
 
 dlg-gallery-title = Галерея

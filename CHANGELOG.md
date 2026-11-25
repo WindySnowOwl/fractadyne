@@ -12,6 +12,13 @@ detail is in the git history.
 
 ## 0.4.0 (unreleased)
 
+- **The window opens at once, and says why the first start takes longer.** The first start after
+  Fractadyne or the graphics driver is installed or updated compiles the graphics shaders, which
+  takes a while (about 10 s on an RTX 3080, longer on OpenGL), and until now the window stayed
+  hidden all that time, with nothing on the screen or the taskbar. Now it opens right away with a
+  screen that says what is happening and counts the seconds while the shaders build behind it.
+  Later starts are as quick as before and never show it. On OpenGL the window cannot redraw while
+  they build, and the screen says it may stop responding until they finish.
 - **Six new orbit trap shapes.** Besides the point, the cross and the circle, the orbit trap can
   be a line, a square, a hexagon, a 5-point star, a sine wave or an S curve. Each draws a picture
   of its own: at the overview the shape itself shows around the set, and deeper each threads its
