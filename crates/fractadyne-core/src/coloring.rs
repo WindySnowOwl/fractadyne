@@ -512,6 +512,9 @@ pub struct TrapSpec {
     /// point it keeps its center and is scaled to pass through it ([`TrapPlace::on_cycle`]); every
     /// other shape passes through its own center and is moved there.
     pub closed: bool,
+    /// Its shader code is compiled in only for a pipeline that draws it (the shader's `TRAP_EXTRA`):
+    /// the shapes of F4 part 3, whose code present in every trap frame cost the others 2-3%.
+    pub gated: bool,
 }
 
 /// The radius of the polygon and star shapes' outer corners at size 1, and the star's inner ones
@@ -550,15 +553,15 @@ pub enum TrapType {
 }
 
 const TRAPS: [TrapSpec; 9] = [
-    TrapSpec { key: "point", wgsl: "TRAP_POINT", turns: false, sized: false, closed: false },
-    TrapSpec { key: "cross", wgsl: "TRAP_CROSS", turns: true, sized: false, closed: false },
-    TrapSpec { key: "circle", wgsl: "TRAP_CIRCLE", turns: false, sized: true, closed: true },
-    TrapSpec { key: "line", wgsl: "TRAP_LINE", turns: true, sized: false, closed: false },
-    TrapSpec { key: "square", wgsl: "TRAP_SQUARE", turns: true, sized: true, closed: true },
-    TrapSpec { key: "hexagon", wgsl: "TRAP_HEXAGON", turns: true, sized: true, closed: true },
-    TrapSpec { key: "star", wgsl: "TRAP_STAR", turns: true, sized: true, closed: true },
-    TrapSpec { key: "sine", wgsl: "TRAP_SINE", turns: true, sized: true, closed: false },
-    TrapSpec { key: "s-curve", wgsl: "TRAP_S_CURVE", turns: true, sized: true, closed: false },
+    TrapSpec { key: "point", wgsl: "TRAP_POINT", turns: false, sized: false, closed: false, gated: false },
+    TrapSpec { key: "cross", wgsl: "TRAP_CROSS", turns: true, sized: false, closed: false, gated: false },
+    TrapSpec { key: "circle", wgsl: "TRAP_CIRCLE", turns: false, sized: true, closed: true, gated: false },
+    TrapSpec { key: "line", wgsl: "TRAP_LINE", turns: true, sized: false, closed: false, gated: true },
+    TrapSpec { key: "square", wgsl: "TRAP_SQUARE", turns: true, sized: true, closed: true, gated: true },
+    TrapSpec { key: "hexagon", wgsl: "TRAP_HEXAGON", turns: true, sized: true, closed: true, gated: true },
+    TrapSpec { key: "star", wgsl: "TRAP_STAR", turns: true, sized: true, closed: true, gated: true },
+    TrapSpec { key: "sine", wgsl: "TRAP_SINE", turns: true, sized: true, closed: false, gated: true },
+    TrapSpec { key: "s-curve", wgsl: "TRAP_S_CURVE", turns: true, sized: true, closed: false, gated: true },
 ];
 
 /// The polygon and star shapes in their own frame: `(n, outer radius, inner radius, the first outer
@@ -632,7 +635,7 @@ impl TrapType {
             TrapType::Circle => ((zx * zx + zy * zy).sqrt() - 1.0).abs(),
             TrapType::Point => (zx * zx + zy * zy).sqrt(),
             TrapType::Line => zy.abs(),
-            // The shader's forms, with no angle taken (see `trap_unit_dist` in mandelbrot.wgsl).
+            // The shader's forms, with no angle taken (see `trap_extra_dist` in mandelbrot.wgsl).
             TrapType::Square => {
                 let (qx, qy) = (zx.abs() - FRAC_1_SQRT_2, zy.abs() - FRAC_1_SQRT_2);
                 (qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0)).abs()

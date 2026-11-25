@@ -960,7 +960,7 @@ struct IterU {
     // on screen, which only the color pass reads (`ColorU.color_method`). See lib.rs `iter_stats`.
     orbit_stats: u32,
     stripe_freq: f32,      // stripe-average angular frequency
-    trap_type: u32,        // orbit-trap shape: a TRAP_* (`trap_unit_dist`)
+    trap_type: u32,        // orbit-trap shape: a TRAP_* (`trap_dist_of`)
     // Bitfield: bit 0 = accumulate orbit statistics into the aux target; bit 1 = stripe average
     // over the TAIL only (an exponential window, see `stripe_tail_on`); bits 2.. = that window's
     // length in iterations. Mirrors `aux_on_word` in lib.rs.
@@ -1525,30 +1525,38 @@ fn aux_init(z0: vec2<f32>) -> Aux {
 // per-iteration `pow`). The statistics touch disjoint fields (TIA alone reads and writes
 // `prev_abs`), so each keeps its own exact accumulation order with or without the others: a lane's
 // value does not depend on what else is accumulated.
-// How far z is from the orbit trap: its shape (point / axes-cross / unit circle) placed, turned and
-// sized (coloring plan F4; `trap_c` .. `trap_on`), measured in the shape's coordinates and scaled
-// back, so it stays a distance in the orbit's plane. Mirrors core `TrapPlace::dist`, whose f64 the
-// BLA aggregates fold. `trap_on` 0: the unit shape exactly as before F4, with no transform.
+// How far z is from the orbit trap: its shape (core `TrapType`) placed, turned and sized (coloring
+// plan F4; `trap_c` .. `trap_on`), measured in the shape's coordinates and scaled back, so it stays a
+// distance in the orbit's plane. Mirrors core `TrapPlace::dist`, whose f64 the BLA aggregates fold.
+// `trap_on` 0: the unit shape exactly as before F4, with no transform.
+// The trap shapes of F4 part 3 (line, square, hexagon, star, sine, S curve) are compiled in only for a
+// frame that draws one (lib.rs `iter_constants`): present but unused, their code cost the point, cross
+// and circle frames 2-3% (2026-11-24, as the u-space BLA's did, `RN_BLA`). With TRAP_EXTRA off the
+// chain below folds to the one before them, so those frames run the code they ran. Off, such a shape
+// would measure as the point: every pipeline that can draw one must be built with it on.
+override TRAP_EXTRA: bool = false;
 fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, size: f32, inv: f32) -> f32 {
     var w = zf;
     if (on != 0u) {
         let d = zf - c;
         w = vec2<f32>(t.x * d.x + t.y * d.y, t.x * d.y - t.y * d.x) * inv;
     }
-    var s = trap_unit_dist(w, ty);
+    var s: f32;
+    if (ty == TRAP_CROSS) { s = min(abs(w.x), abs(w.y)); }
+    else if (ty == TRAP_CIRCLE) { s = abs(length(w) - 1.0); }
+    else if (TRAP_EXTRA) { s = trap_extra_dist(w, ty); }
+    else { s = length(w); }
     if (on != 0u) { s = s * size; }
     return s;
 }
-// The distance from w to shape `ty` at size 1, centered at the origin and unturned: core's
-// `TrapType::unit_dist` in f32 (the BLA aggregates fold that one, so the two must agree). The
-// shapes' dimensions are core's, generated (`TRAP_STAR_INNER`, `TRAP_SINE_*`, `TRAP_S_RADIUS`).
-fn trap_unit_dist(w: vec2<f32>, ty: u32) -> f32 {
-    if (ty == TRAP_CROSS) { return min(abs(w.x), abs(w.y)); }
-    if (ty == TRAP_CIRCLE) { return abs(length(w) - 1.0); }
+// The distance from w to shape `ty` at size 1, centered at the origin and unturned, for the shapes of
+// F4 part 3 (and the point, the one other shape that reaches here): core's `TrapType::unit_dist` in f32
+// (the BLA aggregates fold that one, so the two must agree). The shapes' dimensions are core's,
+// generated (`TRAP_STAR_INNER`, `TRAP_SINE_*`, `TRAP_S_RADIUS`). Exact distances with no angle taken
+// (reflections and dot products), so a frame that draws one carries few extra registers: the
+// angle-based forms cost 3% (measured 2026-11-24). Core's `TrapType::unit_dist` has the same forms.
+fn trap_extra_dist(w: vec2<f32>, ty: u32) -> f32 {
     if (ty == TRAP_LINE) { return abs(w.y); }
-    // Exact distances with no angle taken (reflections and dot products), so the shapes add few
-    // registers to the loop every trap frame runs: the angle-based forms cost the point, cross and
-    // circle frames 3% (measured 2026-11-24). Core's `TrapType::unit_dist` has the same forms.
     if (ty == TRAP_SQUARE) {
         // Inscribed in the unit circle, sides along the axes: half-side 1/sqrt 2.
         let q = abs(w) - vec2<f32>(0.70710678, 0.70710678);

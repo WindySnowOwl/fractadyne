@@ -7673,6 +7673,8 @@ impl FractadyneApp {
         let fusion = fractadyne_gpu::detect_product_fusion(&render_state.device, &render_state.queue);
         diag::breadcrumb("start-up: building the renderer's pipelines".into());
         install_renderer(render_state);
+        // The trap shapes' own pipelines, compiled on a worker while the window starts (seconds cold).
+        fractadyne_gpu::warm_trap_shapes(render_state);
         // The memory timeline: this device counted for the whole run, a reading a minute.
         diag::mem_timeline::register_device("main", &render_state.device);
         diag::mem_timeline::start();

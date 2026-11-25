@@ -7457,7 +7457,7 @@ impl FractadyneApp {
                 (M::OrbitTrap, T::Point, 1.0, P { center: [0.3, -0.2], ..at }, "orbit-trap-point-placed"),
                 (M::OrbitTrap, T::Cross, 1.0, P { center: [-0.2, 0.15], rotation: 35.0, ..at }, "orbit-trap-cross-placed"),
                 (M::OrbitTrap, T::Circle, 1.0, P { center: [0.1, 0.4], size: 0.3, ..at }, "orbit-trap-circle-placed"),
-                // The shapes of F4 part 3: the shader's `trap_unit_dist` against core's `unit_dist`,
+                // The shapes of F4 part 3: the shader's `trap_extra_dist` against core's `unit_dist`,
                 // which the aggregates fold.
                 (M::OrbitTrap, T::Line, 1.0, at, "orbit-trap-line"),
                 (M::OrbitTrap, T::Square, 1.0, at, "orbit-trap-square"),
@@ -8185,7 +8185,8 @@ impl FractadyneApp {
                 self.coloring.interior = None; // the trap method's own inside: its trap
                 self.render_cfg.auto_iter = false;
                 let cross = (T::Cross, P { center: [-0.2, 0.15], rotation: 35.0, ..P::DEFAULT });
-                let circle = (T::Circle, P { center: [0.1, 0.4], size: 0.3, ..P::DEFAULT });
+                // A shape of F4 part 3 for the inside, so the raw lanes' pipeline must carry it (`TRAP_EXTRA`).
+                let star = (T::Star, P { center: [0.1, 0.4], rotation: 15.0, size: 0.3 });
                 const MRE: &str = "-9.5615882490732676063982994499490578147935343195074805633443741253353130261608583401177598055702619474609439701446982e-2";
                 const MIM: &str = "9.2407201125877521262558092669605306283394020346180079142271967031202190501107148187554958943606565429410592657638281e-1";
                 let at = |s: &str| fractadyne_core::parse_bf_prec(s, 512).expect("a coordinate");
@@ -8209,14 +8210,26 @@ impl FractadyneApp {
                             .ok()
                             .map(|r| (r.pixels, r.aux, req.bla_on == 1 && req.mode == 2, on))
                     };
-                    let both = lanes(self, cross, Some(circle));
+                    let both = lanes(self, cross, Some(star));
                     let outer = lanes(self, cross, None);
-                    let inner = lanes(self, circle, None);
+                    let inner = lanes(self, star, None);
+                    // What a pipeline without the shapes would measure the placed star as: the point at
+                    // its center (the turn and size change only the rounding).
+                    let point = lanes(self, (T::Point, P { center: star.1.center, ..P::DEFAULT }), None);
                     let name = format!("{label}: the inside's own trap colors the inside, the method's the outside");
                     match (both, outer, inner) {
                         (Some((tm, ta, bla, on)), Some((_, oa, ..)), Some((_, ia, ..)))
-                            if !tm.is_empty() && ta.len() == tm.len() && oa.len() == ta.len() && ia.len() == ta.len() =>
+                            if !tm.is_empty()
+                                && ta.len() == tm.len()
+                                && oa.len() == ta.len()
+                                && ia.len() == ta.len()
+                                && point.as_ref().is_some_and(|q| q.1.len() == ta.len()) =>
                         {
+                            let pa = &point.as_ref().expect("the point's lanes").1;
+                            // The star is not that point: its lanes differ by more than 1e-3 on most pixels.
+                            let not_point = (0..tm.len() / 4)
+                                .filter(|&k| (ia[4 * k + 2] - pa[4 * k + 2]).abs() > 1.0e-3 * pa[4 * k + 2].abs().max(1.0e-30))
+                                .count();
                             let n = tm.len() / 4;
                             let (mut inside, mut esc_bad, mut in_bad, mut moved) = (0usize, 0usize, 0usize, 0usize);
                             for k in 0..n {
@@ -8232,17 +8245,18 @@ impl FractadyneApp {
                             push_check(&mut checks, &mut last_check_t, SelfCheck {
                                 category: "Trap",
                                 name,
-                                params: format!("{w}x{h}, {iters} iter, method's trap a turned cross, the inside's a circle; BLA {}", if bla { "engaged" } else { "off" }),
+                                params: format!("{w}x{h}, {iters} iter, method's trap a turned cross, the inside's a star; BLA {}", if bla { "engaged" } else { "off" }),
                                 result: format!(
-                                    "{inside} of {n} pixels inside; {esc_bad} escaped and {in_bad} interior lanes off; the inside's own differs from the method trap's on {moved}"
+                                    "{inside} of {n} pixels inside; {esc_bad} escaped and {in_bad} interior lanes off; the inside's own differs from the method trap's on {moved}; the star from the point at its center on {not_point}"
                                 ),
-                                threshold: "the inside trap on; 0 lanes off; 500+ pixels inside and 500+ escaped; it differs on half the inside or more; BLA engaged at depth".into(),
+                                threshold: "the inside trap on; 0 lanes off; 500+ pixels inside and 500+ escaped; it differs on half the inside or more; the star is not the point on half the frame; BLA engaged at depth".into(),
                                 pass: on
                                     && esc_bad == 0
                                     && in_bad == 0
                                     && inside >= 500
                                     && n - inside >= 500
                                     && moved * 2 >= inside
+                                    && not_point * 2 >= tm.len() / 4
                                     && (!deep || bla),
                             });
                         }

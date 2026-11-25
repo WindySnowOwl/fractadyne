@@ -283,11 +283,30 @@ fn the_renderer_module_survives_its_pipeline_constants() {
         .unwrap_or_else(|e| panic!("{e:?}"));
     for on in [0.0, 1.0] {
         let constants: naga::back::PipelineConstants =
-            ["EFT_ADD_RESIDUALS", "PRODUCT_BARRIER", "RN_BLA"].iter().map(|k| (k.to_string(), on)).collect();
+            ["EFT_ADD_RESIDUALS", "PRODUCT_BARRIER", "RN_BLA", "TRAP_EXTRA"].iter().map(|k| (k.to_string(), on)).collect();
         if let Err(e) = naga::back::pipeline_constants::process_overrides(&module, &info, &constants) {
             panic!("the overrides at {on}: {e:?}");
         }
     }
+}
+
+/// A frame needs the trap shapes of F4 part 3 compiled in exactly when it accumulates the trap and
+/// its trap or the inside's own is one of them; the constants then carry `TRAP_EXTRA`.
+#[test]
+fn a_frame_needs_the_gated_shapes_exactly_when_it_draws_one() {
+    use fractadyne_core::coloring::{Stat, StatSet, TrapPlace, TrapType};
+    let trap = StatSet::of(Stat::Trap);
+    for t in TrapType::ALL {
+        assert_eq!(super::trap_extra(trap, t.gpu_id(), None), t.spec().gated, "{t:?}");
+        assert!(!super::trap_extra(StatSet::of(Stat::Stripe), t.gpu_id(), None), "{t:?}: the trap is not accumulated");
+        assert!(super::trap_extra(trap, TrapType::Point.gpu_id(), Some((t, TrapPlace::DEFAULT))) == t.spec().gated, "the inside's {t:?}");
+    }
+    let gated: Vec<_> = TrapType::ALL.iter().filter(|t| t.spec().gated).map(|t| t.key()).collect();
+    assert_eq!(gated, ["line", "square", "hexagon", "star", "sine", "s-curve"]);
+    assert!(super::iter_constants(false, false).is_empty(), "every other pipeline as before");
+    assert_eq!(super::iter_constants(false, true).get("TRAP_EXTRA"), Some(&1.0));
+    assert_eq!(super::iter_constants(true, true).len(), 2);
+    assert_eq!(super::iter_constants(true, false).get("RN_BLA"), Some(&1.0));
 }
 
 /// The inside's own trap reaches the shader only while the trap is accumulated, with its shape.
