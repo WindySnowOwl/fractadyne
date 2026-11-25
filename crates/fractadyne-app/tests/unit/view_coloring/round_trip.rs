@@ -31,9 +31,9 @@ fn scrambled() -> ViewColoring {
         stripe_tail: true,
         stripe_tail_len: 900,
         trap: TrapType::Circle,
-        trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6 },
+        trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6, phase: 0.0 },
         interior_trap: Some(TrapType::Cross),
-        interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5 },
+        interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5, phase: 0.0 },
         light: true,
         light_angle: -1.25,
         light_height: 3.5,
@@ -94,14 +94,17 @@ fn variants() -> Vec<ViewColoring> {
     for t in TrapType::ALL {
         v.push(ViewColoring { method: ColorMethod::OrbitTrap, trap: t, ..d.clone() });
         // Placed (F4): moved, turned and sized, each shape writing what it uses.
-        let place = crate::TrapPlace { center: [-0.75, 1.5], rotation: -40.0, size: 2.5 }.for_shape(t);
+        let place = crate::TrapPlace { center: [-0.75, 1.5], rotation: -40.0, size: 2.5, phase: 60.0 }.for_shape(t);
         v.push(ViewColoring { method: ColorMethod::OrbitTrap, trap: t, trap_place: place, ..d.clone() });
     }
     // The trap method's inside with a trap of its own: a cross moved and turned, a circle sized.
-    let turned = crate::TrapPlace { center: [0.25, -0.5], rotation: 30.0, size: 1.0 };
-    let sized = crate::TrapPlace { center: [0.0, 0.125], rotation: 0.0, size: 0.5 };
+    let turned = crate::TrapPlace { center: [0.25, -0.5], rotation: 30.0, size: 1.0, phase: 0.0 };
+    let sized = crate::TrapPlace { center: [0.0, 0.125], rotation: 0.0, size: 0.5, phase: 0.0 };
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_trap: Some(TrapType::Cross), interior_trap_place: turned, ..d.clone() });
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_trap: Some(TrapType::Circle), interior_trap_place: sized, ..d.clone() });
+    // The inside's own sine wave, shifted (its phase key).
+    let phased = crate::TrapPlace { phase: -45.0, ..crate::TrapPlace::DEFAULT };
+    v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_trap: Some(TrapType::Sine), interior_trap_place: phased, ..d.clone() });
     v.push(ViewColoring { light: true, ..d.clone() });
     v.push(ViewColoring { light: true, light_angle: 0.3, light_height: 0.2, ..d.clone() });
     v.push(ViewColoring { light: true, light_steep: true, ..d.clone() });
@@ -143,7 +146,7 @@ fn variants() -> Vec<ViewColoring> {
     v.push(ViewColoring { interior: Some(InteriorMode::Solid), ..d.clone() });
     v.push(ViewColoring { interior: Some(InteriorMode::Trap), ..d.clone() });
     v.push(ViewColoring { interior: Some(InteriorMode::Trap), trap: TrapType::Cross, interior_palette: "ember".into(), ..d.clone() });
-    let turned = crate::TrapPlace { center: [0.5, 0.0], rotation: 15.0, size: 1.0 };
+    let turned = crate::TrapPlace { center: [0.5, 0.0], rotation: 15.0, size: 1.0, phase: 0.0 };
     v.push(ViewColoring { interior: Some(InteriorMode::Trap), trap: TrapType::Cross, trap_place: turned, ..d.clone() });
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior: Some(InteriorMode::Solid), ..d.clone() });
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_palette: "ember".into(), ..d.clone() });

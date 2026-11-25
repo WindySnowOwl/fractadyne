@@ -2861,6 +2861,11 @@ panel-tail-length = Endlänge
 panel-tail-length-unit = it
 panel-tail-length-hover = Fensterlänge in Iterationen. Kurze Fenster (8–32) ergeben in jeder Tiefe die klassischen kräftigen Bänder; längere mitteln wieder zu einer flachen Farbe hin, da sich der Streifenterm eines langen chaotischen Orbits herausmittelt.
 panel-trap-shape = Fallenform
+# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+panel-trap-phase = Phase
+panel-trap-phase-hover = Verschiebt die Sinuswelle entlang ihrer selbst: eine volle Welle alle 360°. Jede Phase zeichnet ihr eigenes Bandmuster.
+panel-trap-phase-animate = Phase animieren
+panel-trap-phase-animate-hover = Lässt die Phase im Lauf der Zeit durchlaufen, im Takt des Reglers Tempo. Jedes Bild berechnet die Ansicht neu, daher bewegt sich eine tiefe Ansicht langsam.
 panel-inside = Innen
 panel-inside-hover = Was das Innere der Menge färbt.
 panel-inside-color-hover = Die Farbe des Inneren der Menge.

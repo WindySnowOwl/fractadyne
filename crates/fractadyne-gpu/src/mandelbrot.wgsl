@@ -1056,7 +1056,7 @@ struct IterU {
     trap_size: f32,
     trap_inv: f32,         // 1 / trap_size
     trap_on: u32,
-    trap_pad: u32,
+    trap_phase: f32,      // the sine wave's phase, radians (0: as before)
     // THE INSIDE'S OWN TRAP (lib.rs `trap_in_uniform`): its placement as the trap's above, then
     // whether it is on and its shape. On, the iteration measures both traps and an interior pixel's
     // trap lane holds this one (`aux_interior`); off (zeros), the inside measures the trap above.
@@ -1065,7 +1065,7 @@ struct IterU {
     trap_in_size: f32,
     trap_in_inv: f32,
     trap_in_on: u32,
-    trap_in_pad: u32,
+    trap_in_phase: f32,
     trap_in_enabled: u32,
     trap_in_type: u32,
     trap_in_pad1: u32,
@@ -1535,7 +1535,7 @@ fn aux_init(z0: vec2<f32>) -> Aux {
 // chain below folds to the one before them, so those frames run the code they ran. Off, such a shape
 // would measure as the point: every pipeline that can draw one must be built with it on.
 override TRAP_EXTRA: bool = false;
-fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, size: f32, inv: f32) -> f32 {
+fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, size: f32, inv: f32, phase: f32) -> f32 {
     var w = zf;
     if (on != 0u) {
         let d = zf - c;
@@ -1544,7 +1544,7 @@ fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, siz
     var s: f32;
     if (ty == TRAP_CROSS) { s = min(abs(w.x), abs(w.y)); }
     else if (ty == TRAP_CIRCLE) { s = abs(length(w) - 1.0); }
-    else if (TRAP_EXTRA) { s = trap_extra_dist(w, ty); }
+    else if (TRAP_EXTRA) { s = trap_extra_dist(w, ty, phase); }
     else { s = length(w); }
     if (on != 0u) { s = s * size; }
     return s;
@@ -1555,7 +1555,7 @@ fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, siz
 // generated (`TRAP_STAR_INNER`, `TRAP_SINE_*`, `TRAP_S_RADIUS`). Exact distances with no angle taken
 // (reflections and dot products), so a frame that draws one carries few extra registers: the
 // angle-based forms cost 3% (measured 2026-11-24). Core's `TrapType::unit_dist` has the same forms.
-fn trap_extra_dist(w: vec2<f32>, ty: u32) -> f32 {
+fn trap_extra_dist(w: vec2<f32>, ty: u32, phase: f32) -> f32 {
     if (ty == TRAP_LINE) { return abs(w.y); }
     if (ty == TRAP_SQUARE) {
         // Inscribed in the unit circle, sides along the axes: half-side 1/sqrt 2.
@@ -1583,7 +1583,8 @@ fn trap_extra_dist(w: vec2<f32>, ty: u32) -> f32 {
         return length(p - ba * h);
     }
     if (ty == TRAP_SINE) {
-        let k = TRAP_SINE_FREQ * w.x;
+        // Shifted along itself by the phase (user 2026-11-25; core `TrapType::unit_dist_at`).
+        let k = TRAP_SINE_FREQ * w.x + phase;
         let slope = TRAP_SINE_AMP * TRAP_SINE_FREQ * cos(k);
         return abs(w.y - TRAP_SINE_AMP * sin(k)) / sqrt(1.0 + slope * slope);
     }
@@ -1611,11 +1612,11 @@ fn trap_s_bowl(w: vec2<f32>) -> f32 {
     return abs(length(p) - r);
 }
 fn trap_dist(zf: vec2<f32>) -> f32 {
-    return trap_dist_of(zf, iu.trap_type, iu.trap_on, iu.trap_c, iu.trap_turn, iu.trap_size, iu.trap_inv);
+    return trap_dist_of(zf, iu.trap_type, iu.trap_on, iu.trap_c, iu.trap_turn, iu.trap_size, iu.trap_inv, iu.trap_phase);
 }
 // The inside's own trap's distance (`trap_in_*`), measured as `trap_dist` measures the trap's.
 fn trap_in_dist(zf: vec2<f32>) -> f32 {
-    return trap_dist_of(zf, iu.trap_in_type, iu.trap_in_on, iu.trap_in_c, iu.trap_in_turn, iu.trap_in_size, iu.trap_in_inv);
+    return trap_dist_of(zf, iu.trap_in_type, iu.trap_in_on, iu.trap_in_c, iu.trap_in_turn, iu.trap_in_size, iu.trap_in_inv, iu.trap_in_phase);
 }
 fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
     let st = iu.orbit_stats;

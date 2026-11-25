@@ -347,6 +347,8 @@ fn every_session_field_survives_save_and_reload() {
         interior_trap_y: 0.4,
         interior_trap_rotation: 15.0,
         interior_trap_size: 0.3,
+        trap_phase: 45.0,
+        interior_trap_phase: -30.0,
         custom_palette: vec![[0.0, 0.1, 0.2, 0.3], [1.0, 0.4, 0.5, 0.6]],
         custom_palette_flat: true,
         custom_segments: vec![PaletteSegment {
@@ -435,6 +437,7 @@ fn every_session_field_survives_save_and_reload() {
         palette_anim: "pingpong".into(),
         palette_anim_speed: 0.5,
         light_anim: true,
+        trap_phase_anim: true,
         de_anim: true,
         minimap: true,
         right_panel_open: false,
@@ -851,6 +854,8 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
         "equalize", "palette_oklab",
         "trap_x", "trap_y", "trap_rotation", "trap_size",
         "interior_trap", "interior_trap_x", "interior_trap_y", "interior_trap_rotation", "interior_trap_size",
+        // The sine wave trap's phase (user 2026-11-25).
+        "trap_phase", "interior_trap_phase",
     ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {

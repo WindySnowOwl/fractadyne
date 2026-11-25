@@ -2780,6 +2780,11 @@ panel-tail-length = 꼬리 길이
 panel-tail-length-unit = 회
 panel-tail-length-hover = 반복 횟수로 나타낸 창 길이입니다. 짧은 창(8–32)은 어느 깊이에서나 고전적인 굵은 띠를 만들고, 긴 창은 다시 평평한 색으로 평균되는데, 길고 혼돈적인 궤도의 스트라이프 항은 평균하면 상쇄되기 때문입니다.
 panel-trap-shape = 트랩 모양
+# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+panel-trap-phase = 위상
+panel-trap-phase-hover = 사인파를 자기 자신을 따라 이동합니다. 360°마다 한 파장입니다. 위상마다 고유한 띠 무늬가 그려집니다.
+panel-trap-phase-animate = 위상 애니메이션
+panel-trap-phase-animate-hover = 속도 슬라이더의 빠르기로 위상을 시간에 따라 순환합니다. 프레임마다 보기를 다시 계산하므로 깊은 보기에서는 느리게 움직입니다.
 panel-inside = 내부
 panel-inside-hover = 집합 내부를 무엇으로 칠할지.
 panel-inside-color-hover = 집합 내부의 색.

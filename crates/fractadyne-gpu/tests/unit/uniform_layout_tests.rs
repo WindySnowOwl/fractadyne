@@ -249,6 +249,7 @@ fn iter_uniform_matches_the_shader() {
         ("trap_size", std::mem::offset_of!(super::TrapU, size)),
         ("trap_inv", std::mem::offset_of!(super::TrapU, inv_size)),
         ("trap_on", std::mem::offset_of!(super::TrapU, on)),
+        ("trap_phase", std::mem::offset_of!(super::TrapU, phase)),
     ] {
         assert_eq!(wgsl_field_offset(&fields, wgsl), trap + rust, "IterU.{wgsl} and IterUniforms.trap disagree");
     }
@@ -261,6 +262,7 @@ fn iter_uniform_matches_the_shader() {
         ("trap_in_size", std::mem::offset_of!(super::TrapU, size)),
         ("trap_in_inv", std::mem::offset_of!(super::TrapU, inv_size)),
         ("trap_in_on", std::mem::offset_of!(super::TrapU, on)),
+        ("trap_in_phase", std::mem::offset_of!(super::TrapU, phase)),
     ] {
         assert_eq!(wgsl_field_offset(&fields, wgsl), trap_in + rust, "IterU.{wgsl} and IterUniforms.trap_in disagree");
     }
@@ -313,7 +315,7 @@ fn a_frame_needs_the_gated_shapes_exactly_when_it_draws_one() {
 #[test]
 fn the_inside_trap_uniform_is_off_unless_accumulated() {
     use fractadyne_core::coloring::{TrapPlace, TrapType};
-    let inside = Some((TrapType::Circle, TrapPlace { center: [0.1, 0.4], rotation: 0.0, size: 0.3 }));
+    let inside = Some((TrapType::Circle, TrapPlace { center: [0.1, 0.4], rotation: 0.0, size: 0.3, phase: 0.0 }));
     assert_eq!(super::trap_in_uniform(None, true), (super::TrapU::default(), [0; 4]));
     assert_eq!(super::trap_in_uniform(inside, false), (super::TrapU::default(), [0; 4]));
     let (u, row) = super::trap_in_uniform(inside, true);
@@ -327,11 +329,16 @@ fn the_inside_trap_uniform_is_off_unless_accumulated() {
 fn the_trap_uniform_is_off_at_the_default() {
     use fractadyne_core::coloring::TrapPlace;
     assert_eq!(super::trap_uniform(TrapPlace::DEFAULT), super::TrapU::default());
-    let u = super::trap_uniform(TrapPlace { center: [0.25, -0.5], rotation: 90.0, size: 0.5 });
+    let u = super::trap_uniform(TrapPlace { center: [0.25, -0.5], rotation: 90.0, size: 0.5, phase: 0.0 });
     assert_eq!(u.on, 1);
     assert_eq!(u.center, [0.25, -0.5]);
     assert!(u.turn[0].abs() < 1e-7 && (u.turn[1] - 1.0).abs() < 1e-7, "{:?}", u.turn);
     assert_eq!((u.size, u.inv_size), (0.5, 2.0));
+    assert_eq!(u.phase, 0.0);
+    // The sine wave's phase reaches the shader in radians.
+    let s = super::trap_uniform(TrapPlace { phase: 90.0, ..TrapPlace::DEFAULT });
+    assert_eq!(s.on, 1, "a phase alone moves the trap off the default");
+    assert!((s.phase - std::f32::consts::FRAC_PI_2).abs() < 1e-6, "{}", s.phase);
 }
 
 /// The zoom-video assembly module (`assemble.wgsl`) validates, and its uniform `AssembleU` lines up

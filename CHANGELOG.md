@@ -28,6 +28,13 @@ detail is in the git history.
   onto the cycle point; a closed one (the polygons, the star) keeps its center and grows or
   shrinks until its outline reaches it. On the command line they are `--trap line`, `square`,
   `hexagon`, `star`, `sine` and `s-curve`.
+- **The sine wave trap's phase, and its animation.** The sine wave trap has a Phase: the wave
+  shifted along itself, a full wave every 360°, each phase drawing its own pattern of bands.
+  Animate the phase cycles it over time at the Speed slider's rate; every frame calculates the view
+  again, so the overview animates smoothly and a deep view slowly. The Speed slider now also works
+  when only the light's rotation, the glow's bands or the trap's phase are animating. A view file
+  keeps the phase (`trap_phase`, and `interior_trap_phase` for the inside's own trap), and on the
+  command line it is `--trap-phase DEG`.
 - **Move, turn and size the orbit trap.** Under Trap shape the panel now has the trap's center, x
   and y, and a rotation for the cross and a size, its radius, for the circle. Where the trap sits
   decides which orbits come near it, so moving it rearranges the bands and rings it draws, inside the

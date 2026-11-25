@@ -28,7 +28,7 @@ impl crate::FractadyneApp {
                     }
                 });
         });
-        trap_place_rows(ui, self.coloring.trap_type, &mut self.coloring.trap_place);
+        trap_place_rows(ui, self.coloring.trap_type, &mut self.coloring.trap_place, &mut self.coloring.trap_phase_anim);
         self.trap_on_cycle_button(ui, false);
     }
 
@@ -52,7 +52,7 @@ impl crate::FractadyneApp {
             }
         });
         if let Some(shape) = self.coloring.interior_trap {
-            trap_place_rows(ui, shape, &mut self.coloring.interior_trap_place);
+            trap_place_rows(ui, shape, &mut self.coloring.interior_trap_place, &mut self.coloring.trap_phase_anim);
             self.trap_on_cycle_button(ui, true);
         }
     }
@@ -91,7 +91,7 @@ impl crate::FractadyneApp {
 /// A trap's placement rows (F4): its center, and the turn only for a shape that turns and the size
 /// only for one that has a size (`TrapSpec::turns`, `sized`), so no row does nothing. Double-click
 /// puts a slider back.
-fn trap_place_rows(ui: &mut egui::Ui, shape: TrapType, place: &mut TrapPlace) {
+fn trap_place_rows(ui: &mut egui::Ui, shape: TrapType, place: &mut TrapPlace, phase_anim: &mut bool) {
     let reset = TrapPlace::DEFAULT;
     let spec = shape.spec();
     let center_hover = format!("{}\n\n{}", tr!(panel_trap_center_hover), tr!(panel_double_click_reset));
@@ -123,6 +123,19 @@ fn trap_place_rows(ui: &mut egui::Ui, shape: TrapType, place: &mut TrapPlace) {
             place.size = reset.size;
         }
         r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_size_hover), tr!(panel_double_click_reset)));
+    }
+    // The sine wave's phase, and its animation at the palette's Speed (user 2026-11-25).
+    if spec.phased {
+        let r = labelled(ui, &tr!(panel_trap_phase), |ui| {
+            ui.add(egui::Slider::new(&mut place.phase, crate::slider_range::TRAP_PHASE).suffix("°").fixed_decimals(1))
+        });
+        if slider_double_clicked(&r) {
+            place.phase = reset.phase;
+        }
+        r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_phase_hover), tr!(panel_double_click_reset)));
+        labelled(ui, "", |ui| {
+            ui.checkbox(phase_anim, tr!(panel_trap_phase_animate)).on_hover_text(tr!(panel_trap_phase_animate_hover))
+        });
     }
 }
 
@@ -835,7 +848,7 @@ impl FractadyneApp {
                 });
                 let r = labelled(ui, &tr!(panel_anim_speed), |ui| {
                     ui.add_enabled(
-                        self.anim.palette_anim != PaletteAnim::Off,
+                        self.anim.palette_anim != PaletteAnim::Off || self.anim_speed_in_use(),
                         egui::Slider::new(&mut self.anim.palette_anim_speed, 0.01..=2.0)
                             .suffix("/s")
                             .logarithmic(true),

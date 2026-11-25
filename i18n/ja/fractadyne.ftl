@@ -2781,6 +2781,11 @@ panel-tail-length = 末尾の長さ
 panel-tail-length-unit = 回
 panel-tail-length-hover = 窓の長さ（反復回数）です。短い窓（8～32）はどの深度でも古典的な太い帯を生みます。長い窓では、長いカオス的な軌道のストライプ項が平均されて打ち消し合うため、再び平坦な色に近づきます。
 panel-trap-shape = トラップの形
+# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+panel-trap-phase = 位相
+panel-trap-phase-hover = 正弦波をそれ自身に沿ってずらします。360°で1波長です。位相ごとに異なる帯の模様になります。
+panel-trap-phase-animate = 位相をアニメーション
+panel-trap-phase-animate-hover = 速度スライダーの速さで位相を時間とともに変化させます。フレームごとにビューを再計算するため、深いビューではゆっくり動きます。
 panel-inside = 内部
 panel-inside-hover = 集合の内部を何で着色するか。
 panel-inside-color-hover = 集合の内部の色。

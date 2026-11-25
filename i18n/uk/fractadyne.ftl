@@ -3009,6 +3009,11 @@ panel-tail-length = Довжина хвоста
 panel-tail-length-unit = іт
 panel-tail-length-hover = Довжина вікна в ітераціях. Короткі вікна (8–32) дають класичні виразні смуги на будь-якій глибині; довші знову усереднюються до плаского кольору, бо член смуг довгої хаотичної орбіти усереднюється.
 panel-trap-shape = Форма пастки
+# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+panel-trap-phase = Фаза
+panel-trap-phase-hover = Зсуває синусоїду вздовж неї самої: повна хвиля кожні 360°. Кожна фаза малює свій візерунок смуг.
+panel-trap-phase-animate = Анімувати фазу
+panel-trap-phase-animate-hover = Змінює фазу з часом, зі швидкістю повзунка «Швидкість». Кожен кадр обчислює вигляд заново, тому глибокий вигляд анімується повільно.
 panel-inside = Усередині
 panel-inside-hover = Чим забарвлено внутрішність множини.
 panel-inside-color-hover = Колір внутрішності множини.
