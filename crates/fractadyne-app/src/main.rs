@@ -54,7 +54,7 @@
 
 use eframe::egui;
 use fractadyne_core::Viewport;
-use fractadyne_gpu::{add_mandelbrot, install_renderer};
+use fractadyne_gpu::add_mandelbrot;
 
 // First: `tr!`, the interface's messages in the language in use, is used by the modules below.
 #[macro_use]
@@ -96,6 +96,7 @@ mod update;
 mod video_pipe;
 mod coloring_fields;
 mod coloring_hook;
+mod startup_shaders;
 mod trap_cycle;
 mod view_coloring;
 mod scripting;
@@ -7359,6 +7360,9 @@ struct FractadyneApp {
     /// The coloring hook revision (`HookState::rev`) the live renderer's hook pipeline was last
     /// prepared for (`poll_coloring_hook`).
     hook_prepared: u64,
+    /// Start-up's shader compile while the window shows (`startup_shaders`): until it is done,
+    /// `update` draws the start-up screen and nothing else.
+    startup_gpu: startup_shaders::StartupGpu,
     /// Color ▸ Browse palettes… (`ui::palette_browser`).
     palette_browser: crate::ui::palette_browser::PaletteBrowser,
     /// Color ▸ Preview methods… (`ui::method_sheet`, coloring plan B7).
@@ -7664,27 +7668,16 @@ impl FractadyneApp {
             diag::show_fatal_dialog(&diag::advice::Failure::Unsupported, &reason, report.as_deref());
             crate::exit(1);
         }
-        // Before any pipeline exists on this device: does its shader compiler fuse `two_prod`'s
-        // product (TODO PR-C2)? Where it does, the iterate pipelines get the WGSL product barrier.
-        // ⭐Start-up's phases as breadcrumbs: a driver that dies compiling a shader leaves a crash
-        // report whose `activity` says which (Eris, 2026-11-09, died 7 s into an OpenGL start-up).
+        // The shaders: the product-fusion probe, then the renderer's pipelines, most of start-up's
+        // time. They are built off this thread (`startup_shaders`, started at the end of this
+        // function) while the window shows a screen saying so: built here, they kept the window
+        // hidden all that time, 10-16 s with the driver's shader cache cold (2026-11-24). Start-up's
+        // last steps run when they arrive (`finish_startup_gpu`).
         diag::set_phase(diag::advice::Phase::PreparingShaders);
-        diag::breadcrumb("start-up: the product-fusion probe (one pipeline)".into());
-        let fusion = fractadyne_gpu::detect_product_fusion(&render_state.device, &render_state.queue);
-        diag::breadcrumb("start-up: building the renderer's pipelines".into());
-        install_renderer(render_state);
-        // The trap shapes' own pipelines, compiled on a worker while the window starts (seconds cold).
-        fractadyne_gpu::warm_trap_shapes(render_state);
         // The memory timeline: this device counted for the whole run, a reading a minute.
         diag::mem_timeline::register_device("main", &render_state.device);
         diag::mem_timeline::start();
-        log_product_fusion("main", &fusion);
         log_iter_split("main", &render_state.device);
-        // A driver may have put its own crash handler in place of ours as it loaded.
-        diag::native_crash::reinstall("the graphics driver's start-up");
-        diag::breadcrumb("start-up: the renderer is ready".into());
-        diag::set_phase(diag::advice::Phase::Running);
-        gpu_choice::fallback::start_up_done(diag::advice::api_name(render_state.adapter.get_info().backend));
         // Record the GPU's storage-buffer binding limit as the reference-orbit length ceiling, so
         // the off-thread live recompute can bound a deep-interior orbit to what the buffer holds
         // (a `.fdn` with auto-iter off + a very high max_iter at an interior view would otherwise
@@ -7844,6 +7837,8 @@ impl FractadyneApp {
             )));
         }
         apply_theme(&cc.egui_ctx, self.theme);
+        // Last, with the device's error and loss handlers in place: the shaders, off this thread.
+        self.startup_gpu = startup_shaders::StartupGpu::start(render_state);
     }
 
     /// The app's STATE: everything except what needs the window's GPU and egui context, which
@@ -8642,6 +8637,7 @@ impl FractadyneApp {
             gpu: None,
             render_state: None,
             hook_prepared: 0,
+            startup_gpu: startup_shaders::StartupGpu::Ready,
             palette_browser: Default::default(),
             method_sheet: Default::default(),
             color_hook_dialog: Default::default(),
@@ -18864,6 +18860,15 @@ impl eframe::App for FractadyneApp {
         // Heartbeat: a frame loop that stops arriving here is a hang (D1.4), unless the last frame
         // asked for none (`diag::Frame`: the app was waiting for input). Ends with `update`.
         let _frame = diag::frame_begin(ctx);
+        // Until start-up's shaders are built (`startup_shaders`), the window shows a screen saying
+        // so and nothing else runs: everything below may need the renderer. The fonts first, so the
+        // screen reads in Japanese and Chinese too.
+        if !matches!(self.startup_gpu, startup_shaders::StartupGpu::Ready) {
+            crate::theme::ensure_fonts(ctx, &crate::i18n::active().script);
+            if !self.startup_gpu_ready(ctx, frame) {
+                return;
+            }
+        }
         // Whether the interval ending now was owed: the last frame asked for this one. (A stalled
         // frame is still caught: `--recordtest` wedges one and asserts both the watchdog's row and
         // the tripwire.)
