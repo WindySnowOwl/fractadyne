@@ -1837,46 +1837,46 @@ coloring in these places, so sequence the two with care:
 
 ## 10. Status
 
-| Step       | State                                                         | Commit                                                                                    |
-| ---------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| A9         | done, merged                                                  | `33c6527e` (merge `3d202f30`)                                                             |
-| A6         | done, merged                                                  | `2c898852` (merge `38d93def`)                                                             |
-| A2         | done, merged                                                  | `3e5aa578` (merge `2a14e005`)                                                             |
-| A4         | done, merged                                                  | `475e2190` (merge `b9812c74`)                                                             |
-| A8         | done, merged                                                  | `095a7131` (merge `1db50a24`)                                                             |
-| A1         | done, merged                                                  | `c15bd9c7` (merge `aa5b22e7`)                                                             |
-| A3         | done, merged                                                  | `3ee690d7` (merge `3c8a59e7`)                                                             |
-| A5b        | done, merged                                                  | `fddc6ada` (merge `e11d1890`)                                                             |
-| A5a        | done, merged                                                  | `05306f71` (merge `45c2e84d`)                                                             |
-| A7         | done, merged                                                  | `603275eb` (merge `1bfdc833`)                                                             |
-| A10        | done, merged                                                  | `aaffca7f` (merge `6ec2fc76`)                                                             |
-| B1         | done, merged (agent v41, deployed)                            | `312c54a8` (merge `4efdbbb3`)                                                             |
-| B1 fixes   | Distance NaN; Newton's statistics methods                     | merges `91fa8f91`, `7722b660`                                                             |
-| B1b        | done, merged                                                  | `dc457c3f` (merge `2c51a6be`)                                                             |
-| B2         | done, merged                                                  | `c017a577` (merge `dcfd776b`)                                                             |
-| B3         | done, merged                                                  | `412fafc6` (merge `542a5264`)                                                             |
-| B4         | done, merged                                                  | `a5d7d74b` (merge `ba452e9c`)                                                             |
-| B6         | done, merged                                                  | `c1e4bd61` (merge `35001f80`)                                                             |
-| B7         | done, merged                                                  | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
-| B5         | done, merged                                                  | `b2b927d6` (merge `e3e53257`)                                                             |
-| B8         | done, merged                                                  | `fad9c868` (merge `d7593385`)                                                             |
-| B9         | done, merged                                                  | `6d18af38` (merge `23d32dc5`)                                                             |
-| B10        | done, merged                                                  | `2f9648d2` (merge `2f5db211`)                                                             |
-| C1         | done, merged                                                  | `58d6dce3` (merge `84af4b0d`)                                                             |
-| C4         | done, merged                                                  | `e99bfafd` (merge `9a3f9ff9`)                                                             |
-| C8         | done, merged; on by default on `feat/color-c8-aa-default`     | `5430aa2c` (merge `49153662`)                                                             |
-| C11        | done, merged                                                  | `b8a24c8f` (merge `a14b2296`)                                                             |
-| C9         | done, merged                                                  | `0b0c5f03` (merge `20e2fff5`)                                                             |
-| C2         | done, merged                                                  | `ca8acfe6` (merge `1694d7e4`)                                                             |
-| C3         | done, merged                                                  | `b0bd9259` (merge `550139a7`)                                                             |
-| C10        | done, merged                                                  | `43368601` (merge `cc471188`)                                                             |
-| C5         | done, merged                                                  | `ed36a532` (merge `2eb22119`)                                                             |
-| C6         | done, merged (after the C2 map fix, merge `c44d9d35`)         | `2674cffe` (merge `61325df2`)                                                             |
-| C6b        | done, merged (tours, zoom videos)                             | `5d53ce76` (merge `9d08ac0d`)                                                             |
-| C6c        | done, merged                                                  | `92836a58` (merge `e5a0432a`)                                                             |
-| C7         | done, merged                                                  | `3535dd38` (merge `e472c5ce`)                                                             |
-| F4 (1)     | done, merged                                                  | `559bb679` (merge `a9c8704e`)                                                             |
-| F4 (2)     | done, merged                                                  | `bbabc385` (merge `0c082800`)                                                             |
-| F4 inside  | the trap method's inside with a trap of its own: done, merged | `f8140294`, `6580ee12` (merge `67cf1e67`)                                                 |
-| F4 (3)     | done, on `feat/color-f4-trap-shapes`                          | merge recorded with the next step                                                         |
-| D, E, F, G | not started (F4 from part 4)                                  |                                                                                           |
+| Step       | State                                                              | Commit                                                                                    |
+| ---------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| A9         | done, merged                                                       | `33c6527e` (merge `3d202f30`)                                                             |
+| A6         | done, merged                                                       | `2c898852` (merge `38d93def`)                                                             |
+| A2         | done, merged                                                       | `3e5aa578` (merge `2a14e005`)                                                             |
+| A4         | done, merged                                                       | `475e2190` (merge `b9812c74`)                                                             |
+| A8         | done, merged                                                       | `095a7131` (merge `1db50a24`)                                                             |
+| A1         | done, merged                                                       | `c15bd9c7` (merge `aa5b22e7`)                                                             |
+| A3         | done, merged                                                       | `3ee690d7` (merge `3c8a59e7`)                                                             |
+| A5b        | done, merged                                                       | `fddc6ada` (merge `e11d1890`)                                                             |
+| A5a        | done, merged                                                       | `05306f71` (merge `45c2e84d`)                                                             |
+| A7         | done, merged                                                       | `603275eb` (merge `1bfdc833`)                                                             |
+| A10        | done, merged                                                       | `aaffca7f` (merge `6ec2fc76`)                                                             |
+| B1         | done, merged (agent v41, deployed)                                 | `312c54a8` (merge `4efdbbb3`)                                                             |
+| B1 fixes   | Distance NaN; Newton's statistics methods                          | merges `91fa8f91`, `7722b660`                                                             |
+| B1b        | done, merged                                                       | `dc457c3f` (merge `2c51a6be`)                                                             |
+| B2         | done, merged                                                       | `c017a577` (merge `dcfd776b`)                                                             |
+| B3         | done, merged                                                       | `412fafc6` (merge `542a5264`)                                                             |
+| B4         | done, merged                                                       | `a5d7d74b` (merge `ba452e9c`)                                                             |
+| B6         | done, merged                                                       | `c1e4bd61` (merge `35001f80`)                                                             |
+| B7         | done, merged                                                       | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
+| B5         | done, merged                                                       | `b2b927d6` (merge `e3e53257`)                                                             |
+| B8         | done, merged                                                       | `fad9c868` (merge `d7593385`)                                                             |
+| B9         | done, merged                                                       | `6d18af38` (merge `23d32dc5`)                                                             |
+| B10        | done, merged                                                       | `2f9648d2` (merge `2f5db211`)                                                             |
+| C1         | done, merged                                                       | `58d6dce3` (merge `84af4b0d`)                                                             |
+| C4         | done, merged                                                       | `e99bfafd` (merge `9a3f9ff9`)                                                             |
+| C8         | done, merged; on by default on `feat/color-c8-aa-default`          | `5430aa2c` (merge `49153662`)                                                             |
+| C11        | done, merged                                                       | `b8a24c8f` (merge `a14b2296`)                                                             |
+| C9         | done, merged                                                       | `0b0c5f03` (merge `20e2fff5`)                                                             |
+| C2         | done, merged                                                       | `ca8acfe6` (merge `1694d7e4`)                                                             |
+| C3         | done, merged                                                       | `b0bd9259` (merge `550139a7`)                                                             |
+| C10        | done, merged                                                       | `43368601` (merge `cc471188`)                                                             |
+| C5         | done, merged                                                       | `ed36a532` (merge `2eb22119`)                                                             |
+| C6         | done, merged (after the C2 map fix, merge `c44d9d35`)              | `2674cffe` (merge `61325df2`)                                                             |
+| C6b        | done, merged (tours, zoom videos)                                  | `5d53ce76` (merge `9d08ac0d`)                                                             |
+| C6c        | done, merged                                                       | `92836a58` (merge `e5a0432a`)                                                             |
+| C7         | done, merged                                                       | `3535dd38` (merge `e472c5ce`)                                                             |
+| F4 (1)     | done, merged                                                       | `559bb679` (merge `a9c8704e`)                                                             |
+| F4 (2)     | done, merged                                                       | `bbabc385` (merge `0c082800`)                                                             |
+| F4 inside  | the trap method's inside with a trap of its own: done, merged      | `f8140294`, `6580ee12` (merge `67cf1e67`)                                                 |
+| F4 (3)     | done, merged (six shapes, compiled only into frames that draw one) | `864af084`, `849bc9a5`, `e42772d9`, `08df4c87` (merge recorded with the next step)        |
+| D, E, F, G | not started (F4 from part 4)                                       |                                                                                           |
