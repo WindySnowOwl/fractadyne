@@ -350,6 +350,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--trap-phase DEG", "Shift the sine wave or square wave trap along itself by DEG degrees, a full wave every 360."),
         Flag("--trap-harmonics N", "How many odd harmonics the square wave trap sums, 1 (a sine wave) to 32 (default 5): more make its corners sharper and its sides steeper, and each is a little more calculation in every step of every orbit."),
         Flag("--trap-sine-harmonics N", "How many of the sine wave trap's harmonics are drawn over it at its height, 1 (the wave alone, the default) to 32: the waves of two, three, ... times its frequency. Each is a little more calculation in every step of every orbit."),
+        Flag("--trap-tail N", "The orbit trap's tail: every hit's distance doubles for each N iterations it lies before the orbit's end, the trap's and the inside's own, which draws the trap again at extreme depth, where every orbit comes nearest it in the stretch all of them share (4..=1048576; the Tail only option under Trap shape, 256 by default)."),
         Flag("--trap-size R", "The trap's size: the circle's radius, the polygons' and the star's corners' distance from the center, the waves' and the S curve's scale (0.01 to 10; default 1; not the point, the cross or the line)."),
         Flag("--interior-trap SHAPE", "With the orbit-trap method and the inside colored by the trap: the inside's own trap, any --trap SHAPE, or same (the method's trap, the default)."),
         Flag("--interior-trap-center X,Y", "The inside's own trap's center, as --trap-center."),

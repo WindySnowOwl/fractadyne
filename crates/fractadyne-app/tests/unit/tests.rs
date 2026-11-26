@@ -368,6 +368,8 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "interior_trap_harmonics", "interior_trap_sine_harmonics",
     // Written only when a trap the picture uses is the outline (F4, part 4).
     "trap_outline", "trap_outline_name",
+    // Written only with the trap's tail on (F4, part 5).
+    "trap_tail", "trap_tail_len",
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
     // Written only with the relief light on, and its slope from the distance (C5).
     "light_steep", "light_steep_px", "light_highlight", "light_shininess", "light_highlight_color",

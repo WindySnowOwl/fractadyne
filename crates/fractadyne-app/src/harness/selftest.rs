@@ -82,7 +82,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe", "round-trip",
     "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize", "palette-oklab",
-    "tour-equalize", "video-equalize", "trap-equalize", "lossy-formats", "tour-trap-fit",
+    "tour-equalize", "video-equalize", "trap-equalize", "lossy-formats", "tour-trap-fit", "trap-tail",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -7425,6 +7425,7 @@ impl FractadyneApp {
             self.coloring.use_custom_palette = false;
             let saved_stripe_freq = self.coloring.stripe_freq;
             let saved_trap_type = self.coloring.trap_type;
+            let saved_tail = (self.coloring.trap_tail, self.coloring.trap_tail_len);
             let saved_outline = (self.coloring.trap_outline.clone(), self.coloring.trap_outline_gpu.clone(), self.coloring.trap_outline_name.clone());
             self.coloring.set_outline(Some(selftest_outline()), "self-test".into());
             self.render_cfg.auto_iter = false;
@@ -7460,7 +7461,7 @@ impl FractadyneApp {
             // shadows the reference), so these compare the two at that approach only; `trap-place`
             // judges a picture with structure.
             let at = P::DEFAULT;
-            for (m, tt, freq, place, label) in [
+            for (m, tt, freq, place, label, tail) in [
                 (M::OrbitTrap, T::Point, 1.0f32, at, "orbit-trap-point"),
                 (M::OrbitTrap, T::Cross, 1.0, at, "orbit-trap-cross"),
                 (M::OrbitTrap, T::Circle, 1.0, at, "orbit-trap-circle"),
@@ -7488,10 +7489,24 @@ impl FractadyneApp {
                 (M::OrbitTrap, T::Outline, 1.0, at, "orbit-trap-outline"),
                 (M::TriangleIneq, T::Point, 1.0, at, "triangle-ineq"),
                 (M::Stripe, T::Point, 5.0, at, "stripe"),
-            ] {
+            ]
+            .into_iter()
+            .map(|(m, t, f, p, l)| (m, t, f, p, l, 0u32))
+            .chain([
+                // The trap's tail (F4 part 5): the nodes' aged lanes (`.z`, `.w`) against every
+                // iteration aging its hits. The tail must also change the picture (the same frame
+                // without it, BLA off): a tail that never reached the GPU would pass on an untailed one.
+                (M::OrbitTrap, T::Point, 1.0f32, at, "orbit-trap-point-tail-64", 64u32),
+                (M::OrbitTrap, T::Cross, 1.0, at, "orbit-trap-cross-tail-16", 16),
+                (M::OrbitTrap, T::Circle, 1.0, P { center: [0.1, 0.4], size: 0.3, ..at }, "orbit-trap-circle-placed-tail-256", 256),
+            ]) {
                 self.coloring.trap_type = tt;
                 self.coloring.trap_place = place;
                 self.coloring.stripe_freq = freq;
+                self.coloring.trap_tail = tail > 0;
+                if tail > 0 {
+                    self.coloring.trap_tail_len = tail;
+                }
                 let mut on = self.current_export_request_for(&vp, false);
                 on.width = N;
                 on.height = N;
@@ -7502,9 +7517,15 @@ impl FractadyneApp {
                 let (bla_on, mode) = (on.bla_on, on.mode);
                 let mut off = on.clone();
                 off.bla_on = 0;
-                let placed = !place.is_default();
+                // A placed case is judged against the same frame unmoved; a tail case against it
+                // without the tail.
+                let placed = !place.is_default() || tail > 0;
                 let mut unmoved = off.clone();
-                unmoved.trap_place = P::DEFAULT;
+                if tail > 0 {
+                    unmoved.trap_tail = 0;
+                } else {
+                    unmoved.trap_place = P::DEFAULT;
+                }
                 let chans = (nn * nn * 4) as u64;
                 let share = |a: &[f32], b: &[f32]| a.iter().zip(b).filter(|(x, y)| (*x - *y).abs() > 0.02).count() as u64;
                 match (rex(&on), rex(&off)) {
@@ -7520,13 +7541,16 @@ impl FractadyneApp {
                         // The placed cases' anti-vacuity: how much the move changed the picture.
                         let moved = if placed { rex(&unmoved).map(|u| share(&b, &u)) } else { None };
                         let moved_ok = !placed || moved.is_some_and(|n| n >= chans / 20);
-                        let moved_txt = moved.map_or(String::new(), |n| format!("; the move changed {n}/{chans} channels >2%"));
+                        let what = if tail > 0 { "the tail" } else { "the move" };
+                        let moved_txt = moved.map_or(String::new(), |n| format!("; {what} changed {n}/{chans} channels >2%"));
                         push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "BLA",
                             name: format!("{label}: BLA-fold == non-BLA @1e30×"),
                             params: format!("bla_on {bla_on}, maxΔ {maxd:.4}{moved_txt}"),
                             result: format!("{nd}/{chans} channels >2%"),
-                            threshold: if placed {
+                            threshold: if tail > 0 {
+                                "bla engaged, maxΔ<0.1, <1% differ; the tail changes ≥5% of the picture"
+                            } else if placed {
                                 "bla engaged, maxΔ<0.1, <1% differ; the move changes ≥5% of the picture"
                             } else {
                                 "bla engaged, maxΔ<0.1, <1% differ"
@@ -7550,6 +7574,7 @@ impl FractadyneApp {
             self.coloring.stripe_freq = saved_stripe_freq;
             self.coloring.trap_type = saved_trap_type;
             self.coloring.trap_place = crate::TrapPlace::DEFAULT;
+            (self.coloring.trap_tail, self.coloring.trap_tail_len) = saved_tail;
             (self.coloring.trap_outline, self.coloring.trap_outline_gpu, self.coloring.trap_outline_name) = saved_outline;
         }
 
@@ -7948,6 +7973,78 @@ impl FractadyneApp {
         // smooth field, not the angle group's chaotic one: > 50 colors and a nudge that moves >= 0.25%
         // (measured 2026-11-24: 78 to 176 colors, the nudge 0.7% (the square) to 6.5% (the hexagon),
         // BLA 0.4% to 3.4%; a flat picture, as at the aux-bla view, is 3 or 4 colors and 0%).
+        // ---- the trap's tail draws a deep view again (coloring plan F4, part 5) ----
+        // The coloring matrix's known-flat trap cells: at the seahorse at 1e20x every pixel's orbit
+        // follows the reference for all but its last iterations and comes nearest the trap in that
+        // shared stretch, so the whole orbit's nearest approach is nearly one value (the study,
+        // 2026-11-26: the line trap's spread 0.000 whole, 8.1 at a tail of 256). With the tail the
+        // picture has its structure back. This view runs the df32 loop, every iteration aging its
+        // hits; `aux-bla` holds the BLA fold of the aged lanes to it at 1e30x.
+        if want("trap-tail") {
+            use crate::TrapType as T;
+            let saved = (
+                (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.trap_type, self.coloring.trap_place),
+                (self.coloring.trap_tail, self.coloring.trap_tail_len, self.coloring.use_custom_palette, self.coloring.interior),
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
+            );
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+            self.coloring.interior = None;
+            self.coloring.use_custom_palette = false;
+            self.coloring.trap_place = crate::TrapPlace::DEFAULT;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 12_000;
+            self.render_cfg.series_approx = true;
+            self.render_cfg.use_bla = true;
+            let (w, h) = (320u32, 200u32);
+            let progress = std::sync::atomic::AtomicU32::new(0);
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 256).expect("the view's coordinate");
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.set_center_mag(at("-0.7436438870371587047521915061147707"), at("0.131825904205311970493132056385139"), 1.0e20);
+            for (shape, name) in [(T::Line, "line"), (T::Point, "point")] {
+                self.coloring.trap_type = shape;
+                let mut shots = Vec::new();
+                for tail in [false, true] {
+                    self.coloring.trap_tail = tail;
+                    self.coloring.trap_tail_len = 256;
+                    let mut r = self.current_export_request_for(&vp, false);
+                    r.width = w;
+                    r.height = h;
+                    r.ss = 1;
+                    shots.push(match fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel) {
+                        Ok(x) => {
+                            let bytes: Vec<u8> = x.pixels.iter().map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect();
+                            Some((frame::coherence(&bytes).0, bytes))
+                        }
+                        Err(e) => {
+                            eprintln!("[selftest] GPU ERROR (render_export): {e}");
+                            None
+                        }
+                    });
+                }
+                let (off, on) = (shots[0].as_ref().map(|s| s.0), shots[1].as_ref().map(|s| s.0));
+                // Twice `frame::coherent`'s bar for a picture rather than a fill, and four times the
+                // frame without the tail (the palette's fixed rate here, not fitted: on the RTX 3080 the
+                // line 0.39 to 10.8, the point 0.02 to 4.1).
+                let pass = matches!((off, on), (Some(a), Some(b)) if b >= 2.0 && b >= 4.0 * a.max(0.5));
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "consistency",
+                    name: format!("the trap's tail draws the {name} trap at the seahorse at 1e20x, flat without it"),
+                    params: "320x200, 12,000 iterations, the tail 256; the frame's luminance spread".into(),
+                    result: format!("spread without the tail {off:.2?}, with it {on:.2?}"),
+                    threshold: "with the tail at least 2 (twice a picture's bar), and four times without it",
+                    pass,
+                });
+            }
+            (
+                (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.trap_type, self.coloring.trap_place),
+                (self.coloring.trap_tail, self.coloring.trap_tail_len, self.coloring.use_custom_palette, self.coloring.interior),
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
+            ) = saved;
+        }
+
         if want("trap-place") {
             use crate::{TrapPlace as P, TrapType as T};
             let saved = (
@@ -11525,6 +11622,8 @@ zoom = \"1e94\"
                 trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6, phase: 0.0, ..crate::TrapPlace::DEFAULT },
                 interior_trap: Some(TrapType::Cross),
                 interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5, phase: 0.0, ..crate::TrapPlace::DEFAULT },
+                trap_tail: true,
+                trap_tail_len: 900,
                 light: true,
                 light_angle: -1.25,
                 light_height: 3.5,
@@ -11803,6 +11902,9 @@ zoom = \"1e94\"
                 // A drawing's outline (F4 part 4), its canonical text, and the file it came from.
                 trap_outline: "M -1 0 L 1 0 L 0 1 L -1 0".into(),
                 trap_outline_name: "triangle.svg".into(),
+                // The trap's tail (F4 part 5).
+                trap_tail: true,
+                trap_tail_len: 64,
                 custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
                 custom_palette_flat: true,
                 custom_segments: vec![fractadyne_state::PaletteSegment {
@@ -12278,6 +12380,13 @@ zoom = \"1e94\"
                 a.coloring.set_outline(drawing("M -1 -1 L 1 1"), "b.svg".into())
             });
             (self.coloring.trap_outline, self.coloring.trap_outline_gpu, self.coloring.trap_outline_name) = was_outline;
+            // The trap's tail (F4 part 5): its key is the trap's.
+            let was_tail = (self.coloring.trap_tail, self.coloring.trap_tail_len);
+            moved(self, "the trap's tail (Orbit trap)", &|a| {
+                a.coloring.trap_tail = !a.coloring.trap_tail;
+                a.coloring.trap_tail_len = 64;
+            });
+            (self.coloring.trap_tail, self.coloring.trap_tail_len) = was_tail;
             self.coloring.color_method = M::Stripe;
             moved(self, "the stripe density", &|a| a.coloring.stripe_freq += 1.5);
             moved(self, "the cycle", &|a| a.coloring.cycle *= 1.5);

@@ -131,7 +131,7 @@ pub(crate) fn inside_color_used(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 62] = [
+pub(crate) const FIELDS: [Field; 64] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -286,6 +286,27 @@ pub(crate) const FIELDS: [Field; 62] = [
         ),
         parents: &["method", "interior", "trap"],
         shows: |s| trap_drawn(s) && TrapType::from_key(&s.trap_type).spec().harmonic,
+    },
+    Field {
+        key: "trap_tail",
+        name: "trap tail",
+        doc: "The trap's hits aged by their distance from the orbit's end, each counting as twice as far for every `trap_tail_len` iterations before it, the trap's and the inside's own: draws the trap again at depth, where every orbit comes nearest it in the stretch all of them share (method \"trap\", or an inside colored by the trap).",
+        access: Access::Flag(|s| s.trap_tail, |s, v| s.trap_tail = v),
+        parents: &["method", "interior"],
+        shows: trap_drawn,
+    },
+    Field {
+        key: "trap_tail_len",
+        name: "trap tail length",
+        doc: "The trap tail's length in iterations (with `trap_tail`): over how many a hit's distance doubles.",
+        access: Access::Count(
+            |s| s.trap_tail_len,
+            |s, v| s.trap_tail_len = v,
+            *slider_range::TRAP_TAIL_LEN.start(),
+            *slider_range::TRAP_TAIL_LEN.end(),
+        ),
+        parents: &["method", "interior", "trap_tail"],
+        shows: |s| trap_drawn(s) && s.trap_tail,
     },
     Field {
         key: "trap_sine_harmonics",

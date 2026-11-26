@@ -132,6 +132,20 @@ pub(crate) struct IterUniforms {
     /// segment indices and segments start in the reference buffer, and whether it is there
     /// ([`outline_row`]); zeros = none, an outline trap measures as the point.
     pub(crate) outline_row: [u32; 4],
+    /// THE TRAP'S TAIL (the shader's `trap_tail_*`, coloring plan F4 part 5): `[growth per
+    /// iteration, 1 / the tail, 0, 0]` ([`trap_tail_row`]); `[1, 0, 0, 0]` off, every hit as near as
+    /// it came. ⛔Never zeros: a growth of 0 would zero every distance.
+    pub(crate) trap_tail: [f32; 4],
+}
+
+/// The trap's tail for the shader (`trap_tail_g`, `trap_tail_inv`): a tail of `tail` iterations
+/// (`fractadyne_core::coloring::Trap::tail`) while the frame accumulates the trap; else, and for 0,
+/// `[1, 0, 0, 0]`, which leaves every distance as it was.
+pub(crate) fn trap_tail_row(tail: u32, accumulated: bool) -> [f32; 4] {
+    if tail == 0 || !accumulated {
+        return [1.0, 0.0, 0.0, 0.0];
+    }
+    [fractadyne_core::coloring::trap_tail_growth(tail) as f32, (1.0 / f64::from(tail)) as f32, 0.0, 0.0]
 }
 
 /// A trap outline as the iterate shader reads it (coloring plan F4, part 4): its cells, indices and
@@ -877,6 +891,8 @@ struct IterKey {
     trap_in: Option<(u32, [u32; 7])>,
     /// The trap outline's key (F4 part 4), while the trap is accumulated: a new drawing re-iterates.
     outline: u64,
+    /// The trap's tail (F4 part 5), while the trap is accumulated.
+    trap_tail: u32,
     sa_skip: u32,
     bla_on: u32,
     /// Sub-pixel jitter (progressive SSAA): a changed jitter is a new sample and must re-iterate,
@@ -4170,6 +4186,9 @@ pub struct MandelbrotParams {
     pub trap_in: Option<(fractadyne_core::coloring::TrapType, fractadyne_core::coloring::TrapPlace)>,
     /// The view's trap outline (coloring plan F4, part 4), when a trap of the frame measures from it.
     pub outline: Option<std::sync::Arc<OutlineGpu>>,
+    /// The trap's tail in iterations (`fractadyne_core::coloring::Trap::tail`, F4 part 5), the trap's
+    /// and the inside's: every hit ages by its distance from the orbit's end. 0: off.
+    pub trap_tail: u32,
     /// Color-pass box-filter taps per axis (≥1). >1 anti-aliases an upscaled iteration
     /// texture (set when the work-budget reduced its resolution below the display).
     pub aa_filter: u32,
@@ -4294,6 +4313,7 @@ impl MandelbrotParams {
             trap_place: if orbit_stats.has(Stat::Trap) { self.trap_place.bits() } else { [0; 7] },
             trap_in: self.trap_in.filter(|_| orbit_stats.has(Stat::Trap)).map(|(s, p)| (s.gpu_id(), p.bits())),
             outline: self.outline.as_ref().filter(|_| orbit_stats.has(Stat::Trap)).map_or(0, |o| o.key),
+            trap_tail: if orbit_stats.has(Stat::Trap) { self.trap_tail } else { 0 },
             sa_skip: self.sa_skip,
             bla_on: self.bla_on,
             jitter: self.jitter,
@@ -4463,6 +4483,7 @@ impl Default for MandelbrotParams {
             trap_place: fractadyne_core::coloring::TrapPlace::DEFAULT,
             trap_in: None,
             outline: None,
+            trap_tail: 0,
             aa_filter: 1,
             interior_col: [0.0, 0.0, 0.0, 1.0],
             interior: InteriorShade::default(),
@@ -5123,6 +5144,7 @@ impl CallbackTrait for MandelbrotParams {
                 trap_in: trap_in_uniform(self.trap_type, self.trap_place, self.trap_in, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
                 trap_in_row: trap_in_uniform(self.trap_type, self.trap_place, self.trap_in, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
                 outline_row: outline_row(self.outline_base(), self.outline.as_deref(), true),
+                trap_tail: trap_tail_row(self.trap_tail, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)),
             };
             // A split pass is a single full-frame pass by definition (`MandelbrotParams::split`).
             let split_on = self.split[0] > 1 && self.chunk_range.is_none() && self.tile.is_none();

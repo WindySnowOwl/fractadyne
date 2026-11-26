@@ -2781,6 +2781,9 @@ panel-tail-length = 末尾の長さ
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = 回
 panel-tail-length-hover = 窓の長さ（反復回数）です。短い窓（8～32）はどの深度でも古典的な太い帯を生みます。長い窓では、長いカオス的な軌道のストライプ項が平均されて打ち消し合うため、再び平坦な色に近づきます。
+panel-trap-tail = 末尾のみ（ディープズーム）
+panel-trap-tail-hover = 各軌道がトラップに近づいたときの距離を、遅い接近ほど重く数えます。軌道の終わりより末尾の長さ分の反復だけ前にある接近は、距離が2倍として扱われます。極端な深さではどの軌道も最後の反復以外は参照軌道をたどり、その共通部分でトラップに最も近づくため、軌道全体の最接近では表示全体が1色になります。末尾を使うとトラップが再び描かれます。短い軌道はほとんど変わりません。--render では --trap-tail N。
+panel-trap-tail-length-hover = 接近の距離が2倍になる反復数。短い末尾では各軌道の最後の反復がより多く現れ、細かく込み入った模様になります。長い末尾では軌道全体の最接近に戻っていきます。
 panel-trap-shape = トラップの形
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

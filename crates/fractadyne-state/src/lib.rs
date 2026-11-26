@@ -265,6 +265,16 @@ pub struct ColoringSpec {
     pub trap_outline: String,
     #[serde(default)]
     pub trap_outline_name: String,
+    /// The orbit trap's TAIL (coloring plan F4, part 5), the method's trap and the inside's alike:
+    /// every hit's distance doubles each `trap_tail_len` iterations it lies before the orbit's end
+    /// (`fractadyne_core::coloring::Trap::tail`), so a deep view, where every orbit shares its
+    /// nearest approach with the reference's, draws again. Off, and absent from every session from
+    /// before it: the nearest approach of the whole orbit.
+    #[serde(default)]
+    pub trap_tail: bool,
+    /// The tail's length in iterations, 4 to 2^20 (`fractadyne_core::coloring::TRAP_TAIL_*`).
+    #[serde(default = "default_trap_tail_len")]
+    pub trap_tail_len: u32,
     /// Custom gradient stops `[pos, r, g, b]` (DISPLAY-space RGB) from the gradient editor.
     #[serde(default)]
     pub custom_palette: Vec<[f32; 4]>,
@@ -938,6 +948,15 @@ fn default_sine_harmonics() -> u32 {
     1
 }
 
+/// `fractadyne_core::coloring::TRAP_TAIL_DEFAULT` (the app's tests hold the two equal): at the
+/// seahorse at 1e20x the line trap's bands thread the valley at 256 (spread 8.1, against 0.000 for
+/// the whole orbit; 2026-11-26).
+pub const DEFAULT_TRAP_TAIL_LEN: u32 = 256;
+
+fn default_trap_tail_len() -> u32 {
+    DEFAULT_TRAP_TAIL_LEN
+}
+
 impl Default for ColoringSpec {
     fn default() -> Self {
         Self {
@@ -996,6 +1015,8 @@ impl Default for ColoringSpec {
             interior_trap_sine_harmonics: 1,
             trap_outline: String::new(),
             trap_outline_name: String::new(),
+            trap_tail: false,
+            trap_tail_len: DEFAULT_TRAP_TAIL_LEN,
             custom_palette: Vec::new(),
             custom_palette_flat: false,
             custom_segments: Vec::new(),

@@ -2861,6 +2861,9 @@ panel-tail-length = Longitud de cola
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = it
 panel-tail-length-hover = Longitud de la ventana en iteraciones. Las ventanas cortas (8–32) dan las bandas marcadas clásicas a cualquier profundidad; las más largas vuelven a promediar hacia un color plano, ya que el término de franjas de una órbita caótica larga se compensa en promedio.
+panel-trap-tail = Solo la cola (zoom profundo)
+panel-trap-tail-hover = Cuenta más los acercamientos tardíos de cada órbita a la trampa que los tempranos: la distancia de un acercamiento cuenta como el doble por cada longitud de cola de iteraciones antes del final de la órbita. A profundidad extrema cada órbita sigue a la de referencia salvo en sus últimas iteraciones y se acerca más a la trampa en ese tramo compartido, así que el acercamiento máximo de la órbita entera es un solo color en toda la vista; la cola vuelve a dibujar la trampa. Las órbitas cortas apenas cambian. También --trap-tail N para --render.
+panel-trap-tail-length-hover = Iteraciones en las que se duplica la distancia de un acercamiento. Las colas más cortas muestran más de las últimas iteraciones de cada órbita, más finas y recargadas; las más largas vuelven hacia el acercamiento máximo de la órbita entera.
 panel-trap-shape = Forma de trampa
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

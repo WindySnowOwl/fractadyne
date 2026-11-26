@@ -1078,6 +1078,13 @@ struct IterU {
     outline_idx: u32,
     outline_segs: u32,
     outline_on: u32,
+    // THE TRAP'S TAIL (lib.rs `trap_tail_row`, coloring plan F4 part 5): each iteration every hit's
+    // distance grows by trap_tail_g (1: off), a skipped run of `span` iterations by
+    // 2^(span * trap_tail_inv) (0: off).
+    trap_tail_g: f32,
+    trap_tail_inv: f32,
+    trap_tail_pad0: f32,
+    trap_tail_pad1: f32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -1741,9 +1748,12 @@ fn trap_in_dist(zf: vec2<f32>) -> f32 {
 fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
     let st = iu.orbit_stats;
     if ((st & STAT_TRAP) != 0u) {
-        // Orbit trap: nearest approach to its shape (`trap_dist`).
-        (*a).trap = min((*a).trap, trap_dist(zf));
-        if (iu.trap_in_enabled != 0u) { (*a).trap_in = min((*a).trap_in, trap_in_dist(zf)); }
+        // Orbit trap: nearest approach to its shape (`trap_dist`). With its tail on (F4 part 5) every
+        // earlier hit's distance first grows by trap_tail_g, doubling over the tail's length, so a hit
+        // the pixel's orbit shared with every other pixel's long ago loses to its own late ones; off,
+        // trap_tail_g is 1 and the product exact: as before.
+        (*a).trap = min((*a).trap * iu.trap_tail_g, trap_dist(zf));
+        if (iu.trap_in_enabled != 0u) { (*a).trap_in = min((*a).trap_in * iu.trap_tail_g, trap_in_dist(zf)); }
     }
     if ((st & STAT_STRIPE) != 0u) {
         // Stripe average: smooth orbit average of a sinusoid of the argument.
@@ -1780,8 +1790,20 @@ fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
 fn aux_fold_run(a: ptr<function, Aux>, agg: vec4<f32>, span: u32, extra: vec4<f32>, exact: bool) {
     let st = iu.orbit_stats;
     if ((st & STAT_TRAP) != 0u) {
-        (*a).trap = min((*a).trap, agg.y);
-        if (iu.trap_in_enabled != 0u) { (*a).trap_in = min((*a).trap_in, extra.y); }
+        if (iu.trap_tail_inv > 0.0) {
+            // The trap's tail (F4 part 5): the hits so far age by the run's length, held at 2^126 as
+            // core's `trap_tail_factor` (finite in f32; a hit that old loses to any other), and the
+            // node's aged lanes (`.z`, the inside's `.w`) hold the run's own, each aged to its end.
+            // The series prefix folds the same lanes: the trap's nearest approach is a minimum, which
+            // the drift from the reference by the prefix's end does not bias as it does the stripe's
+            // window.
+            let f = exp2(min(f32(span) * iu.trap_tail_inv, 126.0));
+            (*a).trap = min((*a).trap * f, extra.z);
+            if (iu.trap_in_enabled != 0u) { (*a).trap_in = min((*a).trap_in * f, extra.w); }
+        } else {
+            (*a).trap = min((*a).trap, agg.y);
+            if (iu.trap_in_enabled != 0u) { (*a).trap_in = min((*a).trap_in, extra.y); }
+        }
     }
     if ((st & STAT_TRIANGLE) != 0u) { (*a).tia_sum = (*a).tia_sum + agg.z; }
     if ((st & STAT_STRIPE) != 0u) {

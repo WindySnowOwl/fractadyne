@@ -2860,6 +2860,9 @@ panel-tail-length = Compr. da cauda
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = it
 panel-tail-length-hover = Comprimento da janela em iterações. Janelas curtas (8–32) dão as faixas fortes clássicas em qualquer profundidade; as mais longas voltam a tender a uma cor chapada, já que o termo de listras de uma órbita caótica longa se anula na média.
+panel-trap-tail = Só a cauda (zoom profundo)
+panel-trap-tail-hover = Conta mais as aproximações tardias de cada órbita à armadilha do que as iniciais: a distância de uma aproximação conta como o dobro a cada comprimento de cauda de iterações antes do fim da órbita. Em profundidade extrema, toda órbita segue a de referência, exceto nas últimas iterações, e chega mais perto da armadilha nesse trecho comum, então a aproximação máxima da órbita inteira é uma única cor na vista toda; a cauda volta a desenhar a armadilha. Órbitas curtas quase não mudam. Também --trap-tail N para --render.
+panel-trap-tail-length-hover = Iterações em que a distância de uma aproximação dobra. Caudas mais curtas mostram mais das últimas iterações de cada órbita, mais finas e carregadas; as mais longas voltam à aproximação máxima da órbita inteira.
 panel-trap-shape = Forma da armadilha
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

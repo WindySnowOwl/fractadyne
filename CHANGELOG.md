@@ -75,6 +75,17 @@ detail is in the git history.
   now fitted to its own values, as the live view fits the screen, so the video looks like the
   view. Fitting a frame costs about a quarter more time at 2x2 supersampling. A frame depends on
   nothing but its own view, so one full turn of the trap's phase rendered once loops seamlessly.
+- **The orbit trap's tail: a trap that draws at any depth.** Under Trap shape, Tail only (deep
+  zoom) counts each orbit's late approaches to the trap more than its early ones: a hit counts as
+  twice as far for every Tail length of iterations before the orbit's end. At extreme depth every
+  orbit follows the reference for all but its last iterations and comes nearest the trap in that
+  shared stretch, so a deep view colored by the trap came out one color; with the tail the trap
+  draws again, its bands threading the seahorse valley at 1e20x where the view was one flat red.
+  Shorter tails show more of each orbit's last iterations, finer and busier; longer ones come back
+  toward the whole orbit's nearest approach, and short orbits change little. It applies to the
+  method's trap and the inside's own, and keeps the deep-zoom acceleration. A view file keeps it
+  (`trap_tail` and `trap_tail_len`), a tour's keyframes can state it, and on the command line it
+  is `--trap-tail N`.
 - **An orbit trap in the shape of your own drawing.** The trap shape Outline takes its shape from
   an SVG file: Load SVG... under Trap shape reads the drawing's paths and shapes (rectangles,
   circles, ellipses, lines, polylines and polygons, with their transforms; text and images are left

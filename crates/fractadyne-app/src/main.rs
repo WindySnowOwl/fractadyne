@@ -3398,6 +3398,11 @@ pub(crate) mod slider_range {
     /// The stripe tail's length in iterations: what `--stripe-tail` and a view file accept. The
     /// panel's slider stops at 1024; past that only the command line goes.
     pub(crate) const STRIPE_TAIL_LEN: RangeInclusive<u32> = 4..=1 << 20;
+    /// The trap's tail in iterations (F4 part 5): what `--trap-tail` and a view file accept; the
+    /// panel's slider is [`TRAP_TAIL_PANEL`].
+    pub(crate) const TRAP_TAIL_LEN: RangeInclusive<u32> =
+        fractadyne_core::coloring::TRAP_TAIL_MIN..=fractadyne_core::coloring::TRAP_TAIL_MAX;
+    pub(crate) const TRAP_TAIL_PANEL: RangeInclusive<u32> = 4..=16_384;
     /// Equalize colors' share of histogram coloring (`--equalize`, coloring plan C6).
     pub(crate) const EQUALIZE: RangeInclusive<f32> = 0.0..=1.0;
 }
@@ -6937,6 +6942,11 @@ struct ColoringConfig {
     trap_outline: Option<std::sync::Arc<fractadyne_core::outline::Outline>>,
     trap_outline_gpu: Option<std::sync::Arc<fractadyne_gpu::OutlineGpu>>,
     trap_outline_name: String,
+    /// The trap's tail (coloring plan F4, part 5): its hits aged by their distance from the orbit's
+    /// end, the method's trap and the inside's alike ([`ColoringConfig::trap`]), and its length in
+    /// iterations. Persisted.
+    trap_tail: bool,
+    trap_tail_len: u32,
     /// What colors the inside of the set (coloring plan B5); `None`: the method's own
     /// (`InteriorMode::of_method`: the orbit trap its trap, every other method one color), so a view
     /// that never chose keeps its look whichever method it takes. Persisted.
@@ -7010,6 +7020,7 @@ impl ColoringConfig {
             _ => t,
         };
         t.with_outline(self.trap_outline.as_ref().map_or(0, |o| o.key()))
+            .with_tail(if self.trap_tail { self.trap_tail_len } else { 0 })
     }
 
     /// The view's outline, when `trap` (the method's or the inside's) measures from it.
@@ -7332,6 +7343,8 @@ fn coloring_from_session(s: &fractadyne_state::SessionState, args: &[String]) ->
         trap_outline_gpu: outline.as_deref().map(|o| std::sync::Arc::new(fractadyne_gpu::OutlineGpu::of(o))),
         trap_outline: outline,
         trap_outline_name: c.trap_outline_name.clone(),
+        trap_tail: c.trap_tail,
+        trap_tail_len: c.trap_tail_len.clamp(*slider_range::TRAP_TAIL_LEN.start(), *slider_range::TRAP_TAIL_LEN.end()),
         interior: InteriorMode::parse_key(&c.interior),
         interior_palette: fractadyne_color::preset_by_id(&c.interior_palette),
         interior_color: c.interior_color,
@@ -9687,6 +9700,11 @@ impl FractadyneApp {
             self.coloring.stripe_tail = true;
             self.coloring.stripe_tail_len = n.clamp(*slider_range::STRIPE_TAIL_LEN.start(), *slider_range::STRIPE_TAIL_LEN.end());
         }
+        // The trap's tail (F4 part 5): on, at this length.
+        if let Some(n) = val("--trap-tail").map(|s| arg_parse::<u32>("--trap-tail", s, "a number of iterations")) {
+            self.coloring.trap_tail = true;
+            self.coloring.trap_tail_len = n.clamp(*slider_range::TRAP_TAIL_LEN.start(), *slider_range::TRAP_TAIL_LEN.end());
+        }
         if let Some(t) = val("--trap") {
             let picked = TrapType::from_key(t);
             if picked.key() != t.as_str() {
@@ -10156,6 +10174,8 @@ impl FractadyneApp {
             interior_trap_sine_harmonics: self.coloring.interior_trap_place.sine_harmonics,
             trap_outline: self.coloring.trap_outline.as_ref().map_or_else(String::new, |o| o.text().to_string()),
             trap_outline_name: self.coloring.trap_outline_name.clone(),
+            trap_tail: self.coloring.trap_tail,
+            trap_tail_len: self.coloring.trap_tail_len,
             custom_palette: self.coloring.custom_palette.clone(),
             custom_palette_flat: self.coloring.custom_palette_flat,
             custom_segments: self.coloring.custom_segments.clone(),
@@ -10218,6 +10238,8 @@ impl FractadyneApp {
         c.trap_place = trap_place_of(s);
         c.interior_trap = TrapType::parse_key(&s.interior_trap);
         c.interior_trap_place = interior_trap_place_of(s);
+        c.trap_tail = s.trap_tail;
+        c.trap_tail_len = s.trap_tail_len.clamp(*slider_range::TRAP_TAIL_LEN.start(), *slider_range::TRAP_TAIL_LEN.end());
         // The outline, parsed again only when its text changed (that builds its grid).
         if c.trap_outline.as_ref().map_or("", |o| o.text()) == s.trap_outline {
             c.trap_outline_name = s.trap_outline_name.clone();

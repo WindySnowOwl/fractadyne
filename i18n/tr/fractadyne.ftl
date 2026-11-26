@@ -2852,6 +2852,9 @@ panel-tail-length = Kuyruk uzunluğu
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = yin.
 panel-tail-length-hover = Yineleme cinsinden pencere uzunluğu. Kısa pencereler (8–32) her derinlikte klasik kalın bantları verir; daha uzun olanlar yeniden düz bir renge doğru ortalanır, çünkü uzun, kaotik bir yörüngenin şerit terimi ortalamada birbirini götürür.
+panel-trap-tail = Yalnızca kuyruk (derin yakınlaştırma)
+panel-trap-tail-hover = Her yörüngenin tuzağa geç yaklaşmaları erken olanlardan daha çok sayılır: bir yaklaşmanın uzaklığı, yörüngenin sonundan önceki her kuyruk uzunluğu kadar yineleme için iki kat sayılır. Aşırı derinlikte her yörünge son yinelemeleri dışında referans yörüngeyi izler ve tuzağa en çok bu ortak kesimde yaklaşır; bu yüzden tüm yörüngenin en yakın yaklaşması tüm görünümü tek renk yapar, kuyruk tuzağı yeniden çizer. Kısa yörüngeler pek değişmez. --render için de --trap-tail N.
+panel-trap-tail-length-hover = Bir yaklaşmanın uzaklığının iki katına çıktığı yineleme sayısı. Daha kısa kuyruk her yörüngenin son yinelemelerini daha çok gösterir, daha ince ve daha kalabalık; daha uzunu tüm yörüngenin en yakın yaklaşmasına geri döner.
 panel-trap-shape = Tuzak şekli
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

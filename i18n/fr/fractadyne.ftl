@@ -2861,6 +2861,9 @@ panel-tail-length = Longueur de queue
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = it
 panel-tail-length-hover = Longueur de la fenêtre en itérations. Les fenêtres courtes (8–32) donnent les bandes marquées classiques à toute profondeur ; les plus longues tendent de nouveau vers une couleur uniforme, car le terme de rayures d’une longue orbite chaotique se moyenne.
+panel-trap-tail = Queue seule (zoom profond)
+panel-trap-tail-hover = Compte davantage les approches tardives de chaque orbite vers le piège que les précoces : la distance d’une approche compte double pour chaque longueur de queue d’itérations avant la fin de l’orbite. À très grande profondeur, chaque orbite suit l’orbite de référence sauf pendant ses dernières itérations et s’approche le plus du piège dans ce tronçon commun ; l’approche la plus proche de toute l’orbite donne alors une seule couleur à toute la vue, et la queue redessine le piège. Les orbites courtes changent à peine. Aussi --trap-tail N pour --render.
+panel-trap-tail-length-hover = Nombre d’itérations sur lequel la distance d’une approche double. Une queue plus courte montre davantage les dernières itérations de chaque orbite, plus fines et plus chargées ; une plus longue revient vers l’approche la plus proche de toute l’orbite.
 panel-trap-shape = Forme du piège
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

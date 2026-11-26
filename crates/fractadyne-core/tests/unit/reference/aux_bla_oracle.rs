@@ -272,7 +272,7 @@ fn analyze(label: &str, cx_str: &str, cy_str: &str, octaves: u64, dc_ext: f64) -
     let cmag = mag(to_f64(&cx), to_f64(&cy));
     let bailout2 = 1.0e10f64;
     let dc_max = FloatExp::from_f64(dc_ext * 1.5);
-    let aux_p = AuxAggParams { trap_type: crate::coloring::TrapType::Point, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, outline: None, stripe_freq: FREQ, cmag, power: POWER, stripe_tail_alpha: 0.0 };
+    let aux_p = AuxAggParams { trap_type: crate::coloring::TrapType::Point, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, outline: None, stripe_freq: FREQ, cmag, power: POWER, stripe_tail_alpha: 0.0, trap_tail: 0 };
     let levels = build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_p);
 
     // Phase-1 precompute check: every node's seeded+merged aggregate must equal a brute-force
@@ -379,6 +379,7 @@ fn build_bla_parallel_matches_serial() {
         cmag: mag(to_f64(&cx), to_f64(&cy)),
         power: POWER,
         stripe_tail_alpha: 0.0,
+        trap_tail: 0,
     };
     let serial = build_bla_mandel_impl(&orbit, dc_max, 1.0e-6, &aux_p, usize::MAX, 2);
     let parallel = build_bla_mandel_impl(&orbit, dc_max, 1.0e-6, &aux_p, 0, 2);
@@ -413,10 +414,11 @@ fn apply_bla_aux_matches_full_rebuild() {
     let dc_max = FloatExp::from_f64(1.0e-6);
     let cmag = mag(to_f64(&cx), to_f64(&cy));
     // Coloring A: trap type 0 (|Z|), one stripe frequency.
-    let aux_a = AuxAggParams { trap_type: crate::coloring::TrapType::Point, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, outline: None, stripe_freq: 5.0, cmag, power: POWER, stripe_tail_alpha: 0.0 };
+    let aux_a = AuxAggParams { trap_type: crate::coloring::TrapType::Point, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, outline: None, stripe_freq: 5.0, cmag, power: POWER, stripe_tail_alpha: 0.0, trap_tail: 0 };
     let mut buf = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_a.clone()));
-    // Change to coloring B (trap type 2 + a different frequency) via the fast path.
-    let aux_b = AuxAggParams { trap_type: crate::coloring::TrapType::Circle, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, outline: None, stripe_freq: 12.5, cmag, power: POWER, stripe_tail_alpha: 0.0 };
+    // Change to coloring B (trap type 2 + a different frequency, the trap's tail on: the aged lanes)
+    // via the fast path.
+    let aux_b = AuxAggParams { trap_type: crate::coloring::TrapType::Circle, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, outline: None, stripe_freq: 12.5, cmag, power: POWER, stripe_tail_alpha: 0.0, trap_tail: 64 };
     apply_bla_aux(&mut buf, &orbit, aux_b.clone());
     // Ground truth: a full rebuild with B.
     let full_b = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_b.clone()));
@@ -448,8 +450,8 @@ fn aux_regen_speedup() {
     let nstep = orbit.len().saturating_sub(1);
     let dc_max = FloatExp::from_f64(1.0e-6);
     let cmag = mag(to_f64(&cx), to_f64(&cy));
-    let aux_a = AuxAggParams { trap_type: crate::coloring::TrapType::Point, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, outline: None, stripe_freq: 5.0, cmag, power: POWER, stripe_tail_alpha: 0.0 };
-    let aux_b = AuxAggParams { trap_type: crate::coloring::TrapType::Circle, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, outline: None, stripe_freq: 12.5, cmag, power: POWER, stripe_tail_alpha: 0.0 };
+    let aux_a = AuxAggParams { trap_type: crate::coloring::TrapType::Point, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, outline: None, stripe_freq: 5.0, cmag, power: POWER, stripe_tail_alpha: 0.0, trap_tail: 0 };
+    let aux_b = AuxAggParams { trap_type: crate::coloring::TrapType::Circle, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, outline: None, stripe_freq: 12.5, cmag, power: POWER, stripe_tail_alpha: 0.0, trap_tail: 0 };
     let mut base = bla_to_gpu(&build_bla_mandel(&orbit, dc_max, 1.0e-6, aux_a.clone()));
     let median = |mut v: Vec<f64>| {
         v.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -601,6 +603,63 @@ fn the_inside_trap_has_its_own_aggregate_lane() {
     let mut patched = bla_to_gpu(&build_bla_mandel(&orbit, FloatExp::from_f64(1.0e-12), 1.0e-6, plain.clone()));
     apply_bla_aux(&mut patched, &orbit, with_in.clone());
     assert_eq!(patched, gpu, "patching the lanes gives the tree built with them");
+}
+
+/// The trap's tail (F4 part 5): every node's aged lanes, the trap's and the inside's own, are the
+/// brute-force aged minimum over its landing range, each distance times 2^(its age at the range's
+/// end / tail), in the complex tree, the fold tree and the aux-only rebuild alike; with the tail off
+/// they repeat the plain minimum. A long orbit at the seahorse valley, so the merges age hits across
+/// many levels (sabotage: merging without the age is caught at level 1).
+#[test]
+fn the_trap_tail_ages_every_hit_by_its_distance_from_the_end() {
+    use crate::coloring::{trap_tail_factor, TrapPlace, TrapType};
+    let p = crate::precision_for_octaves(4);
+    let cx = crate::parse_bf("-0.7436438870371587").unwrap();
+    let cy = crate::parse_bf("0.1318259042053119").unwrap();
+    let z0 = BigFloat::from_f64(0.0, p);
+    let (orbit, _len) = reference_orbit(&z0, &z0, &cx, &cy, formula::MANDELBROT, 3_000, p);
+    assert!(orbit.len() > 2_000, "the orbit escaped early: {}", orbit.len());
+    let inside = (TrapType::Circle, TrapPlace { center: [0.1, 0.4], size: 0.3, ..TrapPlace::DEFAULT });
+    for tail in [0u32, 16, 256] {
+        let aux = AuxAggParams { trap_type: TrapType::Cross, trap_in: Some(inside), trap_tail: tail, ..AuxAggParams::default() };
+        let brute = |start: usize, span: usize| {
+            let end = start + span;
+            let (mut t, mut tin) = (f64::INFINITY, f64::INFINITY);
+            for k in start + 1..=end {
+                let (x, y) = sample_xy(&orbit[k]);
+                let age = trap_tail_factor(tail, (end - k) as u32);
+                let d = aux_trap_dist(x, y, &aux);
+                t = t.min(d * age);
+                tin = tin.min(aux_trap_in_dist(x, y, &aux, d) * age);
+            }
+            (t, tin)
+        };
+        let close = |a: f64, b: f64| (a - b).abs() <= 1e-12 * a.abs();
+        let complex = build_bla_mandel(&orbit, FloatExp::from_f64(1e-9), 1.0e-6, aux.clone());
+        for (l, level) in complex.iter().enumerate() {
+            for (j, n) in level.iter().enumerate() {
+                let (t, tin) = brute(j << l, n.span as usize);
+                assert!(close(t, n.agg_trap_aged), "tail {tail}, level {l} node {j}: aged {} against {t}", n.agg_trap_aged);
+                assert!(close(tin, n.agg_trap_in_aged), "tail {tail}, level {l} node {j}: inside aged {} against {tin}", n.agg_trap_in_aged);
+                if tail == 0 {
+                    assert_eq!((n.agg_trap_aged, n.agg_trap_in_aged), (n.agg_trap, n.agg_trap_in), "tail off: the plain minimum");
+                }
+            }
+        }
+        let fold = super::bla_fold::build_bla_fold(&orbit, FloatExp::from_f64(1e-9), 1.0e-6, aux.clone(), formula::BURNING_SHIP);
+        for (l, level) in fold.iter().enumerate() {
+            for (j, n) in level.iter().enumerate() {
+                let (t, tin) = brute(j << l, n.span as usize);
+                assert!(close(t, n.agg_trap_aged) && close(tin, n.agg_trap_in_aged), "tail {tail}, fold level {l} node {j}");
+            }
+        }
+        // The aux-only rebuild writes the same lanes, and the patch the tree's.
+        let gpu = bla_to_gpu(&complex);
+        let lanes = bla_aux_lanes(&orbit, aux.clone());
+        for (i, ln) in lanes.iter().enumerate() {
+            assert_eq!([gpu[BLA_NODE_VEC4S * i + 4][2], gpu[BLA_NODE_VEC4S * i + 4][3]], [ln[5], ln[6]], "tail {tail}, node {i}");
+        }
+    }
 }
 
 /// With the stripe TAIL on, a node's window lane (`agg_window`) is the window-weighted sum of its landing range,

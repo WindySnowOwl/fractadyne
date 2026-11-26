@@ -548,6 +548,7 @@ fn aux_agg_from_orbit(
         cmag,
         power: f64::from(power),
         stripe_tail_alpha,
+        trap_tail: trap.tail,
     }
 }
 
@@ -4894,6 +4895,7 @@ impl FractadyneApp {
             trap_place: self.coloring.trap().place,
             trap_in: self.coloring.trap().inside,
             outline: self.coloring.outline_gpu_for(self.coloring.trap()),
+            trap_tail: self.coloring.trap().tail,
             aa_filter: 1,
             interior_col: self.interior_color(),
             // The chosen method's interior: an export never shows a preview.
@@ -4977,6 +4979,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         trap_place: p.trap_place,
         trap_in: p.trap_in,
         outline: p.outline.clone(),
+        trap_tail: p.trap_tail,
         aa_filter: p.aa_filter,
         interior_col: p.interior_col,
         interior: p.interior.clone(),
@@ -7918,6 +7921,7 @@ impl FractadyneApp {
             trap_place: self.coloring.trap().place,
             trap_in: self.coloring.trap().inside,
             outline: self.coloring.outline_gpu_for(self.coloring.trap()),
+            trap_tail: self.coloring.trap().tail,
             aa_filter,
             interior_col: self.view_interior_color(),
             // As shown: a method sheet preview shows that method's interior, and the palette

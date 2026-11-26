@@ -2861,6 +2861,9 @@ panel-tail-length = Endlänge
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = it
 panel-tail-length-hover = Fensterlänge in Iterationen. Kurze Fenster (8–32) ergeben in jeder Tiefe die klassischen kräftigen Bänder; längere mitteln wieder zu einer flachen Farbe hin, da sich der Streifenterm eines langen chaotischen Orbits herausmittelt.
+panel-trap-tail = Nur Ende (Tiefenzoom)
+panel-trap-tail-hover = Späte Annäherungen jedes Orbits an die Falle zählen mehr als frühe: Der Abstand eines Treffers zählt für jede Endlänge an Iterationen vor dem Ende des Orbits doppelt so weit. In extremer Tiefe folgt jeder Orbit bis auf seine letzten Iterationen der Referenz und kommt der Falle in diesem gemeinsamen Abschnitt am nächsten, sodass die nächste Annäherung des ganzen Orbits die ganze Ansicht in einer Farbe zeigt; das Ende zeichnet die Falle wieder. Kurze Orbits ändern sich kaum. Auch --trap-tail N für --render.
+panel-trap-tail-length-hover = Iterationen, über die sich der Abstand eines Treffers verdoppelt. Kürzere Enden zeigen mehr von den letzten Iterationen jedes Orbits, feiner und unruhiger; längere nähern sich wieder der nächsten Annäherung des ganzen Orbits.
 panel-trap-shape = Fallenform
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

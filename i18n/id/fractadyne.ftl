@@ -2780,6 +2780,9 @@ panel-tail-length = Panjang ekor
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = it
 panel-tail-length-hover = Panjang jendela dalam iterasi. Jendela pendek (8–32) memberikan pita tebal klasik pada kedalaman berapa pun; jendela yang lebih panjang kembali merata-rata menjadi warna datar, karena suku garis dari orbit kacau yang panjang saling meniadakan.
+panel-trap-tail = Hanya ekor (zoom dalam)
+panel-trap-tail-hover = Pendekatan akhir setiap orbit ke perangkap dihitung lebih berat daripada yang awal: jarak suatu pendekatan dihitung dua kali lebih jauh untuk setiap panjang ekor iterasi sebelum akhir orbit. Pada kedalaman ekstrem setiap orbit mengikuti referensi kecuali pada iterasi terakhirnya dan paling dekat ke perangkap di bagian bersama itu, sehingga pendekatan terdekat seluruh orbit menjadi satu warna untuk seluruh tampilan; ekor menggambar perangkap lagi. Orbit pendek hampir tidak berubah. Juga --trap-tail N untuk --render.
+panel-trap-tail-length-hover = Jumlah iterasi tempat jarak suatu pendekatan menjadi dua kali lipat. Ekor yang lebih pendek menampilkan lebih banyak iterasi terakhir setiap orbit, lebih halus dan lebih ramai; yang lebih panjang kembali mendekati pendekatan terdekat seluruh orbit.
 panel-trap-shape = Bentuk perangkap
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

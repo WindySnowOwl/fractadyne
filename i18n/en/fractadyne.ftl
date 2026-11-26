@@ -3059,6 +3059,9 @@ panel-tail-length = Tail length
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = it
 panel-tail-length-hover = Window length in iterations. Short windows (8–32) give the classic bold banding at any depth; longer ones average toward a flat color again, since the stripe term of a long chaotic orbit averages out.
+panel-trap-tail = Tail only (deep zoom)
+panel-trap-tail-hover = Count each orbit's late approaches to the trap more than its early ones: a hit's distance counts as twice as far for every tail length of iterations before the orbit's end. At extreme depth every orbit follows the reference for all but its last iterations and comes nearest the trap in that shared stretch, so the whole orbit's nearest approach is one color for the whole view; the tail draws the trap again. Short orbits barely change. Also --trap-tail N for --render.
+panel-trap-tail-length-hover = Iterations over which a hit's distance doubles. Shorter tails show more of each orbit's last iterations, finer and busier; longer ones come back toward the whole orbit's nearest approach.
 panel-trap-shape = Trap shape
 # Where the orbit trap sits (coloring plan F4): its two coordinates in the plane the orbits move in.
 panel-trap-center-x = Trap center x

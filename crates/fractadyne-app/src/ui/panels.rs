@@ -39,6 +39,28 @@ impl crate::FractadyneApp {
         }
         trap_place_rows(ui, self.coloring.trap_type, &mut self.coloring.trap_place, &mut self.coloring.trap_phase_anim);
         self.trap_on_cycle_button(ui, false);
+        self.trap_tail_rows(ui);
+    }
+
+    /// The trap's tail (F4 part 5), the method's trap and the inside's alike: Tail only, and its
+    /// length while it is on. Under the trap's shape, wherever that is drawn.
+    fn trap_tail_rows(&mut self, ui: &mut egui::Ui) {
+        ui.checkbox(&mut self.coloring.trap_tail, tr!(panel_trap_tail)).on_hover_text(tr!(panel_trap_tail_hover));
+        if self.coloring.trap_tail {
+            let r = labelled(ui, &tr!(panel_tail_length), |ui| {
+                ui.add(
+                    egui::Slider::new(&mut self.coloring.trap_tail_len, crate::slider_range::TRAP_TAIL_PANEL)
+                        .logarithmic(true)
+                        .suffix(format!(" {}", tr!(panel_tail_length_unit)))
+                        .custom_formatter(|n, _| crate::grouped_count(n))
+                        .custom_parser(crate::parse_grouped_number),
+                )
+            });
+            if slider_double_clicked(&r) {
+                self.coloring.trap_tail_len = fractadyne_state::ColoringSpec::default().trap_tail_len;
+            }
+            r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_tail_length_hover), tr!(panel_double_click_reset)));
+        }
     }
 
     /// The trap method's inside, when the trap colors it: a trap of its own, or the method's (the

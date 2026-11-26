@@ -145,6 +145,9 @@ fn kitchen_sink() -> fractadyne_state::ColoringSpec {
         // Shown only by an outline trap (`drawings`' last): a triangle and a chevron (F4 part 4).
         trap_outline: "M -1 0 L 1 0 L 0 1 L -1 0 M -0.5 -0.8 L 0 -0.4 L 0.5 -0.8".into(),
         trap_outline_name: "triangle.svg".into(),
+        // The trap's tail (F4 part 5), in every drawing the trap colors.
+        trap_tail: true,
+        trap_tail_len: 64,
         custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
         custom_palette_flat: true,
         custom_segments: vec![fractadyne_state::PaletteSegment {
@@ -239,6 +242,8 @@ fn scrambled_for(d: &fractadyne_state::ColoringSpec) -> fractadyne_state::Colori
         interior_trap_sine_harmonics: 6,
         trap_outline: "M -0.7 -0.7 L 0.7 -0.7 L 0.7 0.7 L -0.7 0.7 L -0.7 -0.7".into(),
         trap_outline_name: "square.svg".into(),
+        trap_tail: false,
+        trap_tail_len: 1000,
         custom_palette: vec![[0.0, 0.2, 0.9, 0.2], [1.0, 0.9, 0.9, 0.1]],
         custom_palette_flat: false,
         custom_segments: vec![fractadyne_state::PaletteSegment {

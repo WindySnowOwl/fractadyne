@@ -77,6 +77,9 @@ pub(crate) struct ViewColoring {
     /// the method's, and its placement.
     pub(crate) interior_trap: Option<TrapType>,
     pub(crate) interior_trap_place: TrapPlace,
+    /// The trap's tail (F4 part 5), the method's trap and the inside's, and its length.
+    pub(crate) trap_tail: bool,
+    pub(crate) trap_tail_len: u32,
     /// Relief lighting: on, angle (radians), the "Relief" slider.
     pub(crate) light: bool,
     pub(crate) light_angle: f32,
@@ -160,6 +163,8 @@ impl ViewColoring {
             trap_place: crate::trap_place_of(s),
             interior_trap: TrapType::parse_key(&s.interior_trap),
             interior_trap_place: crate::interior_trap_place_of(s),
+            trap_tail: s.trap_tail,
+            trap_tail_len: s.trap_tail_len,
             light: s.light,
             light_angle: s.light_angle,
             light_height: s.light_height,
@@ -236,6 +241,8 @@ impl ViewColoring {
             interior_trap_phase: self.interior_trap_place.phase,
             interior_trap_harmonics: self.interior_trap_place.harmonics,
             interior_trap_sine_harmonics: self.interior_trap_place.sine_harmonics,
+            trap_tail: self.trap_tail,
+            trap_tail_len: self.trap_tail_len,
             light: self.light,
             light_angle: self.light_angle,
             light_height: self.light_height,

@@ -569,6 +569,37 @@ pub const HARMONICS_MIN: u32 = 1;
 pub const HARMONICS_MAX: u32 = 32;
 pub const HARMONICS_DEFAULT: u32 = 5;
 
+/// The trap's tail (coloring plan F4, part 5): how many iterations it takes a hit to count as
+/// twice as far ([`Trap::tail`]). At depth every pixel's orbit follows the reference for all but its
+/// last iterations, so the nearest approach of the whole orbit is reached in that shared stretch and
+/// the picture is one value; aged by its distance from the orbit's end, a hit there loses to the
+/// pixel's own late ones, and the trap draws again (the study, 2026-11-26: the seahorse at 1e20x, the
+/// line trap's spread 0.000 whole and 8.1 at a tail of 256; a hard window of the last iterations
+/// alone was noise there, the late orbits already chaotic).
+pub const TRAP_TAIL_MIN: u32 = 4;
+pub const TRAP_TAIL_MAX: u32 = 1 << 20;
+pub const TRAP_TAIL_DEFAULT: u32 = 256;
+
+/// How much a trap hit's distance grows each iteration under a tail of `tail` iterations (0: off,
+/// 1, nothing ages): 2^(1/tail).
+pub fn trap_tail_growth(tail: u32) -> f64 {
+    if tail == 0 { 1.0 } else { (1.0 / f64::from(tail)).exp2() }
+}
+
+/// How much an aged hit grows over `span` iterations under a tail of `tail` (0: off, 1): the factor
+/// a BLA skip of that span applies, 2^(span/tail), held at 2^126 so it stays finite in f32 (a hit
+/// that old loses to any other), and what the shader's `aux_fold_run` applies.
+pub fn trap_tail_factor(tail: u32, span: u32) -> f64 {
+    if tail == 0 { 1.0 } else { (f64::from(span) / f64::from(tail)).min(126.0).exp2() }
+}
+
+/// Two consecutive runs' aged nearest approaches merged, `x` then `y` of `y_span` iterations: `x`'s
+/// hits are `y_span` iterations older by the end of `y` ([`trap_tail_factor`]). Off, the plain
+/// minimum.
+pub fn merge_trap_aged(x: f64, y: f64, y_span: u32, tail: u32) -> f64 {
+    if tail == 0 { x.min(y) } else { (x * trap_tail_factor(tail, y_span)).min(y) }
+}
+
 /// `deg` wrapped into [-180, 180).
 pub fn wrap_degrees(deg: f32) -> f32 {
     let w = (deg + 180.0).rem_euclid(360.0) - 180.0;
@@ -1035,16 +1066,20 @@ pub struct Trap {
     /// [`TrapType::Outline`], else 0: so a new drawing changes the trap as a new shape does, for
     /// every key and cache that compares traps. The drawing itself travels beside the trap.
     pub outline: u64,
+    /// The tail (F4 part 5, [`TRAP_TAIL_DEFAULT`]): every hit's distance doubles each `tail`
+    /// iterations it lies before the orbit's end, the trap's and the inside's alike; 0, off, the
+    /// nearest approach of the whole orbit, as before.
+    pub tail: u32,
 }
 
 impl Trap {
     /// `shape` placed at `place`, as the shape uses it.
     pub fn new(shape: TrapType, place: TrapPlace) -> Trap {
-        Trap { shape, place: place.for_shape(shape), inside: None, outline: 0 }
+        Trap { shape, place: place.for_shape(shape), inside: None, outline: 0, tail: 0 }
     }
     /// `shape` at the default placement: the trap as it was before F4.
     pub fn of(shape: TrapType) -> Trap {
-        Trap { shape, place: TrapPlace::DEFAULT, inside: None, outline: 0 }
+        Trap { shape, place: TrapPlace::DEFAULT, inside: None, outline: 0, tail: 0 }
     }
     /// This trap with the inside's own, `shape` at `place` as the shape uses it; none when that is
     /// this trap itself, which the inside then measures anyway (no second statistic, every bit as
@@ -1062,10 +1097,14 @@ impl Trap {
     pub fn with_outline(self, key: u64) -> Trap {
         Trap { outline: if self.uses_outline() { key } else { 0 }, ..self }
     }
+    /// This trap with a tail of `tail` iterations (0: off), clamped to its range.
+    pub fn with_tail(self, tail: u32) -> Trap {
+        Trap { tail: if tail == 0 { 0 } else { tail.clamp(TRAP_TAIL_MIN, TRAP_TAIL_MAX) }, ..self }
+    }
     /// What keys hash: the shape's GPU number for this build and the placement's bits, the inside's
-    /// own the same way, and the outline's key.
-    pub fn key_bits(self) -> (u32, [u32; 7], Option<(u32, [u32; 7])>, u64) {
-        (self.shape.gpu_id(), self.place.bits(), self.inside.map(|(s, p)| (s.gpu_id(), p.bits())), self.outline)
+    /// own the same way, the outline's key and the tail.
+    pub fn key_bits(self) -> (u32, [u32; 7], Option<(u32, [u32; 7])>, u64, u32) {
+        (self.shape.gpu_id(), self.place.bits(), self.inside.map(|(s, p)| (s.gpu_id(), p.bits())), self.outline, self.tail)
     }
 }
 

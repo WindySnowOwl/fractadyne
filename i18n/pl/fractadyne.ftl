@@ -2952,6 +2952,9 @@ panel-tail-length = Długość ogona
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = it.
 panel-tail-length-hover = Długość okna w iteracjach. Krótkie okna (8–32) dają klasyczne wyraźne pasma na każdej głębokości; dłuższe znów uśredniają się do płaskiego koloru, bo człon pasków długiej chaotycznej orbity się uśrednia.
+panel-trap-tail = Tylko ogon (głęboki zoom)
+panel-trap-tail-hover = Późne zbliżenia każdej orbity do pułapki liczą się bardziej niż wczesne: odległość zbliżenia liczy się jako dwa razy większa za każdą długość ogona iteracji przed końcem orbity. Na skrajnych głębokościach każda orbita podąża za orbitą odniesienia z wyjątkiem ostatnich iteracji i najbliżej pułapki jest w tym wspólnym odcinku, więc najbliższe zbliżenie całej orbity daje jeden kolor w całym widoku; ogon znów rysuje pułapkę. Krótkie orbity prawie się nie zmieniają. Także --trap-tail N dla --render.
+panel-trap-tail-length-hover = Liczba iteracji, po której odległość zbliżenia się podwaja. Krótszy ogon pokazuje więcej ostatnich iteracji każdej orbity, drobniej i gęściej; dłuższy wraca do najbliższego zbliżenia całej orbity.
 panel-trap-shape = Kształt pułapki
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

@@ -2781,6 +2781,9 @@ panel-tail-length = 尾部长度
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = 次
 panel-tail-length-hover = 以迭代次数计的窗口长度。短窗口（8–32）在任何深度下都能产生经典的粗犷色带；更长的窗口会再次趋向于平均成一种纯色，因为长混沌轨道的条纹项会被平均掉。
+panel-trap-tail = 仅尾部（深度缩放）
+panel-trap-tail-hover = 每条轨道越晚接近陷阱，权重越大：在轨道结束前每隔一个尾部长度的迭代，接近的距离按两倍计算。在极深处，每条轨道除最后几次迭代外都沿着参考轨道运行，并在这段共同的部分最接近陷阱，因此整条轨道的最近距离会让整个视图只有一种颜色；使用尾部后陷阱会重新显现。短轨道几乎不变。--render 中为 --trap-tail N。
+panel-trap-tail-length-hover = 接近距离翻倍所需的迭代次数。尾部越短，越能显示每条轨道最后几次迭代，图案更细更繁杂；越长则越接近整条轨道的最近距离。
 panel-trap-shape = 陷阱形状
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

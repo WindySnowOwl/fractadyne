@@ -317,6 +317,8 @@ pub struct ExportRequest {
     pub trap_in: Option<(fractadyne_core::coloring::TrapType, fractadyne_core::coloring::TrapPlace)>,
     /// The view's trap outline (coloring plan F4, part 4), when a trap of the render measures from it.
     pub outline: Option<std::sync::Arc<crate::OutlineGpu>>,
+    /// The trap's tail — see `MandelbrotParams::trap_tail`.
+    pub trap_tail: u32,
     pub aa_filter: u32,
     pub interior_col: [f32; 4],
     /// What else may color the inside (coloring plan B5); the default, the method's own interior.
@@ -2155,6 +2157,7 @@ impl<'a> TileRenderer<'a> {
             trap_in: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
             trap_in_row: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
             outline_row: req.outline_row(),
+            trap_tail: crate::trap_tail_row(req.trap_tail, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)),
         };
         queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3248,6 +3251,7 @@ fn render_iter_tiled_impl(
                 trap_in: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
                 trap_in_row: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
                 outline_row: req.outline_row(),
+                trap_tail: crate::trap_tail_row(req.trap_tail, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)),
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3809,6 +3813,7 @@ impl GatherPass {
                 trap_in: crate::TrapU::default(),
                 trap_in_row: [0; 4],
                 outline_row: [0; 4],
+                trap_tail: crate::trap_tail_row(0, false),
             };
             queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -4150,6 +4155,7 @@ fn render_iter_passes(
         trap_in: crate::TrapU::default(),
         trap_in_row: [0; 4],
         outline_row: [0; 4],
+        trap_tail: crate::trap_tail_row(0, false),
     };
     // The speed probe's passes (`render_iter_probe`) run the exact-repeat check OFF (bit 1).
     if live.is_some() {
