@@ -710,6 +710,10 @@ struct StepResult {
     inside_trap_cost: Option<crate::ui::method_list::SwitchCost>,
     /// View 0's passes so far by reason (`Perf::gpu_ran_why`), at capture.
     ran_why: [u64; 7],
+    /// View 0's iterations at capture (`Perf::last_eff_iter`): with automatic iterations the
+    /// budget keeps moving after the first pictures, and each move is a pass (KEY) of its own.
+    /// Every step's (`eff_iter` is the live steps' alone).
+    iter_at_capture: u32,
 }
 
 /// A 16x16 luma thumbnail of the left ~45% of the frame, vertically inset past the toolbar and
@@ -2430,7 +2434,19 @@ impl FractadyneApp {
                 let off = (0..w * h).filter(|i| core(*i) && (0..3).any(|k| (px[i * 4 + k] as i32 - want[k]).abs() > 2)).count();
                 let (d_out, _) = diff(px, &solid_px, &is_out);
                 let ran = caused("inside-solid");
-                let detail = format!("{n_core} pixels of the inside's core ({n_in} inside), {off} not {want:?}; the outside changed by {d_out:.2}; passes caused {ran:?}");
+                // Which passes, by reason, and the iterations at both captures: a pass here that the
+                // solid step's change still owed (its automatic iterations still moving, say) is not
+                // the color's (PLUTO's two cards counted one, 2026-11-25..26; the 3080 none).
+                let why = step("inside-solid").map(|r| {
+                    let names = ["forced", "key", "tile", "chunk", "probe", "split", "empty"];
+                    let by: Vec<String> = names
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, n)| (ran_why[i] > r.ran_why[i]).then(|| format!("{n} {}", ran_why[i] - r.ran_why[i])))
+                        .collect();
+                    format!("{}; iterations {} at inside-solid, {} here", if by.is_empty() { "none".into() } else { by.join(", ") }, r.iter_at_capture, self.perf.last_eff_iter)
+                });
+                let detail = format!("{n_core} pixels of the inside's core ({n_in} inside), {off} not {want:?}; the outside changed by {d_out:.2}; passes caused {ran:?} ({})", why.unwrap_or_default());
                 let ok = n_core * 25 >= w * h && off == 0 && d_out <= 0.5 && ran == Some(0);
                 checks.push(if ok { pass("inside-color", detail) } else { fail("inside-color", detail) });
             }
@@ -4355,6 +4371,7 @@ impl FractadyneApp {
         let mid_fp = band_fingerprint(&image.pixels, w as usize, h as usize, (w as usize * 45) / 100, (w as usize * 75) / 100);
         let tiled = self.tile_state_present(0);
         let ran_why = self.perf.gpu_ran_why[0];
+        let iter_at_capture = self.perf.last_eff_iter;
         let switch_costs: Vec<_> = crate::ColorMethod::ALL.iter().map(|m| (*m, self.switch_cost(*m))).collect();
         let inside_step = matches!(
             step.kind,
@@ -5669,6 +5686,7 @@ impl FractadyneApp {
             inside_view,
             inside_trap_cost,
             ran_why,
+            iter_at_capture,
         }
     }
 
@@ -5778,6 +5796,7 @@ impl FractadyneApp {
             inside_view: None,
             inside_trap_cost: None,
             ran_why: [0; 7],
+            iter_at_capture: 0,
         }
     }
 
@@ -5935,6 +5954,7 @@ fn timeout_result(step: &Step) -> StepResult {
         inside_view: None,
         inside_trap_cost: None,
         ran_why: [0; 7],
+        iter_at_capture: 0,
     }
 }
 
