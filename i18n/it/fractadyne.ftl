@@ -360,6 +360,7 @@ menu-tools-find-minibrot = Trova minibrot + zoom
 menu-tools-find-minibrot-hover = Agganciare con Newton il centro della vista al centro esatto del minibrot vicino, indicarne il periodo e zoomare alla scala del minibrot stesso — spesso molti ordini di grandezza in un solo passo. Già più in profondità? Si sposta solo il centro.
 menu-tools-solver = Risolutore Newton / Misiurewicz…
 menu-tools-solver-hover = Calcolare il centro esatto del minibrot (periodo + dimensione) o il punto di Misiurewicz più vicino alla vista — metodo di Newton a precisione piena, con il moltiplicatore repulsivo λ. Apre la finestra della posizione, che ospita i risolutori.
+menu-tools-no-nucleus = Fractadyne non ha un risolutore di minibrot per { $name }.
 # Followed by its shortcut, (A).
 menu-tools-autopilot = Auto-zoom (pilota automatico)
 menu-tools-autopilot-stop = Ferma pilota automatico

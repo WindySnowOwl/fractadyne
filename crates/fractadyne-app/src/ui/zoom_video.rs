@@ -564,6 +564,17 @@ impl FractadyneApp {
 
                 ui.separator();
                 let can = z.unsupported.is_none() && !z.out.trim().is_empty() && !matches!(fit, CardFit::Refused(_));
+                // Why the two buttons are grayed, when they are: the dialog's own messages for a
+                // view it cannot render and a render the card cannot hold, or no file named.
+                let why_not = z
+                    .unsupported
+                    .clone()
+                    .or_else(|| match &fit {
+                        CardFit::Refused(w) => Some(w.clone()),
+                        _ => None,
+                    })
+                    .or_else(|| z.out.trim().is_empty().then(|| tr!(zoom_video_need_out)))
+                    .unwrap_or_default();
                 crate::theme::action_row(ui, |ui| {
                     if !running && crate::theme::cancel_button(ui, &tr!(zoom_video_cancel)).clicked() {
                         close_dialog = true;
@@ -580,10 +591,10 @@ impl FractadyneApp {
                             stop = true;
                         }
                     } else {
-                        if ui.add_enabled(can, egui::Button::new(tr!(zoom_video_farm))).on_hover_text(tr!(zoom_video_farm_hover)).clicked() {
+                        if ui.add_enabled(can, egui::Button::new(tr!(zoom_video_farm))).on_hover_text(tr!(zoom_video_farm_hover)).on_disabled_hover_text(&why_not).clicked() {
                             to_farm = Some(summary.clone());
                         }
-                        if ui.add_enabled(can, egui::Button::new(tr!(zoom_video_render))).on_hover_text(tr!(zoom_video_render_hover)).clicked() {
+                        if ui.add_enabled(can, egui::Button::new(tr!(zoom_video_render))).on_hover_text(tr!(zoom_video_render_hover)).on_disabled_hover_text(&why_not).clicked() {
                             go = true;
                         }
                     }

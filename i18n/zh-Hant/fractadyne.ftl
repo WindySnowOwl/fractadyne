@@ -356,6 +356,7 @@ menu-tools-find-minibrot = 尋找迷你 Mandelbrot 並縮放至該處
 menu-tools-find-minibrot-hover = 以牛頓法將畫面中心吸附到附近迷你 Mandelbrot 的精確中心，回報它的週期，並縮放到該迷你 Mandelbrot 本身的尺度，往往一步就跨越許多個數量級。已經比它更深了？那就只移動中心。
 menu-tools-solver = 牛頓／Misiurewicz 求解器…
 menu-tools-solver-hover = 求出精確的迷你 Mandelbrot 中心（週期與大小），或最接近畫面的 Misiurewicz 點：以全精度執行牛頓法，並附上排斥乘數 λ。會開啟位置對話方塊，求解器就在其中。
+menu-tools-no-nucleus = Fractadyne 沒有適用於 { $name } 的迷你 Mandelbrot 求解器。
 # Followed by its shortcut, (A).
 menu-tools-autopilot = 自動縮放（自動駕駛）
 menu-tools-autopilot-stop = 停止自動駕駛

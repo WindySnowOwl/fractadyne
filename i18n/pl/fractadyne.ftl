@@ -362,6 +362,7 @@ menu-tools-find-minibrot = Znajdź minibrot i przybliż do niego
 menu-tools-find-minibrot-hover = Dociąga środek widoku metodą Newtona do dokładnego środka pobliskiego minibrota, podaje jego okres i przybliża do własnej skali minibrota — często o wiele rzędów wielkości w jednym kroku. Widok jest już głębiej? Przesuwa się tylko środek.
 menu-tools-solver = Solver Newtona / Misiurewicza…
 menu-tools-solver-hover = Wyznacza dokładny środek minibrota (okres + rozmiar) lub punkt Misiurewicza najbliższy widokowi — metodą Newtona w pełnej precyzji, z mnożnikiem odpychającym λ. Otwiera okno lokalizacji, w którym znajdują się solvery.
+menu-tools-no-nucleus = Fractadyne nie ma solvera minibrotów dla formuły { $name }.
 # Followed by its shortcut, (A).
 menu-tools-autopilot = Autozoom (autopilot)
 menu-tools-autopilot-stop = Zatrzymaj autopilota

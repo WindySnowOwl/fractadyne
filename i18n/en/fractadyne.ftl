@@ -365,6 +365,7 @@ menu-tools-find-minibrot = Find minibrot + zoom to it
 menu-tools-find-minibrot-hover = Newton-snap the view center to the nearby minibrot's exact center, report its period, and zoom to the minibrot's own scale — often many orders of magnitude in one step. Already deeper than it? Only the center moves.
 menu-tools-solver = Newton / Misiurewicz solver…
 menu-tools-solver-hover = Solve for the exact minibrot center (period + size) or the Misiurewicz point nearest the view — Newton's method at full precision, with the repelling multiplier λ. Opens the location dialog, which hosts the solvers.
+menu-tools-no-nucleus = Fractadyne has no minibrot solver for { $name }.
 # Followed by its shortcut, (A).
 menu-tools-autopilot = Auto-zoom (autopilot)
 menu-tools-autopilot-stop = Stop autopilot
@@ -2643,6 +2644,7 @@ zoom-video-no-fractal = Zoom videos dive into the Mandelbrot set and Multibrot 3
 zoom-video-no-method = This coloring reads statistics a zoom video's strips do not keep (stripe, triangle inequality, orbit trap, decomposition): choose smooth, distance estimate, relief or glow.
 zoom-video-too-shallow = Zoom in first: the video dives from its start into the current view.
 zoom-video-out = Video file
+zoom-video-need-out = Name the video file first.
 zoom-video-browse = Browse…
 # The file dialog's filter: video files.
 zoom-video-filter = Video

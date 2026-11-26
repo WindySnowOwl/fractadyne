@@ -428,6 +428,8 @@ impl FractadyneApp {
                     apply = ui
                         .add_enabled(check.is_ok(), egui::Button::new(tr!(formula_apply)))
                         .on_hover_text(tr!(formula_dialog_apply_hover))
+                        // Grayed while the formula does not read: why, as the check beside it says.
+                        .on_disabled_hover_text(check.as_ref().err().map(|e| e.to_string()).unwrap_or_default())
                         .clicked();
                     // Always laid out, blank when idle, so the row does not reflow as it comes and
                     // goes. "Copied" while the formula is still the text Copy took.
@@ -458,6 +460,7 @@ impl FractadyneApp {
                     save = ui
                         .add_enabled(check.is_ok(), egui::Button::new(format!("{} {label}", crate::icons::SAVE)))
                         .on_hover_text(tr!(formula_dialog_save_hover))
+                        .on_disabled_hover_text(check.as_ref().err().map(|e| e.to_string()).unwrap_or_default())
                         .on_disabled_hover_text(tr!(formula_dialog_save_disabled_hover))
                         .clicked();
                     library = ui
