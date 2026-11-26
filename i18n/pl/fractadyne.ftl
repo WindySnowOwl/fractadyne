@@ -2966,6 +2966,7 @@ panel-trap-sine-harmonics-hover = Ile harmonicznych fali sinusoidalnej rysuje si
 panel-inside = Wnętrze
 panel-inside-hover = Czym kolorowane jest wnętrze zbioru.
 panel-inside-color-hover = Kolor wnętrza zbioru.
+panel-inside-color-edges-hover = Kolor, w stronę którego cieniowane są krawędzie (Cieniowanie krawędzi, Kolor wnętrza). Samo wnętrze koloruje pułapka orbity.
 inside-solid = Jednolity kolor
 inside-solid-desc = Jeden kolor dla całego wnętrza zbioru.
 inside-trap = Pułapka orbity

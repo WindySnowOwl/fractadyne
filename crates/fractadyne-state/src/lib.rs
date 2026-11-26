@@ -1216,8 +1216,9 @@ pub fn load_for_app() -> (SessionState, StateLoad, Option<PathBuf>) {
 }
 
 /// Parse persisted-session TOML into a state + status. Split out from [`load_with_status`] (which
-/// supplies the file contents) so the version/corruption handling is unit-testable.
-fn parse_with_status(text: &str) -> (SessionState, StateLoad) {
+/// supplies the file contents) so the version/corruption handling is unit-testable; public for the
+/// app's self-test `round-trip`, which reads a session back without touching the file.
+pub fn parse_with_status(text: &str) -> (SessionState, StateLoad) {
     // Probe just the version first, so a newer file that no longer fully parses still warns
     // rather than silently reverting to defaults.
     #[derive(Deserialize)]

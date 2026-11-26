@@ -2874,6 +2874,7 @@ panel-trap-sine-harmonics-hover = Quante armoniche dell'onda sinusoidale vengono
 panel-inside = Interno
 panel-inside-hover = Che cosa colora l’interno dell’insieme.
 panel-inside-color-hover = Il colore dell’interno dell’insieme.
+panel-inside-color-edges-hover = Il colore verso cui vengono ombreggiati i bordi (Ombreggiatura dei bordi, Colore interno). L’interno stesso è colorato dalla trappola orbitale.
 inside-solid = Colore pieno
 inside-solid-desc = Un solo colore per tutto l’interno dell’insieme.
 inside-trap = Trappola orbitale

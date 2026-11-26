@@ -2795,6 +2795,7 @@ panel-trap-sine-harmonics-hover = 正弦波の高調波をいくつ同じ高さ�
 panel-inside = 内部
 panel-inside-hover = 集合の内部を何で着色するか。
 panel-inside-color-hover = 集合の内部の色。
+panel-inside-color-edges-hover = エッジを寄せる先の色（エッジの陰影、内部の色）。内部そのものは軌道トラップで色付けされます。
 inside-solid = 単色
 inside-solid-desc = 集合の内部全体を一色で塗ります。
 inside-trap = 軌道トラップ

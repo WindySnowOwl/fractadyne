@@ -269,10 +269,14 @@ impl FractadyneApp {
                 })
                 .response
                 .on_hover_text(tr!(panel_inside_hover));
-            // A solid inside's color (C1), beside it. Duotone and Binary color the inside with
-            // their dark color, which their own swatch sets.
-            if inside == InteriorMode::Solid && !self.coloring.use_duotone && !self.coloring.use_binary {
-                if let Some(c) = crate::color_swatch(ui, egui::Id::new("panel_inside_color"), self.coloring.interior_color, &tr!(panel_inside_color_hover)) {
+            // A solid inside's color (C1), beside it; and, whatever colors the inside, the color
+            // Edge shading's Inside color shades the edges toward (user, 2026-11-26: show it, as
+            // it is in the picture). Duotone and Binary use their dark color for both, which their
+            // own swatch sets.
+            let edges_use = self.effects.edge && self.effects.edge_inside && self.fractal.caps().distance_estimate;
+            if (inside == InteriorMode::Solid || edges_use) && !self.coloring.use_duotone && !self.coloring.use_binary {
+                let hover = if inside == InteriorMode::Solid { tr!(panel_inside_color_hover) } else { tr!(panel_inside_color_edges_hover) };
+                if let Some(c) = crate::color_swatch(ui, egui::Id::new("panel_inside_color"), self.coloring.interior_color, &hover) {
                     self.coloring.interior_color = c;
                 }
             }

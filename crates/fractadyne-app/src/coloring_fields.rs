@@ -112,6 +112,16 @@ fn two_color_on(s: &ColoringSpec) -> bool {
     s.use_binary || s.use_duotone
 }
 
+/// The inside's solid color is in the picture: it colors a solid inside, and edge shading toward
+/// the inside (`edge_inside`) shades toward it whatever colors the inside (the shader's edge mode
+/// 2 reads `interior_col` in every case). Duotone and Binary use their dark color (`palette_lo`)
+/// for both. (Fixed 2026-11-26, found by the self-test `round-trip`: with the inside colored by the
+/// trap and the edges shaded toward it, no view carried the color, and one opened elsewhere shaded
+/// its edges toward that session's.)
+pub(crate) fn inside_color_used(s: &ColoringSpec) -> bool {
+    !two_color_on(s) && (!interior_trap(s) || (s.edge && s.edge_inside))
+}
+
 /// The table, in the order a view writes its keys. A row's parents come before it.
 pub(crate) const FIELDS: [Field; 62] = [
     Field {
@@ -634,10 +644,13 @@ pub(crate) const FIELDS: [Field; 62] = [
     Field {
         key: "interior_color",
         name: "inside color",
-        doc: "The color of a solid inside, as display-space [r, g, b] (when the inside is solid; Duotone and Binary use `palette_lo`).",
+        doc: "The color of a solid inside, as display-space [r, g, b], and the color `edge_inside` shades the edges toward whatever colors the inside (when the inside is solid or `edge_inside` is on; Duotone and Binary use `palette_lo`).",
         access: Access::Rgb(|s| s.interior_color, |s, v| s.interior_color = v),
+        // ⚠Not a child of `edge_inside`: with the edges off that row is never settled, and a
+        // solid inside's left-out color would then never reset. Its rule reads the edge rows,
+        // which come before it.
         parents: &["method", "interior", "palette_mode"],
-        shows: |s| !interior_trap(s) && !two_color_on(s),
+        shows: inside_color_used,
     },
     Field {
         key: "normalize_live",

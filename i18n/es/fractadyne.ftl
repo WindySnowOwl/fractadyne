@@ -2875,6 +2875,7 @@ panel-trap-sine-harmonics-hover = Cuántos armónicos de la onda sinusoidal se d
 panel-inside = Interior
 panel-inside-hover = Qué colorea el interior del conjunto.
 panel-inside-color-hover = El color del interior del conjunto.
+panel-inside-color-edges-hover = El color hacia el que se sombrean los bordes (Sombreado de bordes, Color interior). El interior lo colorea la trampa de órbita.
 inside-solid = Color sólido
 inside-solid-desc = Un solo color para todo el interior del conjunto.
 inside-trap = Trampa de órbita

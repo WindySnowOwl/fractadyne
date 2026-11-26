@@ -2932,6 +2932,7 @@ panel-trap-sine-harmonics-hover = Сколько гармоник синусои
 panel-inside = Внутри
 panel-inside-hover = Чем окрашена внутренность множества.
 panel-inside-color-hover = Цвет внутренности множества.
+panel-inside-color-edges-hover = Цвет, к которому затеняются края (Тени у края, Цвет внутри). Саму внутренность окрашивает ловушка орбиты.
 inside-solid = Сплошной цвет
 inside-solid-desc = Один цвет для всей внутренности множества.
 inside-trap = Ловушка орбиты

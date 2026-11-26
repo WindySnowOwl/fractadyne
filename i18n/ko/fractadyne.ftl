@@ -2794,6 +2794,7 @@ panel-trap-sine-harmonics-hover = 사인파의 고조파를 몇 개 같은 높�
 panel-inside = 내부
 panel-inside-hover = 집합 내부를 무엇으로 칠할지.
 panel-inside-color-hover = 집합 내부의 색.
+panel-inside-color-edges-hover = 가장자리를 물들일 색(가장자리 음영, 내부 색). 내부 자체는 궤도 트랩이 칠합니다.
 inside-solid = 단색
 inside-solid-desc = 집합 내부 전체를 한 가지 색으로 칠합니다.
 inside-trap = 궤도 트랩

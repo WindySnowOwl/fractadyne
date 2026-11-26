@@ -2866,6 +2866,7 @@ panel-trap-sine-harmonics-hover = Sinüs dalgasının kaç harmoniğinin, her bi
 panel-inside = İç kısım
 panel-inside-hover = Kümenin içini neyin renklendirdiği.
 panel-inside-color-hover = Kümenin içinin rengi.
+panel-inside-color-edges-hover = Kenarların gölgelendiği renk (Kenar gölgelemesi, İç rengi). İç kısmın kendisini yörünge tuzağı renklendirir.
 inside-solid = Düz renk
 inside-solid-desc = Kümenin tüm içi için tek bir renk.
 inside-trap = Yörünge tuzağı

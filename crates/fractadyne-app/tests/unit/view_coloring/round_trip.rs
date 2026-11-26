@@ -163,6 +163,8 @@ fn variants() -> Vec<ViewColoring> {
     v.push(ViewColoring { interior: Some(InteriorMode::Trap), interior_fit: true, ..d.clone() });
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_fit: true, ..d.clone() });
     v.push(ViewColoring { interior_color: [0.9, 0.2, 0.6], two_color: TwoColor::Duotone, ..d.clone() });
+    // The inside colored by the trap, its edges shaded toward the inside's color.
+    v.push(ViewColoring { interior: Some(InteriorMode::Trap), edge: true, edge_inside: true, interior_color: [0.9, 0.2, 0.6], ..d.clone() });
     // The palette point sampled (C8 anti-aliases it by default), under Smooth and under a method it
     // does not size from the distance, which still carries it.
     v.push(ViewColoring { palette_aa: false, ..d.clone() });
@@ -225,6 +227,31 @@ fn every_coloring_comes_back_onto_a_different_session() {
             "{text:?}"
         );
     }
+}
+
+#[test]
+fn the_inside_color_is_written_whenever_the_edges_shade_toward_it() {
+    // Edge shading toward the inside shades toward the inside's color whatever colors the inside
+    // (the shader's edge mode 2). ⭐Asked of the writer directly: its reader shares the rule, so a
+    // round trip of the lines passed while no view carried the color (self-test round-trip,
+    // 2026-11-25).
+    let d = ViewColoring::default();
+    let c = [0.9, 0.2, 0.6];
+    let has = |v: ViewColoring| v.lines().lines().any(|l| l.starts_with("interior_color"));
+    let by_trap = ViewColoring { interior: Some(InteriorMode::Trap), interior_color: c, ..d.clone() };
+    assert!(has(ViewColoring { edge: true, edge_inside: true, ..by_trap.clone() }), "the inside by the trap, edges toward it");
+    assert!(
+        has(ViewColoring { method: ColorMethod::OrbitTrap, interior: None, edge: true, edge_inside: true, interior_color: c, ..d.clone() }),
+        "the trap method's own inside, edges toward it"
+    );
+    assert!(has(ViewColoring { interior_color: c, ..d.clone() }), "a solid inside");
+    // Not in the picture: the edges toward their own color, or off; Duotone's dark color instead.
+    assert!(!has(ViewColoring { edge: true, edge_inside: false, ..by_trap.clone() }), "edges toward their own color");
+    assert!(!has(ViewColoring { edge: false, edge_inside: true, ..by_trap.clone() }), "edges off");
+    assert!(
+        !has(ViewColoring { edge: true, edge_inside: true, two_color: TwoColor::Duotone, ..by_trap.clone() }),
+        "Duotone shades toward palette_lo"
+    );
 }
 
 #[test]
