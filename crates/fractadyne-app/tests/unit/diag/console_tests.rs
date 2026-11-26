@@ -8,7 +8,7 @@
 //! of headless modes: a list would drop a mode the day one was added, and the failure would look
 //! like a gate that had quietly stopped checking.
 
-use super::console_default;
+use super::{console_banner_text, console_default};
 
 fn args(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
@@ -67,4 +67,14 @@ fn setting_a_trace_turns_the_console_on_by_itself() {
     // Explicit off still wins over a live trace.
     assert!(!console_default(&args(&["fractadyne"]), Some("0"), Some("gpu")));
     assert!(!console_default(&args(&["fractadyne", "--no-console"]), None, Some("gpu")));
+}
+
+/// A console window made for the launch opens on what it is (user, 2026-11-25): the program and its
+/// version as the main window's title has them, then what the window is for.
+#[test]
+fn a_console_of_its_own_opens_on_whose_it_is() {
+    let text = console_banner_text(&crate::sysinfo::version_string());
+    let first = text.lines().next().unwrap_or("");
+    assert_eq!(first, format!("{} started.", crate::sysinfo::window_title()));
+    assert!(text.contains("closing this window closes Fractadyne"), "{text}");
 }
