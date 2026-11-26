@@ -2,7 +2,7 @@ use super::*;
 
 fn plan(w: u32, h: u32, tile: u32, occupancy: bool) -> ExportPlan {
     let (row_h, col_w) = (balanced_extent(h, tile), balanced_extent(w, tile));
-    ExportPlan { w, h, ss: 2, tile, row_h, col_w, fe: occupancy, chunk_scope: true, occupancy, rn_bla: false, state_size: [0, 0] }
+    ExportPlan { w, h, ss: 2, tile, row_h, col_w, fe: occupancy, chunk_scope: true, occupancy, rn_bla: false, state_size: [0, 0], apron: 0 }
 }
 
 /// The split's tile grid covers every output pixel exactly once, for both kinds of tile.

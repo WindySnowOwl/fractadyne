@@ -2307,6 +2307,9 @@ fn trap_histograms(
     pre.width = req.width.max(16);
     pre.height = req.height.max(16);
     pre.ss = 1;
+    // Unlit: the histograms need no light, and a lit export's tiles iterate an apron that
+    // their neighbors iterate too, whose values the counters would then hold twice.
+    pre.light = 0;
     let progress = std::sync::atomic::AtomicU32::new(0);
     let r = fractadyne_gpu::render_export(device, queue, &pre, &progress, cancel).ok()?;
     let hist = |at: usize| -> Vec<u32> { r.counters[at..at + TRAP_HIST_BUCKETS].iter().map(|&n| n.min(u64::from(u32::MAX)) as u32).collect() };
