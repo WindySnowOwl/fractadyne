@@ -65,6 +65,9 @@ pub(crate) struct MisiExplorer {
     /// antenna tip — the sort puts curated entries first) and solve-jump it to 1e6×. Drives
     /// the REAL selection + solve + navigation path, not a copy of it.
     pub(crate) uitest_jump: bool,
+    /// The last jump's landing: the entry's name and the view's depth (log2) the moment it
+    /// landed, for the UI walk to tell a jump that landed wrong from a view moved after it.
+    pub(crate) landed: Option<(String, f64)>,
 }
 
 /// The generated sweep's solve types. Small on purpose: root counts double per step of k+p,
@@ -330,6 +333,7 @@ impl crate::FractadyneApp {
                     Ok(m) => {
                         self.viewport.set_center_log2mag(m.cx, m.cy, j.target_l2);
                         self.finish_nav_jump();
+                        self.misi.landed = Some((j.label.clone(), self.viewport.log2_magnification()));
                         self.misi.open = false;
                         let iter_note = crate::deep_jump_iter_shortfall(
                             j.target_l2,
