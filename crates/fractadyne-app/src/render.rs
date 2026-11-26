@@ -60,6 +60,10 @@ pub(crate) fn frame_cost(work_budget: u64, mode: crate::RenderMode, interacting:
 #[path = "../tests/unit/render/frame_cost_tests.rs"]
 mod frame_cost_tests;
 
+/// What a settle grid refines: `(orbit_id, gpu_iter, view_gen, panel_px, settings_hash)` (see
+/// [`TileGrid::key`]).
+pub(crate) type GridKey = (u64, u32, u64, [u32; 2], u64);
+
 /// One view's tiled-settle progress. `None` geometry = ARMED: the view has rendered its coarse
 /// single-dispatch frame under this key and the next settled frame may start the grid. Tiles then
 /// advance one per app frame, center-out.
@@ -77,7 +81,7 @@ pub(crate) struct TileGrid {
     /// watches (coloring method / stripe / trap / SA / BLA / Julia c): a setting change under a
     /// pinned grid must re-arm it, because the GPU-side re-render is scissored to the current tile
     /// and would otherwise splice new-settings data into an old-settings frame.
-    pub key: (u64, u32, u64, [u32; 2], u64),
+    pub key: GridKey,
     /// `(resolution, ss, tile side in base px)` — frozen when the grid starts, so a budget update
     /// mid-grid can't reshape the rects underneath the cursor. `None` until the first tiled frame.
     pub geo: Option<(Resolution, u32, u32)>,
@@ -5817,6 +5821,9 @@ impl FractadyneApp {
             state.row = 0;
             if state.next == n {
                 bl::emit(vidx, bl::Kind::GridDone, 0, 0, 0.0);
+                // What the trap phase animation steps on (`trap_phase_step`): a picture finished at
+                // the panel's resolution, for this key.
+                self.perf.grid_done[vidx] = Some(state.key);
             }
         }
         state.last = piece;
@@ -9696,6 +9703,13 @@ impl FractadyneApp {
             vidx,
             vs,
         );
+        // A whole frame at the panel's own resolution in one dispatch, no grid and no walk: a finished
+        // picture, as a completed grid is. What the trap phase animation steps on
+        // (`Perf::grid_done`): at one sample a pixel a cheap view never needs a grid, and waiting
+        // for one stalled the animation to its timeout (2026-11-25).
+        if !interacting && !will_reproject && !offscreen && tile.is_none() && chunk_range.is_none() && resolution.get() == view_key.3 {
+            self.perf.grid_done[vidx] = Some(view_key);
+        }
         let PresentGate { mut hold_copy, mut display_hold, mut pin_gate, aa_filter } =
             self.bp_present_gate(
                 chunk_mode,

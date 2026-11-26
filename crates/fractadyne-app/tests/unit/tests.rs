@@ -1581,6 +1581,28 @@ fn the_iteration_hash_keys_what_is_accumulated() {
     assert_eq!(placed(trap, crate::Trap::new(TrapType::Sinc, wave(3))), placed(trap, crate::Trap::new(TrapType::Sinc, wave(12))));
 }
 
+/// The trap phase animation's pacing (user 2026-11-25, "it seems to be blocky"): a step only once the
+/// picture of the phase in force is finished, or after the longest wait; the Speed slider's turn over
+/// the time since the last step, never more than the largest step; nothing at Speed 0.
+#[test]
+fn the_phase_steps_on_finished_pictures() {
+    use crate::{trap_phase_step, TRAP_PHASE_STEP_MAX, TRAP_PHASE_WAIT_MAX};
+    // Not finished: wait, up to the longest wait.
+    assert_eq!(trap_phase_step(false, 0.5, 0.15), None);
+    assert_eq!(trap_phase_step(false, TRAP_PHASE_WAIT_MAX - 0.01, 0.15), None);
+    assert!(trap_phase_step(false, TRAP_PHASE_WAIT_MAX, 0.15).is_some(), "a view that never finishes still turns");
+    // Finished: the turn the Speed asks for over the time since the last step (0.15 cycles a second
+    // for 1/30 s: 1.8 degrees).
+    let s = trap_phase_step(true, 1.0 / 30.0, 0.15).unwrap();
+    assert!((f64::from(s) - 1.8).abs() < 1e-5, "{s}");
+    // A slow view turns slowly rather than in jumps.
+    assert_eq!(trap_phase_step(true, 3.0, 0.15), Some(TRAP_PHASE_STEP_MAX as f32));
+    // Speed 0, or a clock that ran backwards: nothing.
+    assert_eq!(trap_phase_step(true, 1.0, 0.0), None);
+    assert_eq!(trap_phase_step(true, -1.0, 0.15), None);
+    assert_eq!(trap_phase_step(true, f64::NAN, 0.15), None);
+}
+
 /// The session's default count of harmonics (fractadyne-state, which does not depend on core) is
 /// core's, so a session from before them reads as the default placement.
 #[test]

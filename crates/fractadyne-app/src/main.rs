@@ -1777,6 +1777,9 @@ struct Perf {
     bla_suppress_until: [u64; 2],
     /// Tiled-settle progress per view (see `render::TileGrid`); `None` = no grid armed or running.
     tile_state: [Option<render::TileGrid>; 2],
+    /// The key of the last grid each view completed (`render::TileGrid::key`): a picture finished
+    /// at the panel's resolution. The trap phase animation steps on it (`trap_phase_step`).
+    grid_done: [Option<render::GridKey>; 2],
     /// What the device can do to make a frame cheaper (`render::Actuators`, W7): the resumable walk
     /// (three state targets; floatexp needs a fourth) and GPU timing. `None` until probed — on the
     /// first frame that has a device — and `None` cannot walk. Iteration-range tiling:
@@ -2810,6 +2813,7 @@ impl Default for Perf {
             startup_probe_ms: 0.0,
             bla_suppress_until: [0, 0],
             tile_state: [None, None],
+            grid_done: [None, None],
             tile_pending: [false, false],
             accum_count: [0, 0],
             accum_goal: [0, 0],
@@ -3394,6 +3398,27 @@ pub(crate) mod slider_range {
     pub(crate) const STRIPE_TAIL_LEN: RangeInclusive<u32> = 4..=1 << 20;
     /// Equalize colors' share of histogram coloring (`--equalize`, coloring plan C6).
     pub(crate) const EQUALIZE: RangeInclusive<f32> = 0.0..=1.0;
+}
+
+/// The largest step the trap phase animation takes at once, degrees: a view slower than this allows
+/// turns slower than the Speed slider asks, never in jumps.
+pub(crate) const TRAP_PHASE_STEP_MAX: f64 = 12.0;
+/// How long the trap phase animation waits for a finished picture before stepping anyway, seconds:
+/// a view that never finishes one (it never settles) still turns.
+pub(crate) const TRAP_PHASE_WAIT_MAX: f64 = 4.0;
+
+/// The trap phase animation's next step, degrees, or `None` to wait (user 2026-11-25: "it seems to
+/// be blocky"): once the picture of the phase in force is finished (`ready`), or after
+/// [`TRAP_PHASE_WAIT_MAX`] seconds without one, the turn the Speed slider's rate (cycles a second)
+/// asks for over the `since` seconds since the last step, at most [`TRAP_PHASE_STEP_MAX`].
+pub(crate) fn trap_phase_step(ready: bool, since: f64, speed: f32) -> Option<f32> {
+    if !(speed > 0.0 && since.is_finite() && since >= 0.0) {
+        return None;
+    }
+    if !ready && since < TRAP_PHASE_WAIT_MAX {
+        return None;
+    }
+    Some((360.0 * f64::from(speed) * since).min(TRAP_PHASE_STEP_MAX) as f32)
 }
 
 /// Equalize colors' share as a spec or a file states it (C6): inside 0..=1, and 0 for a value that
@@ -7060,6 +7085,10 @@ struct AnimationState {
     anim_dir: f32,
     /// State for the randomized morphing-gradient palette mode (transient, seeded generator).
     random_palette: RandomPalette,
+    /// The trap phase animation's last step: the finished pictures it stepped from (each view's
+    /// `Perf::grid_done` then) and when (egui seconds). See `trap_phase_step`.
+    phase_stepped: [Option<render::GridKey>; 2],
+    phase_step_at: f64,
 }
 
 /// State for the "Report an issue" dialog: the classification, description, which artifacts to
@@ -8435,6 +8464,8 @@ impl FractadyneApp {
                 palette_anim_speed: s.palette_anim_speed,
                 anim_dir: 1.0,
                 random_palette: RandomPalette::new(0x9E37_79B9 ^ BUILD_SEQ.len() as u32),
+                phase_stepped: [None, None],
+                phase_step_at: 0.0,
             },
             orbit_cache: std::cell::RefCell::new(None),
             playback: None,
@@ -8526,6 +8557,7 @@ impl FractadyneApp {
                 uitest,
                 uitest_central_w: None,
                 uitest_panel_w: None,
+                uitest_held_aa: None,
                 uitest_async_key: None,
                 uitest_pointer: Default::default(),
                 uitest_slider_times: Vec::new(),
@@ -11868,9 +11900,11 @@ impl FractadyneApp {
         // Progressive settle AA (after the `vp` borrow ends): coarse (1×) while moving, then refine
         // 1×→2×→4×→… up to the chosen level over consecutive frames, so a heavy view never blocks on
         // one full-AA frame.
-        let aa_target = if interacting || self.tour_playing() {
+        let aa_target = if interacting || self.tour_playing() || self.trap_phase_animating() {
             // Scripted playback: no settle AA ramp — see the note in `ui/central.rs`. Its cost is
-            // quadratic and, outside the floatexp path, nothing bounds it.
+            // quadratic and, outside the floatexp path, nothing bounds it. A turning trap phase
+            // neither: each step waits for its picture to finish (`trap_phase_step`), and at 4x4
+            // samples a pixel that took 16 times as long (2026-11-25).
             self.pointer.settle_frame[view] = 0;
             1
         } else {
@@ -13877,6 +13911,13 @@ impl FractadyneApp {
             || (self.coloring.trap_phase_anim && self.phased_trap_drawn())
     }
 
+    /// Whether a wave trap's phase is turning on screen: Animate the phase on, at a Speed above 0,
+    /// with a trap that has a phase drawn. Each step is a new picture to calculate, so the settle's
+    /// supersampling stays at 1x meanwhile, as during a tour (`aa_target`).
+    pub(crate) fn trap_phase_animating(&self) -> bool {
+        self.coloring.trap_phase_anim && self.anim.palette_anim_speed > 0.0 && self.phased_trap_drawn()
+    }
+
     /// Whether the picture shows a trap with a phase (the sine wave, the square wave): the coloring
     /// reads the trap (the Orbit trap method, or an inside colored by the trap) and its shape, or the
     /// inside's own, has one. What the phase animation needs to be worth a frame.
@@ -13903,17 +13944,35 @@ impl FractadyneApp {
                 .rem_euclid(std::f32::consts::TAU);
             self.schedule_repaint(ctx);
         }
-        // Cycle a wave trap's phase (user 2026-11-25): a trap setting, so each frame iterates again,
-        // the method's trap and the inside's own alike.
-        if self.coloring.trap_phase_anim && self.anim.palette_anim_speed > 0.0 && self.phased_trap_drawn() {
-            let step = 360.0 * self.anim.palette_anim_speed * dt;
-            for (shape, place) in [
-                (Some(self.coloring.trap_type), &mut self.coloring.trap_place),
-                (self.coloring.interior_trap, &mut self.coloring.interior_trap_place),
-            ] {
-                if shape.is_some_and(|s| s.spec().phased) {
-                    place.phase = fractadyne_core::coloring::wrap_degrees(place.phase + step);
+        // Cycle a wave trap's phase (user 2026-11-25): a trap setting, so every step iterates the
+        // view again, the method's trap and the inside's own alike.
+        //
+        // ⭐ONE STEP PER FINISHED PICTURE (user 2026-11-25: "it seems to be blocky"). Stepped every
+        // frame, the trap changed under every frame: each one re-armed the settle grid, so only its
+        // coarse arm frame was ever drawn, priced like a frame of motion (one refresh's worth of
+        // steps) — measured on the user's session, 1042x632 of a 1575x956 panel, and half the
+        // panel's resolution in their larger window. Now the phase steps once every view shown has
+        // finished a grid for the phase in force (`Perf::grid_done`) with nothing of it left in the
+        // GPU queue; meanwhile the last finished picture stays on screen while the next one forms.
+        // The step covers the time since the last one at the Speed slider's rate, up to
+        // `TRAP_PHASE_STEP_MAX` so a slow view turns slowly rather than in jumps.
+        if self.trap_phase_animating() {
+            let now = ctx.input(|i| i.time);
+            let views: &[usize] = if self.dual { &[0, 1] } else { &[0] };
+            let ready = views.iter().all(|&v| {
+                self.perf.grid_done[v].is_some() && self.perf.grid_done[v] != self.anim.phase_stepped[v] && self.perf.view_outstanding(v) == 0
+            });
+            if let Some(step) = trap_phase_step(ready, now - self.anim.phase_step_at, self.anim.palette_anim_speed) {
+                for (shape, place) in [
+                    (Some(self.coloring.trap_type), &mut self.coloring.trap_place),
+                    (self.coloring.interior_trap, &mut self.coloring.interior_trap_place),
+                ] {
+                    if shape.is_some_and(|s| s.spec().phased) {
+                        place.phase = fractadyne_core::coloring::wrap_degrees(place.phase + step);
+                    }
                 }
+                self.anim.phase_stepped = self.perf.grid_done;
+                self.anim.phase_step_at = now;
             }
             self.schedule_repaint(ctx);
         }
@@ -17339,7 +17398,7 @@ impl FractadyneApp {
         let sig = self.accum_color_sig(view);
         let stale = self.perf.accum_active[view] && sig != self.perf.accum_sig[view];
         let qualifies =
-            self.accumulation_allowed() && !interacting && !self.tour_playing() && log2mag >= ACCUM_MIN_LOG2;
+            self.accumulation_allowed() && !interacting && !self.tour_playing() && !self.trap_phase_animating() && log2mag >= ACCUM_MIN_LOG2;
         let allowed = qualifies && !stale;
         // Due whenever the view qualifies and no run is under way, INCLUDING the frame that restarts
         // a stale run: that frame passes through the `!allowed` arm below with no run active, and a
@@ -17393,6 +17452,8 @@ impl FractadyneApp {
                     "the view moved".to_string()
                 } else if self.tour_playing() {
                     "a tour played".to_string()
+                } else if self.trap_phase_animating() {
+                    "the trap's phase is turning".to_string()
                 } else if log2mag < ACCUM_MIN_LOG2 {
                     "the view is too shallow".to_string()
                 } else {

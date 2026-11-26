@@ -456,6 +456,9 @@ enum Screen {
     /// iteration through the waves' own pipelines (`TRAP_WAVES`; without them the square wave would
     /// measure as the point); the panel's Harmonics row.
     TrapSquareWave,
+    /// The sine wave with Animate the phase on (user 2026-11-25, "it seems to be blocky"): the phase
+    /// turns, and every frame of it is drawn at the panel's resolution, none shrunk.
+    TrapPhaseAnimating,
     /// Edge shading (coloring plan C3): the Julia-link point in Smooth, point sampled, the shading
     /// off (the base)...
     EdgeShadeOff,
@@ -790,6 +793,10 @@ pub(crate) struct UiTest {
     // dispatched, and a capture that fires in that gap lands on a mid-ramp frame — the
     // meanD-9.9-under-load minimap-pan false red (fixed population 0.0-2.2 against a 9.5 gate).
     quiet_since: Instant,
+    /// The current step's settle frames, and how many of them the live view drew smaller than its
+    /// panel (`trap-phase-animating`).
+    frames_seen: u32,
+    frames_shrunk: u32,
     /// Crash reports already on disk when the walk started. Anything not in this list at the end
     /// appeared DURING the run — which is the only version of "no crash reports" that means
     /// anything on a config dir that is not wiped.
@@ -883,6 +890,8 @@ impl UiTest {
             sb_max: 0.0,
             ref_len_seen: 0,
             ref_changed_at: Instant::now(),
+            frames_seen: 0,
+            frames_shrunk: 0,
             quiet_since: Instant::now(),
             crashes_at_start: crate::diag::crash_report_names(),
             panel_w: None,
@@ -1465,6 +1474,7 @@ fn build_steps() -> Vec<Step> {
         screen("trap-sine-phase", Screen::TrapSinePhase),
         screen("trap-square-wave-1", Screen::TrapSquareWave1),
         screen("trap-square-wave", Screen::TrapSquareWave),
+        screen("trap-phase-animating", Screen::TrapPhaseAnimating),
         screen("edge-shade-off", Screen::EdgeShadeOff),
         screen("edge-shade", Screen::EdgeShade),
         screen("edge-shade-inside", Screen::EdgeShadeInside),
@@ -1566,6 +1576,8 @@ impl FractadyneApp {
                     StepKind::Screen(Screen::MisiurewiczExplorer | Screen::MisiurewiczJump) => {
                         (1_000u64, 60_000u64)
                     }
+                    // The turning phase: long enough for several finished pictures, each its grid.
+                    StepKind::Screen(Screen::TrapPhaseAnimating) => (8_000u64, 12_000u64),
                     StepKind::Screen(_) => (250u64, 3_000u64),
                     // Live: a generous hard cap so even a slow box's progressive reference build can
                     // finish (ref-settled gate) before the cap forces a capture.
@@ -1580,6 +1592,7 @@ impl FractadyneApp {
                 ut.ref_len_seen = 0;
                 ut.ref_changed_at = ut.step_start;
                 ut.quiet_since = ut.step_start;
+                (ut.frames_seen, ut.frames_shrunk) = (0, 0);
                 ut.panel_w = None;
                 ut.max_gap_ms = 0.0;
                 ut.last_tick = ut.step_start;
@@ -1589,6 +1602,17 @@ impl FractadyneApp {
                 let now = Instant::now();
                 ut.max_gap_ms = ut.max_gap_ms.max(now.duration_since(ut.last_tick).as_secs_f64() * 1000.0);
                 ut.last_tick = now;
+                // The frame the live view last put on screen, against its panel: one drawn smaller
+                // and shown as it was drawn (not a held finished picture while the next one forms).
+                let rec = &self.perf.rec[0];
+                let panel = [self.viewport.width_px.round() as u32, self.viewport.height_px.round() as u32];
+                ut.frames_seen += 1;
+                if rec.present == crate::diag::frame_record::present::LIVE
+                    && rec.res_w > 0
+                    && (rec.res_w < panel[0] || rec.res_h < panel[1])
+                {
+                    ut.frames_shrunk += 1;
+                }
                 // Track the status-bar height range, but ONLY after a transition guard: a window
                 // resize legitimately changes the height for a frame or two while winit applies the
                 // new size, and that must not count as a waver. Past the guard, the width is fixed,
@@ -1979,6 +2003,23 @@ impl FractadyneApp {
             name: "trap-sine-phase-drawn-live".into(),
             verdict: if d.is_some_and(|d| d >= 3.0) && phase == 90.0 { Verdict::Pass } else { Verdict::Fail },
             detail: format!("against {before}, the mean difference in levels: {d:?}; the trap's phase {phase}"),
+        });
+    }
+
+    /// The turning phase (user 2026-11-25, "it seems to be blocky"): it moved during the step, and no
+    /// more than a tenth of the step's frames were shown smaller than the panel. ⚠A working check,
+    /// not that bug's detector: on the RTX 3080 the walk's panel is small enough that every frame fits
+    /// one pass, and stepped every frame as it was the phase passed too (0 of 446 shrunk). The user's
+    /// session in a 1880x1000 window is what showed it (1042x632 of 1575x956 every frame, against
+    /// all 1575x956 with the step on finished pictures); a slower card may show it here.
+    fn uitest_trap_phase_animating_checks(&self, ut: &UiTest, checks: &mut Vec<Check>) {
+        let phase = self.coloring.trap().place.phase;
+        let (frames, shrunk) = (ut.frames_seen, ut.frames_shrunk);
+        let ok = phase.abs() > 0.5 && frames >= 5 && shrunk * 10 <= frames;
+        checks.push(Check {
+            name: "trap-phase-animating-full-resolution".into(),
+            verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+            detail: format!("the phase now {phase:.1} (from 0); {shrunk} of {frames} frames shown smaller than the panel"),
         });
     }
 
@@ -3509,6 +3550,24 @@ impl FractadyneApp {
                 self.coloring.trap_phase_anim = false;
                 self.dialogs.right_panel_open = true;
             }
+            // The sine wave turning: Animate the phase at the default Speed, as the user's session that
+            // looked blocky had it (2026-11-25): automatic iterations from 400 and supersampling 4x.
+            // An automatic count holds no finished picture while its budget settles, and stepped
+            // every frame the phase showed a shrunk one each time (1042x632 of 1575x956).
+            Screen::TrapPhaseAnimating => {
+                self.render_cfg.auto_iter = true;
+                self.render_cfg.max_iter = 400;
+                self.harness.uitest_held_aa.get_or_insert(self.render_cfg.aa);
+                self.render_cfg.aa = 4;
+                self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+                self.coloring.interior = None;
+                self.coloring.interior_trap = None;
+                self.coloring.trap_type = crate::TrapType::Sine;
+                self.coloring.trap_place = crate::TrapPlace::DEFAULT;
+                self.coloring.trap_phase_anim = true;
+                self.anim.palette_anim_speed = 0.15;
+                self.dialogs.right_panel_open = true;
+            }
             // The same view under the square wave, of one harmonic and then of twelve; the phase's
             // animation off (a clock).
             Screen::TrapSquareWave1 | Screen::TrapSquareWave => {
@@ -3524,6 +3583,12 @@ impl FractadyneApp {
             // C3: the Julia-link point again (filaments enough to shade), Smooth, point sampled; the
             // shading off, on toward white, then toward the inside's near-black, one change a step.
             Screen::EdgeShadeOff | Screen::EdgeShade | Screen::EdgeShadeInside | Screen::EdgeShadePanel => {
+                // The phase animation `trap-phase-animating` turned on, off again, and its
+                // supersampling back.
+                self.coloring.trap_phase_anim = false;
+                if let Some(aa) = self.harness.uitest_held_aa.take() {
+                    self.render_cfg.aa = aa;
+                }
                 if matches!(s, Screen::EdgeShadeOff) {
                     let (cx, cy) = UITEST_JULIA_LINK_C;
                     self.set_show_mode(crate::ShowMode::Set);
@@ -4280,6 +4345,7 @@ impl FractadyneApp {
                     | Screen::TrapSinePhase
                     | Screen::TrapSquareWave1
                     | Screen::TrapSquareWave
+                    | Screen::TrapPhaseAnimating
                     | Screen::EdgeShadeOff
                     | Screen::EdgeShade
                     | Screen::EdgeShadeInside
@@ -5232,6 +5298,9 @@ impl FractadyneApp {
         }
         if let StepKind::Screen(Screen::TrapSquareWave) = step.kind {
             self.uitest_trap_harmonics_checks(ut, inside_view.as_ref(), &mut checks);
+        }
+        if let StepKind::Screen(Screen::TrapPhaseAnimating) = step.kind {
+            self.uitest_trap_phase_animating_checks(ut, &mut checks);
         }
 
         // ---- edge shading (coloring plan C3) ----
