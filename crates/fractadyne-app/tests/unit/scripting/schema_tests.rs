@@ -33,7 +33,8 @@ fn stopping_playback_restores_interaction() {
     // Keyframe fields a script may set, split by what happens when the tour ends. The
     // "kept" list is not laziness: where the tour LEFT you is the view you keep exploring
     // from, and resetting it would throw away the thing the tour was showing you.
-    const RESTORED: &[&str] = &["max_iter", "palette", "dual_split", "orbits", "minimap"];
+    // The wave traps' phases go back with the viewer's whole coloring, as the palette does.
+    const RESTORED: &[&str] = &["max_iter", "palette", "dual_split", "orbits", "minimap", "trap_phase", "interior_trap_phase"];
     const KEPT: &[&str] = &[
         "id",
         "t",

@@ -50,16 +50,22 @@ const L2: f64 = 26.6; // ~1e8× (mode-0 df32 perturbation)
 fn precomputed_matches_a_fresh_build() {
     let inp = inputs_for(SX, SY, L2, 3000, None);
     let (want_iter, want_prec) = (inp.gpu_iter, inp.precision);
+    let aux = BlaAux { stripe_freq: inp.stripe_freq, stripe_tail_alpha: inp.stripe_tail_alpha, trap: inp.trap };
     let r = recompute_worker(inp);
     assert!(
-        precomputed_matches(&r, want_iter, want_prec),
+        precomputed_matches(&r, want_iter, want_prec, aux),
         "a reference built for (iter={want_iter}, prec={want_prec}) must be accepted for that \
          same frame — got iter={} req_prec={} (built at prec={})",
         r.iter, r.req_prec, r.prec,
     );
     // And it must still REJECT a frame it was not built for, or the gate is a rubber stamp.
-    assert!(!precomputed_matches(&r, want_iter + 1, want_prec), "a different iter must reject");
-    assert!(!precomputed_matches(&r, want_iter, want_prec + 1), "a different prec must reject");
+    assert!(!precomputed_matches(&r, want_iter + 1, want_prec, aux), "a different iter must reject");
+    assert!(!precomputed_matches(&r, want_iter, want_prec + 1, aux), "a different prec must reject");
+    // ...nor a frame whose BLA tree would fold another trap: a tour whose keyframes turn the wave's
+    // phase builds the next frame's reference while this one renders.
+    let phased = crate::Trap::new(crate::TrapType::Sine, crate::TrapPlace { phase: 30.0, ..crate::TrapPlace::DEFAULT });
+    assert!(!precomputed_matches(&r, want_iter, want_prec, BlaAux { trap: phased, ..aux }), "another trap must reject");
+    assert!(!precomputed_matches(&r, want_iter, want_prec, BlaAux { stripe_freq: 2.0, ..aux }), "another stripe must reject");
     // The headroom is what made the old test unsatisfiable; pin the relationship it broke on.
     assert_eq!(r.prec, r.req_prec + REF_PREC_HEADROOM, "fresh build carries the headroom");
 }

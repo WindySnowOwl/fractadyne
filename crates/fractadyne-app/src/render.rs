@@ -676,8 +676,29 @@ pub(crate) fn holding_for_reference(view: usize, autopilot_active: bool, ref_wai
 /// where the lower precision's rounding has grown into it, and escapes at another iteration
 /// (measured 2026-10-17: `precision_tail` in fractadyne-core), so "at least as precise" would not be
 /// pixel-identical to the fresh build it replaces.
-fn precomputed_matches(r: &RecomputeResult, eff_iter: u32, precision: usize) -> bool {
-    r.iter == eff_iter && r.req_prec == precision
+///
+/// ⭐The BLA tree's aggregate lanes are inputs too ([`BlaAux`]): a tour whose trap's phase turns from
+/// frame to frame (a keyframe `trap_phase`) builds frame N+1's reference while frame N renders, and a
+/// tree folded for frame N's phase would skip frame N+1's orbits by the wrong trap distances.
+fn precomputed_matches(r: &RecomputeResult, eff_iter: u32, precision: usize, aux: BlaAux) -> bool {
+    r.iter == eff_iter && r.req_prec == precision && BlaAux::of(r) == aux
+}
+
+/// What a reference's BLA tree folds into its aggregate lanes, as the app's coloring sets it: the
+/// stripe density, the stripe tail's α and the trap. One function fills a build's inputs with it
+/// ([`FractadyneApp::bla_aux`]), so [`precomputed_matches`] compares exactly what the build used.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct BlaAux {
+    pub(crate) stripe_freq: f64,
+    pub(crate) stripe_tail_alpha: f64,
+    pub(crate) trap: crate::Trap,
+}
+
+impl BlaAux {
+    /// The lanes a built reference's tree carries.
+    fn of(r: &RecomputeResult) -> BlaAux {
+        BlaAux { stripe_freq: r.bla_stripe_freq, stripe_tail_alpha: r.bla_stripe_tail, trap: r.bla_trap }
+    }
 }
 
 /// Pick a reference (once) then build its orbit + series-approximation skip + BLA tree to
@@ -4204,6 +4225,11 @@ impl FractadyneApp {
     /// (`mode == 1`), which iterates from 0 with no reference. Series approximation applies to the
     /// holomorphic polynomial families (Mandelbrot / Multibrot 3-8) with a non-aux coloring method.
     #[allow(clippy::too_many_arguments)] // REFACTOR-PLAN Phase 2/4: fold into a reference-inputs struct
+    /// What an export reference's BLA tree folds into its aggregate lanes now ([`BlaAux`]).
+    pub(crate) fn bla_aux(&self) -> BlaAux {
+        BlaAux { stripe_freq: self.coloring.stripe_freq as f64, stripe_tail_alpha: self.bla_tail_alpha(), trap: self.coloring.trap() }
+    }
+
     fn export_reference_inputs(
         &self,
         vp: &Viewport,
@@ -4228,6 +4254,7 @@ impl FractadyneApp {
             && !self.coloring.orbit_stats(mode).blocks_iter_skip()
             && self.render_cfg.series_approx
             && bla_dc_max.is_none();
+        let aux = self.bla_aux();
         RecomputeInputs {
             origin: "export",
             blinken: (bl::NO_PANEL_ROLE, 0),
@@ -4244,9 +4271,9 @@ impl FractadyneApp {
             julia_c: self.julia_c,
             do_sa,
             bla_dc_max,
-            stripe_freq: self.coloring.stripe_freq as f64,
-            stripe_tail_alpha: self.bla_tail_alpha(),
-            trap: self.coloring.trap(),
+            stripe_freq: aux.stripe_freq,
+            stripe_tail_alpha: aux.stripe_tail_alpha,
+            trap: aux.trap,
             // ⭐⭐**MEASURED, and deliberately left OFF.** A GUI export could hand the worker the
             // live view's resident reference and EXTEND it instead of picking and building a
             // fresh one — `try_reuse_reference` does exactly that for the live path, and the
@@ -4613,7 +4640,7 @@ impl FractadyneApp {
                     // iteration count + precision; otherwise (stale, or none) compute it now.
                     // Fallback is always safe.
                     let res = match src {
-                        RefSource::Precomputed(r) if precomputed_matches(&r, eff_iter, precision) => *r,
+                        RefSource::Precomputed(r) if precomputed_matches(&r, eff_iter, precision, self.bla_aux()) => *r,
                         RefSource::ProbeOnly(r) => *r,
                         _ => {
                             let inputs = self

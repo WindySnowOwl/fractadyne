@@ -10278,6 +10278,8 @@ impl FractadyneApp {
                 ("julia-and-mandelbrot", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tours/julia-and-mandelbrot.toml"))),
                 // The live method tour (coloring plan B1b).
                 ("coloring-methods", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tours/coloring-methods.toml"))),
+                // The wave trap's phase turning (keyframe `trap_phase`, user 2026-11-25).
+                ("trap-phase-cycle", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tours/trap-phase-cycle.toml"))),
             ];
             let mut bad = Vec::new();
             let mut total_s = 0.0;

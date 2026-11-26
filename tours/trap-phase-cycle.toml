@@ -1,0 +1,43 @@
+# Fractadyne tour: the sine wave trap's phase turning through one full wave while the view holds still.
+#
+#   fractadyne --render-tour tours/trap-phase-cycle.toml --mp4
+#
+# Two keyframes at the same place, the phase 0 at the first and 360 at the second, with a linear
+# glide between them, so the wave travels along itself at an even rate. Every frame is calculated
+# again: the trap is measured as the orbits are iterated. Change `trap` below to "square-wave" (and
+# add `trap_harmonics`) for the square wave, or the keyframes' place and zoom for another view.
+#
+# The last frame is the first again (phase 360 is phase 0). For a video that loops seamlessly, end
+# the second keyframe one frame short: at 30 fps over 8 s, trap_phase = 358.5 at t = 7.9667.
+format_version = 2
+name = "Trap phase cycle"
+
+[render]
+size = "1280x720"
+fps = 30
+ss = 2
+
+[render.coloring]
+method = "trap"
+trap = "sine"
+
+[[location]]
+id = "overview"
+re = "-0.6"
+im = "0"
+note = "The whole set: the wave runs across it and threads through every bulb."
+
+[[keyframe]]
+id = "phase-0"
+t = 0
+location = "overview"
+zoom = 1
+max_iter = 1500
+palette = "aurora"
+trap_phase = 0
+
+[[keyframe]]
+id = "phase-360"
+t = 8
+ease = "linear"
+trap_phase = 360

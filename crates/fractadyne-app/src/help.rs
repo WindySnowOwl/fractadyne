@@ -476,6 +476,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Section("Examples"),
         Example("fractadyne --render -o out.png --fractal Mandelbrot --center -0.743644 0.131826 --zoom 2e7 --iter 6000 --method stripe --ss 3"),
         Example("fractadyne --render-tour tours/deep-spiral-dive.toml --size 1920x1080 --fps 30 --ss 2 --out frames --mp4 --show-location"),
+        Example("fractadyne --render-tour tours/trap-phase-cycle.toml --mp4      # the sine wave trap's phase turning"),
         Example("fractadyne @render.args        # read the whole command line from render.args"),
     ]
 };

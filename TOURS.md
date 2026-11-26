@@ -193,6 +193,8 @@ A camera waypoint. The view eases from the previous keyframe to this one, ARRIVI
 | `order` | int or "auto" | (inherit, else auto) | An L-system's order: a number fixes it; "auto" lets it follow the zoom. Stepped at the keyframe. |
 | `angle` | float | (inherit, else the system's) | An L-system's angle, degrees; interpolated, so the curve morphs as it turns. |
 | `draw` | float | (inherit, else 1) | How much of an L-system is drawn, 0 to 1, in the order the turtle draws it; interpolated, so the curve draws itself on. |
+| `trap_phase` | float, degrees | (inherit, else the coloring's) | The wave trap's phase here (the sine wave's or the square wave's; `[render.coloring]` `trap_phase`), in degrees and never wrapped: interpolated along the glide, so 0 here and 360 at the next keyframe turn the wave once through, 720 twice. Two keyframes at the same place with `ease = "linear"` turn it evenly while the camera stays still (a hold keeps its keyframe's phase). Up to a thousand turns either way. |
+| `interior_trap_phase` | float, degrees | (inherit, else the coloring's) | The inside's own trap's phase, as `trap_phase`. |
 
 ### `[[annotation]]` — repeatable
 

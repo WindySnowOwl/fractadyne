@@ -698,7 +698,51 @@ struct KeyframeFile {
     /// How much of an L-system is drawn, 0 to 1 — INTERPOLATED, so the curve draws itself on.
     #[serde(default)]
     draw: Option<f64>,
+    // --- the wave traps' phase (user 2026-11-25: render the sine wave's phase turning) ---
+    /// The trap's phase here, degrees (the sine wave's and the square wave's, `[render.coloring]`
+    /// `trap_phase`) — INTERPOLATED along a glide and never wrapped, so 0 here and 360 at the next
+    /// keyframe turn the wave once through. Inherited forward; while stated it overrides the
+    /// coloring's phase.
+    #[serde(default)]
+    trap_phase: Option<f64>,
+    /// The inside's own trap's phase, as `trap_phase`.
+    #[serde(default)]
+    interior_trap_phase: Option<f64>,
 }
+
+/// The wave traps' phases a keyframe states, inherited forward, in degrees and unwrapped (`None`:
+/// the coloring's own): the trap's and the inside's own trap's.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct TrapPhases {
+    pub(crate) trap: Option<f64>,
+    pub(crate) inside: Option<f64>,
+}
+
+impl TrapPhases {
+    /// The phases `ease` of the way from `self` to `b`, where both state one.
+    fn lerp(self, b: TrapPhases, ease: f64) -> TrapPhases {
+        let mix = |x: Option<f64>, y: Option<f64>| match (x, y) {
+            (Some(x), Some(y)) => Some(x + (y - x) * ease),
+            (x, _) => x,
+        };
+        TrapPhases { trap: mix(self.trap, b.trap), inside: mix(self.inside, b.inside) }
+    }
+
+    /// Put these phases on the trap's placement and the inside's own, wrapped into [-180, 180) (in
+    /// f64, so a phase of many turns keeps its fraction). A shape without a phase ignores it.
+    pub(crate) fn apply(self, trap: &mut crate::TrapPlace, inside: &mut crate::TrapPlace) {
+        let wrap = |d: f64| fractadyne_core::coloring::wrap_degrees(((d + 180.0).rem_euclid(360.0) - 180.0) as f32);
+        if let Some(d) = self.trap {
+            trap.phase = wrap(d);
+        }
+        if let Some(d) = self.inside {
+            inside.phase = wrap(d);
+        }
+    }
+}
+
+/// The largest phase a keyframe may state, in degrees either way: a thousand turns.
+const TRAP_PHASE_MAX: f64 = 360_000.0;
 
 /// A keyframe's L-system state, inherited forward: the system (`None`: the one shown), its order
 /// (`None`: it follows the zoom), its angle (`None`: the system's), how much of it is drawn.
@@ -846,6 +890,8 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
             SchemaField { name: "order", ty: "int or \"auto\"", default: "(inherit, else auto)", doc: "An L-system's order: a number fixes it; \"auto\" lets it follow the zoom. Stepped at the keyframe." },
             SchemaField { name: "angle", ty: "float", default: "(inherit, else the system's)", doc: "An L-system's angle, degrees; interpolated, so the curve morphs as it turns." },
             SchemaField { name: "draw", ty: "float", default: "(inherit, else 1)", doc: "How much of an L-system is drawn, 0 to 1, in the order the turtle draws it; interpolated, so the curve draws itself on." },
+            SchemaField { name: "trap_phase", ty: "float, degrees", default: "(inherit, else the coloring's)", doc: "The wave trap's phase here (the sine wave's or the square wave's; `[render.coloring]` `trap_phase`), in degrees and never wrapped: interpolated along the glide, so 0 here and 360 at the next keyframe turn the wave once through, 720 twice. Two keyframes at the same place with `ease = \"linear\"` turn it evenly while the camera stays still (a hold keeps its keyframe's phase). Up to a thousand turns either way." },
+            SchemaField { name: "interior_trap_phase", ty: "float, degrees", default: "(inherit, else the coloring's)", doc: "The inside's own trap's phase, as `trap_phase`." },
         ],
     },
     SchemaTable {
@@ -1625,6 +1671,8 @@ struct Kf {
     palette: Option<usize>,
     /// The L-system state (angle and draw-on interpolated along a glide).
     ls: LsTour,
+    /// The wave traps' phases (interpolated along a glide).
+    phases: TrapPhases,
 }
 
 /// The fully-resolved tour state at a moment in time: interpolated camera + the active keyframe's
@@ -1810,6 +1858,8 @@ pub(crate) struct Sampled {
     pub(crate) palette: Option<PaletteApply>,
     /// The L-system state this frame shows (when `fractal` is an L-system).
     pub(crate) ls: LsTour,
+    /// The wave traps' phases this frame, where the script states them.
+    pub(crate) phases: TrapPhases,
 }
 
 /// Aggregates sampled while a benchmark tour plays.
@@ -2010,7 +2060,7 @@ impl Playback {
             }
         }
         let a = &self.kfs[i];
-        let mk = |cx, cy, lm, julia_c, orbit, max_iter, palette, dual_split, ls| Sampled {
+        let mk = |cx, cy, lm, julia_c, orbit, max_iter, palette, dual_split, ls, phases| Sampled {
             cx,
             cy,
             logmag: lm,
@@ -2026,6 +2076,7 @@ impl Playback {
             max_iter,
             palette,
             ls,
+            phases,
         };
         // Holding at `a` (or past the final keyframe): return its state unchanged.
         if e <= a.at + a.hold || i + 1 >= n {
@@ -2034,7 +2085,7 @@ impl Playback {
                 TourPalette::Stops(s) => PaletteApply::Stops(s.clone()),
             });
             return mk(a.cx.clone(), a.cy.clone(), a.logmag, a.julia_c, a.orbit, a.max_iter, pal,
-                      a.dual_split, a.ls.clone());
+                      a.dual_split, a.ls.clone(), a.phases);
         }
         // Gliding a → b over its move window, with b's easing.
         let b = &self.kfs[i + 1];
@@ -2124,7 +2175,10 @@ impl Playback {
                 fractadyne_core::lerp_bf(&a.cy, &b.cy, ease, p),
             )
         };
-        mk(cx, cy, lm, julia_c, orbit, max_iter, palette, dual_split, ls)
+        // The wave traps' phases turn with the glide (user 2026-11-25), unwrapped, so a keyframe at
+        // 360 after one at 0 is one full turn.
+        let phases = a.phases.lerp(b.phases, ease);
+        mk(cx, cy, lm, julia_c, orbit, max_iter, palette, dual_split, ls, phases)
     }
 
     /// Is the camera stationary at time `e` — inside a keyframe's hold, or past the final one?
@@ -2727,6 +2781,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
     let mut minimap = false;
     let (mut max_iter, mut palette): (Option<u32>, Option<usize>) = (None, None);
     let mut ls = LsTour::default();
+    let mut phases = TrapPhases::default();
     for (i, k) in sf.keyframe.iter().enumerate() {
         let id = k.id.clone().unwrap_or_else(|| format!("#{}", i + 1));
         let at = match k.t {
@@ -2897,6 +2952,14 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
             }
             ls.draw = Some(d.clamp(0.0, 1.0) as f32);
         }
+        for (key, value, slot) in [("trap_phase", k.trap_phase, &mut phases.trap), ("interior_trap_phase", k.interior_trap_phase, &mut phases.inside)] {
+            if let Some(d) = value {
+                if !(d.is_finite() && d.abs() <= TRAP_PHASE_MAX) {
+                    return Err(format!("keyframe {id}: {key} = {d} — degrees, unwrapped, up to a thousand turns (±{TRAP_PHASE_MAX})"));
+                }
+                *slot = Some(d);
+            }
+        }
         if let Some(j) = k.julia {
             julia = j;
         }
@@ -2966,6 +3029,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
             max_iter,
             palette,
             ls: ls.clone(),
+            phases,
         });
     }
     let total = kfs.last().map(|k| k.at + k.hold).unwrap_or(0.0);
@@ -3350,6 +3414,7 @@ impl FractadyneApp {
         if let Some(p) = &s.palette {
             self.apply_script_palette(p);
         }
+        s.phases.apply(&mut self.coloring.trap_place, &mut self.coloring.interior_trap_place);
     }
 
     /// Load a camera-tour script (TOML) via a file dialog and start playing it.
@@ -4260,7 +4325,13 @@ impl FractadyneApp {
                     let room = crate::sysinfo::available_memory()
                         .map_or(true, |avail| est.saturating_add(TOUR_MEM_MARGIN) < avail);
                     if room {
-                        if let Some(p) = self.spawn_export_reference_reusing(&vp2, self.julia_mode, budget2, &cands2) {
+                        // With the SUCCESSOR's trap phases: its BLA tree folds its trap's distances,
+                        // and a tree for this frame's phase fails `precomputed_matches` there.
+                        let held = (self.coloring.trap_place, self.coloring.interior_trap_place);
+                        s2.phases.apply(&mut self.coloring.trap_place, &mut self.coloring.interior_trap_place);
+                        let spawned = self.spawn_export_reference_reusing(&vp2, self.julia_mode, budget2, &cands2);
+                        (self.coloring.trap_place, self.coloring.interior_trap_place) = held;
+                        if let Some(p) = spawned {
                             pending_ref = Some((nfi, p));
                         }
                     } else if !low_mem_warned {
@@ -5467,6 +5538,10 @@ mod coloring_tests;
 #[cfg(test)]
 #[path = "../tests/unit/scripting/lsystem_tests.rs"]
 mod lsystem_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/scripting/trap_phase_tests.rs"]
+mod trap_phase_tests;
 
 #[cfg(test)]
 #[path = "../tests/unit/scripting/schema_tests.rs"]

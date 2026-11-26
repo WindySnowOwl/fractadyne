@@ -50,6 +50,12 @@ detail is in the git history.
   one. A view file keeps the count (`trap_harmonics`, and `interior_trap_harmonics` for the inside's
   own trap), and on the command line they are `--trap sinc`, `--trap square-wave` and
   `--trap-harmonics N`.
+- **Render the wave trap's phase turning.** A tour's keyframes can state the trap's phase
+  (`trap_phase`, and `interior_trap_phase` for the inside's own trap), in degrees and never wrapped:
+  it turns along the glide to the next keyframe, so 0 at one and 360 at the next is one full wave.
+  Two keyframes at the same place hold the view still while the sine wave or the square wave
+  travels along itself, played live or rendered by `--render-tour` as frames or an mp4. A new
+  example does just that: `fractadyne --render-tour tours/trap-phase-cycle.toml --mp4`.
 - **Move, turn and size the orbit trap.** Under Trap shape the panel now has the trap's center, x
   and y, and a rotation for the cross and a size, its radius, for the circle. Where the trap sits
   decides which orbits come near it, so moving it rearranges the bands and rings it draws, inside the
