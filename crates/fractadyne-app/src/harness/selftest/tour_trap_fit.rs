@@ -70,7 +70,22 @@ impl crate::FractadyneApp {
              [[keyframe]]\nt = 1\n"
         );
         let path = dir.join("tour.toml");
+        // ⚠Everything a tour render sets, put back after it (the list `tour-equalize` keeps): left
+        // at the tour's 320 px, the export width made the later `appearance` group render its
+        // frames at 320x180, where Binary's small inside vanished and its check failed (a full
+        // self-test, 2026-11-26; that group alone passed).
         let saved = (self.watermark, self.show_location);
+        let saved_tour = (
+            self.fractal,
+            self.julia_mode,
+            self.dual,
+            self.julia_c,
+            self.viewport.clone(),
+            self.render_cfg.max_iter,
+            self.render_cfg.auto_iter,
+            self.export.ss,
+            self.export.width,
+        );
         (self.watermark, self.show_location) = (false, false);
         let ctx = egui::Context::default();
         let cfg = crate::scripting::TourRenderConfig {
@@ -86,6 +101,17 @@ impl crate::FractadyneApp {
                 fractadyne_export::read_png_rgba8(&dir.join("frames").join("frame_00000.png")).map(|(_, _, px)| px).map_err(|e| e.to_string())
             });
         (self.watermark, self.show_location) = saved;
+        (
+            self.fractal,
+            self.julia_mode,
+            self.dual,
+            self.julia_c,
+            self.viewport,
+            self.render_cfg.max_iter,
+            self.render_cfg.auto_iter,
+            self.export.ss,
+            self.export.width,
+        ) = saved_tour;
         let _ = std::fs::remove_dir_all(&dir);
         result
     }
