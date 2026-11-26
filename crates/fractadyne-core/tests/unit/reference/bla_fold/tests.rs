@@ -67,7 +67,7 @@ fn level_zero_is_each_folds_linearisation() {
         let (shape, d) = fold_shape(f).unwrap();
         for z in [(0.375f32, 0.625f32), (-0.875, 0.25), (-0.5, -0.4375), (0.6875, -0.8125)] {
             let orbit = orbit_at(z);
-            let node = fold_level0_node(0, &orbit, eps, AuxAggParams::default(), shape, d);
+            let node = fold_level0_node(0, &orbit, eps, &AuxAggParams::default(), shape, d);
             let r = node.r.to_f64();
             assert!(r > 0.0, "formula {f} at {z:?}: zero radius off every axis");
             for k in 0..16 {
@@ -113,7 +113,7 @@ fn the_fold_radius_binds_next_to_a_fold() {
             }
         };
         let (zx, zy) = (z.0 as f64, z.1 as f64);
-        let node = fold_level0_node(0, &orbit_at(z), eps, AuxAggParams::default(), shape, d);
+        let node = fold_level0_node(0, &orbit_at(z), eps, &AuxAggParams::default(), shape, d);
         let r_power = 2.0 * eps * (zx * zx + zy * zy).sqrt() / (df - 1.0);
         let r = node.r.to_f64();
         assert!(r < 0.5 * r_power, "formula {f}: the fold radius {r:e} does not bind (power's {r_power:e})");
@@ -243,9 +243,9 @@ fn the_fold_tree_packs_as_the_complex_one() {
     let f = formula::BURNING_SHIP;
     let c = interior_point(f).unwrap();
     let (orbit, _) = reference_orbit(&bf(0.0, p), &bf(0.0, p), &bf(c.0, p), &bf(c.1, p), f, 300, p);
-    let aux = AuxAggParams { trap_type: crate::coloring::TrapType::Point, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, stripe_freq: 3.0, cmag: 0.5, power: 2.0, stripe_tail_alpha: 0.0 };
-    let fold = bla_fold_to_gpu(&build_bla_fold(&orbit, fe(1e-9), 1e-6, aux, f));
-    let complex = bla_to_gpu(&build_bla(&orbit, fe(1e-9), 1e-6, aux, 2));
+    let aux = AuxAggParams { trap_type: crate::coloring::TrapType::Point, trap_place: crate::coloring::TrapPlace::DEFAULT, trap_in: None, outline: None, stripe_freq: 3.0, cmag: 0.5, power: 2.0, stripe_tail_alpha: 0.0 };
+    let fold = bla_fold_to_gpu(&build_bla_fold(&orbit, fe(1e-9), 1e-6, aux.clone(), f));
+    let complex = bla_to_gpu(&build_bla(&orbit, fe(1e-9), 1e-6, aux.clone(), 2));
     assert_eq!(fold.len(), complex.len(), "the same level layout");
     for (i, (a, b)) in fold.iter().zip(&complex).enumerate() {
         // The 4th and 5th vec4s: the span, the aux aggregates and the stripe tail's window.
@@ -253,7 +253,7 @@ fn the_fold_tree_packs_as_the_complex_one() {
             assert_eq!(a, b, "node {}: span and the aux aggregates", i / BLA_NODE_VEC4S);
         }
     }
-    assert_eq!(bla_tree_gpu(&orbit, fe(1e-9), 1e-6, aux, f), fold, "the dispatcher takes the fold tree");
+    assert_eq!(bla_tree_gpu(&orbit, fe(1e-9), 1e-6, aux.clone(), f), fold, "the dispatcher takes the fold tree");
     assert!(bla_tree_gpu(&orbit, fe(1e-9), 1e-6, aux, formula::PHOENIX).is_empty(), "no tree for Phoenix");
 }
 

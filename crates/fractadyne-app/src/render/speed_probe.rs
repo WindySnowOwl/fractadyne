@@ -426,6 +426,7 @@ fn plan_request(plan: Plan) -> (fractadyne_gpu::ExportRequest, u32) {
         trap_type: crate::TrapType::Point.gpu_id(),
         trap_place: crate::TrapPlace::DEFAULT,
         trap_in: None,
+        outline: None,
         aa_filter: 1,
         interior_col: [0.0; 4],
         interior: Default::default(),

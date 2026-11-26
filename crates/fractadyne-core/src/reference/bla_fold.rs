@@ -140,7 +140,7 @@ fn sgn(v: f64) -> f64 {
 }
 
 /// The single-step node at orbit sample `n` (see the module notes for each shape's A and radius).
-fn fold_level0_node(n: usize, orbit: &[[f32; 4]], eps: f64, aux: AuxAggParams, shape: Shape, d: u32) -> BlaFoldNode {
+fn fold_level0_node(n: usize, orbit: &[[f32; 4]], eps: f64, aux: &AuxAggParams, shape: Shape, d: u32) -> BlaFoldNode {
     // `sample_xy`, not lane sums: an extended-range dip sample carries a NaN marker.
     let (zr, zi) = sample_xy(&orbit[n]);
     let z = CFloatExp { re: FloatExp::from_f64(zr), im: FloatExp::from_f64(zi) };
@@ -227,7 +227,7 @@ pub fn build_bla_fold(orbit: &[[f32; 4]], dc_max: FloatExp, eps: f64, aux: AuxAg
         agg_trap_in: 0.0,
     };
     let mut lvl0 = vec![placeholder; nstep];
-    par_fill(&mut lvl0, BLA_PAR_THRESHOLD, |n| fold_level0_node(n, orbit, eps, aux, shape, d));
+    par_fill(&mut lvl0, BLA_PAR_THRESHOLD, |n| fold_level0_node(n, orbit, eps, &aux, shape, d));
     let mut levels = vec![lvl0];
     while levels.last().unwrap().len() > 1 {
         let prev = levels.last().unwrap();

@@ -142,6 +142,9 @@ fn kitchen_sink() -> fractadyne_state::ColoringSpec {
         interior_trap_harmonics: 3,
         trap_sine_harmonics: 3,
         interior_trap_sine_harmonics: 4,
+        // Shown only by an outline trap (`drawings`' last): a triangle and a chevron (F4 part 4).
+        trap_outline: "M -1 0 L 1 0 L 0 1 L -1 0 M -0.5 -0.8 L 0 -0.4 L 0.5 -0.8".into(),
+        trap_outline_name: "triangle.svg".into(),
         custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
         custom_palette_flat: true,
         custom_segments: vec![fractadyne_state::PaletteSegment {
@@ -234,6 +237,8 @@ fn scrambled_for(d: &fractadyne_state::ColoringSpec) -> fractadyne_state::Colori
         interior_trap_harmonics: 9,
         trap_sine_harmonics: 2,
         interior_trap_sine_harmonics: 6,
+        trap_outline: "M -0.7 -0.7 L 0.7 -0.7 L 0.7 0.7 L -0.7 0.7 L -0.7 -0.7".into(),
+        trap_outline_name: "square.svg".into(),
         custom_palette: vec![[0.0, 0.2, 0.9, 0.2], [1.0, 0.9, 0.9, 0.1]],
         custom_palette_flat: false,
         custom_segments: vec![fractadyne_state::PaletteSegment {
@@ -267,7 +272,8 @@ fn scrambled_for(d: &fractadyne_state::ColoringSpec) -> fractadyne_state::Colori
 
 /// The drawings: every method with each inside, the palette's four modes in turn (a gradient of
 /// its own, Duotone, Binary, a preset); a coloring hook; a Julia view; Burning Ship; a deep view;
-/// and the waves, where the phase and the harmonics show (each wave outside and inside in turn).
+/// the waves, where the phase and the harmonics show (each wave outside and inside in turn); and a
+/// drawing's outline (F4 part 4), which the view carries itself.
 fn drawings() -> Vec<Drawing> {
     let sink = kitchen_sink();
     let overview = ("-0.6", "0");
@@ -330,6 +336,8 @@ fn drawings() -> Vec<Drawing> {
         "the trap a square wave of 7 at 30 degrees, the inside's a sine wave of 4 harmonics at -45".into(),
         waves(TrapType::SquareWave, TrapType::Sine),
     ));
+    // A drawing's outline (F4 part 4): the view carries the outline's text, and its name.
+    out.push(base("the trap a drawing's outline, the inside's a star".into(), waves(TrapType::Outline, TrapType::Star)));
     out
 }
 

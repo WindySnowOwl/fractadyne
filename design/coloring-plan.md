@@ -1878,5 +1878,6 @@ coloring in these places, so sequence the two with care:
 | F4 (1)     | done, merged                                                       | `559bb679` (merge `a9c8704e`)                                                             |
 | F4 (2)     | done, merged                                                       | `bbabc385` (merge `0c082800`)                                                             |
 | F4 inside  | the trap method's inside with a trap of its own: done, merged      | `f8140294`, `6580ee12` (merge `67cf1e67`)                                                 |
-| F4 (3)     | done, merged (six shapes, compiled only into frames that draw one) | `864af084`, `849bc9a5`, `e42772d9`, `08df4c87` (merge recorded with the next step)        |
-| D, E, F, G | not started (F4 from part 4)                                       |                                                                                           |
+| F4 (3)     | done, merged (six shapes, compiled only into frames that draw one) | `864af084`, `849bc9a5`, `e42772d9`, `08df4c87` (merge `99d5f8d6`)                         |
+| F4 (4)     | done: outlines from SVG, in pipelines of their own (text next)     | commit and merge recorded with the next step                                              |
+| D, E, F, G | not started (F4 from part 4's text outlines)                       |                                                                                           |

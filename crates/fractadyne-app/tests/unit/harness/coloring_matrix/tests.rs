@@ -20,7 +20,8 @@ fn the_variants_walk_the_tables() {
     for m in ColorMethod::ALL {
         assert!(variants().iter().any(|v| v.method == m), "{m:?} has no cell");
     }
-    for t in TrapType::ALL {
+    // Every shape but the outline, which needs a drawing a matrix view does not have.
+    for t in TrapType::ALL.into_iter().filter(|t| *t != TrapType::Outline) {
         assert!(variants().iter().any(|v| v.method == ColorMethod::OrbitTrap && v.trap == t), "{t:?} has no cell");
     }
 }

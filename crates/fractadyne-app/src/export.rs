@@ -374,6 +374,9 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     // A coloring hook (format 5): its WGSL text (one line, `\n`/`\\` escaped) and its parameters
     // p1..p4. Written only for a view colored through one.
     "coloring_hook", "coloring_hook_params",
+    // The trap's outline (coloring plan F4, part 4): its text (`fractadyne_core::outline`) and what
+    // it was loaded from. Written only when a trap the picture uses is the outline.
+    "trap_outline", "trap_outline_name",
 ];
 
 /// Without these a "view" is not a view. Their absence is reported by NAME, so a paste that
@@ -1145,7 +1148,13 @@ impl FractadyneApp {
             // differs from the default and changes this picture (`coloring_fields`), so an ordinary
             // view's metadata is byte-identical to what it was before these keys existed. Not for a
             // Life or L-system view, which these settings do not color.
-            if self.fractal.is_escape_time() { crate::coloring_fields::view_lines(&self.coloring_spec()) } else { String::new() },
+            // With the trap's outline, when a trap the picture uses is one (`trap_outline`).
+            if self.fractal.is_escape_time() {
+                let spec = self.coloring_spec();
+                format!("{}{}", crate::coloring_fields::view_lines(&spec), crate::trap_outline::outline_view_lines(&spec))
+            } else {
+                String::new()
+            },
             // The custom gradient, when there is one. Empty otherwise, so a preset view's
             // metadata is byte-identical to what it was before this field existed.
             if self.coloring.use_custom_palette
@@ -1544,6 +1553,7 @@ impl FractadyneApp {
             let states = get("cycle").is_some();
             let mut spec = self.coloring_spec();
             crate::coloring_fields::apply_view(&mut spec, &get, states, &mut report.clamped);
+            crate::trap_outline::apply_outline_view(&mut spec, &get, states, &mut report.problems);
             // The coloring hook (B10): a view that states its coloring and names none was colored
             // without one. One that does not build is said, and the view shows the method's colors.
             match get("coloring_hook").filter(|t| !t.trim().is_empty()) {

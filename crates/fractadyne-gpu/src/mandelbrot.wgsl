@@ -1072,6 +1072,12 @@ struct IterU {
     // wave's harmonics, the sine wave's overlaid ones. What were the row's padding words.
     trap_harm: u32,
     trap_in_harm: u32,
+    // THE VIEW'S TRAP OUTLINE (lib.rs `outline_row`, coloring plan F4 part 4): where its cells,
+    // segment indices and segments start in `reference`, and 1 when it is there.
+    outline_cells: u32,
+    outline_idx: u32,
+    outline_segs: u32,
+    outline_on: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -1541,6 +1547,12 @@ override TRAP_EXTRA: bool = false;
 // that draws one (core `TrapTier::Waves`): kept out of the TRAP_EXTRA pipelines so the six shapes there
 // keep their speed (code added there for the F4.4 outline cost them 7-10% on the RX 6800 XT).
 override TRAP_WAVES: bool = false;
+// A drawing's outline (coloring plan F4, part 4), compiled in only with the switches above and only
+// for a frame that draws one (core `TrapTier::Outline`): its cell lookup and segment loop, present in
+// the TRAP_EXTRA pipelines, slowed the six shapes there 7-10% on the RX 6800 XT and timed out the
+// RTX 3070's trap matrix (2026-11-25). Off, the test below folds away and every other pipeline runs
+// the code it ran. (Not TRAP_OUTLINE: that is the outline shape's id, generated from core.)
+override TRAP_DRAWING: bool = false;
 fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, size: f32, inv: f32, phase: f32, harm: u32) -> f32 {
     var w = zf;
     if (on != 0u) {
@@ -1550,6 +1562,7 @@ fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, siz
     var s: f32;
     if (ty == TRAP_CROSS) { s = min(abs(w.x), abs(w.y)); }
     else if (ty == TRAP_CIRCLE) { s = abs(length(w) - 1.0); }
+    else if (TRAP_DRAWING && ty == TRAP_OUTLINE) { s = trap_outline_dist(w); }
     else if (TRAP_EXTRA) { s = trap_extra_dist(w, ty, phase, harm); }
     else { s = length(w); }
     if (on != 0u) { s = s * size; }
@@ -1670,6 +1683,36 @@ fn trap_square_wave(w: vec2<f32>, phase: f32, harm: u32) -> f32 {
     }
     let h = TRAP_SINE_AMP * 1.2732395;
     return trap_curve_dist(w, h * y, h * TRAP_SINE_FREQ * dy);
+}
+// The distance from p to the segment s = (a, b) as (ax, ay, bx, by): core `outline::seg_dist` in f32.
+fn outline_seg_dist(p: vec2<f32>, s: vec4<f32>) -> f32 {
+    let ab = s.zw - s.xy;
+    let ap = p - s.xy;
+    let t = clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0);
+    return length(ap - ab * t);
+}
+// The distance from w to the view's outline (coloring plan F4, part 4): core `Outline::dist` in f32,
+// through the same cells and lists. Inside the grid's square the exact distance to the nearest
+// segment of w's cell list; outside it, the distance to the square plus the outline's from there.
+// With no outline uploaded, the point's.
+fn trap_outline_dist(w: vec2<f32>) -> f32 {
+    if (iu.outline_on == 0u) { return length(w); }
+    let q = clamp(w, vec2<f32>(-OUTLINE_DOMAIN), vec2<f32>(OUTLINE_DOMAIN));
+    let cell_w = 2.0 * OUTLINE_DOMAIN / f32(OUTLINE_GRID);
+    let c = min(vec2<u32>(max(floor((q + OUTLINE_DOMAIN) / cell_w), vec2<f32>(0.0))), vec2<u32>(OUTLINE_GRID - 1u));
+    let ci = c.y * OUTLINE_GRID + c.x;
+    let cv = reference[iu.outline_cells + ci / 2u];
+    let se = select(cv.xy, cv.zw, (ci & 1u) == 1u);
+    let start = u32(se.x);
+    let count = u32(se.y);
+    var d = 3.0e38;
+    for (var k = 0u; k < count; k = k + 1u) {
+        let j = start + k;
+        let iv = reference[iu.outline_idx + j / 4u];
+        let si = u32(iv[j % 4u]);
+        d = min(d, outline_seg_dist(q, reference[iu.outline_segs + si]));
+    }
+    return length(w - q) + d;
 }
 // The S curve's top bowl: the arc of radius TRAP_S_RADIUS about (0, TRAP_S_RADIUS) from angle 0
 // counterclockwise to 270 degrees, measured in its own frame (its bisector, 135 degrees, turned up;

@@ -30,6 +30,14 @@ fn mandel_smooth_f64(cx: f64, cy: f64, max: u32) -> Option<f32> {
 
 /// FNV-1a 64-bit checksum (no deps) — a content fingerprint for golden images so a
 /// third party can confirm they're looking at the same reference bytes.
+/// The outline trap's drawing in the self-tests (coloring plan F4, part 4): a closed triangle and an
+/// open zigzag across it, a shape none of the built-in ones is.
+fn selftest_outline() -> fractadyne_core::outline::Outline {
+    let tri = vec![[0.0, 1.0], [0.866, -0.5], [-0.866, -0.5], [0.0, 1.0]];
+    let zig = vec![[-0.6, 0.2], [-0.2, -0.1], [0.2, 0.2], [0.6, -0.1]];
+    fractadyne_core::outline::Outline::from_paths(&[tri, zig]).expect("the self-test's outline")
+}
+
 fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
     for &b in bytes {
@@ -7417,6 +7425,8 @@ impl FractadyneApp {
             self.coloring.use_custom_palette = false;
             let saved_stripe_freq = self.coloring.stripe_freq;
             let saved_trap_type = self.coloring.trap_type;
+            let saved_outline = (self.coloring.trap_outline.clone(), self.coloring.trap_outline_gpu.clone(), self.coloring.trap_outline_name.clone());
+            self.coloring.set_outline(Some(selftest_outline()), "self-test".into());
             self.render_cfg.auto_iter = false;
             self.render_cfg.max_iter = 5000;
             self.render_cfg.series_approx = false; // isolate BLA
@@ -7474,6 +7484,8 @@ impl FractadyneApp {
                 (M::OrbitTrap, T::SquareWave, 1.0, P { harmonics: 12, phase: 40.0, ..at }, "orbit-trap-square-wave-12-phased"),
                 // The sine wave with four harmonics overlaid (the waves' pipelines), shifted.
                 (M::OrbitTrap, T::Sine, 1.0, P { sine_harmonics: 4, phase: 30.0, ..at }, "orbit-trap-sine-4-overlaid"),
+                // F4 part 4: the outline's grid on the GPU against core's, which the aggregates fold.
+                (M::OrbitTrap, T::Outline, 1.0, at, "orbit-trap-outline"),
                 (M::TriangleIneq, T::Point, 1.0, at, "triangle-ineq"),
                 (M::Stripe, T::Point, 5.0, at, "stripe"),
             ] {
@@ -7538,6 +7550,7 @@ impl FractadyneApp {
             self.coloring.stripe_freq = saved_stripe_freq;
             self.coloring.trap_type = saved_trap_type;
             self.coloring.trap_place = crate::TrapPlace::DEFAULT;
+            (self.coloring.trap_outline, self.coloring.trap_outline_gpu, self.coloring.trap_outline_name) = saved_outline;
         }
 
         // ---- aux-series: the series prefix must not drop the coloring statistics (A5a) ----
@@ -7956,6 +7969,8 @@ impl FractadyneApp {
             self.render_cfg.max_iter = 25_000;
             self.render_cfg.series_approx = true;
             self.render_cfg.use_bla = true;
+            let saved_outline = (self.coloring.trap_outline.clone(), self.coloring.trap_outline_gpu.clone(), self.coloring.trap_outline_name.clone());
+            self.coloring.set_outline(Some(selftest_outline()), "self-test".into());
             let (w, h) = (320u32, 200u32);
             let progress = std::sync::atomic::AtomicU32::new(0);
             let cancel = std::sync::atomic::AtomicBool::new(false);
@@ -8002,6 +8017,7 @@ impl FractadyneApp {
                 // The sine wave with its harmonics overlaid (user 2026-11-25): the count through the
                 // uniform, the waves' pipelines and the aggregates.
                 (T::Sine, P { sine_harmonics: 4, phase: 30.0, ..d }, "sine wave with 4 harmonics overlaid at phase 30"),
+                (T::Outline, d, "outline (a triangle and a zigzag)"),
             ] {
                 self.coloring.trap_type = shape;
                 self.coloring.trap_place = place;
@@ -8317,6 +8333,7 @@ impl FractadyneApp {
                 self.render_cfg.use_bla,
             ) = saved;
             self.coloring.trap_place = P::DEFAULT;
+            (self.coloring.trap_outline, self.coloring.trap_outline_gpu, self.coloring.trap_outline_name) = saved_outline;
         }
 
         // ---- invariance & consistency (Phase 3) — oracle-free, targets the tier crossovers ----
@@ -11783,6 +11800,9 @@ zoom = \"1e94\"
                 interior_trap_harmonics: 3,
                 trap_sine_harmonics: 4,
                 interior_trap_sine_harmonics: 2,
+                // A drawing's outline (F4 part 4), its canonical text, and the file it came from.
+                trap_outline: "M -1 0 L 1 0 L 0 1 L -1 0".into(),
+                trap_outline_name: "triangle.svg".into(),
                 custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
                 custom_palette_flat: true,
                 custom_segments: vec![fractadyne_state::PaletteSegment {
@@ -12248,6 +12268,16 @@ zoom = \"1e94\"
             self.coloring.color_method = M::OrbitTrap;
             self.coloring.interior = None;
             moved(self, "the method's trap shape (Orbit trap)", &|a| a.coloring.trap_type = T::Star);
+            // Another drawing under the outline trap (F4 part 4): the key holds the outline by its own key.
+            let was_outline =
+                (self.coloring.trap_outline.clone(), self.coloring.trap_outline_gpu.clone(), self.coloring.trap_outline_name.clone());
+            let drawing = |text: &str| fractadyne_core::outline::Outline::from_text(text).ok();
+            self.coloring.set_outline(drawing("M -1 0 L 1 0 L 0 1"), "a.svg".into());
+            self.coloring.trap_type = T::Outline;
+            moved(self, "the outline's drawing (Orbit trap, Outline)", &|a| {
+                a.coloring.set_outline(drawing("M -1 -1 L 1 1"), "b.svg".into())
+            });
+            (self.coloring.trap_outline, self.coloring.trap_outline_gpu, self.coloring.trap_outline_name) = was_outline;
             self.coloring.color_method = M::Stripe;
             moved(self, "the stripe density", &|a| a.coloring.stripe_freq += 1.5);
             moved(self, "the cycle", &|a| a.coloring.cycle *= 1.5);

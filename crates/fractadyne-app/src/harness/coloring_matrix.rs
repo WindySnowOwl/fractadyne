@@ -133,7 +133,11 @@ pub(crate) fn variants() -> Vec<Variant> {
     for m in ColorMethod::ALL {
         let one = Variant { method: m, trap: TrapType::default(), tail: false };
         match m {
-            ColorMethod::OrbitTrap => v.extend(TrapType::ALL.map(|t| Variant { trap: t, ..one })),
+            // Not the outline: it needs a drawing, which a matrix view does not have (it would
+            // measure as the point).
+            ColorMethod::OrbitTrap => {
+                v.extend(TrapType::ALL.into_iter().filter(|t| *t != TrapType::Outline).map(|t| Variant { trap: t, ..one }))
+            }
             ColorMethod::Stripe => v.extend([one, Variant { tail: true, ..one }]),
             _ => v.push(one),
         }

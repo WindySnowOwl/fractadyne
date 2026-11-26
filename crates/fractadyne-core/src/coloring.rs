@@ -523,8 +523,8 @@ pub struct TrapSpec {
     pub overlaid: bool,
 }
 
-/// Which of the shader's trap-shape switches compiles a shape's code in (`TRAP_EXTRA`, `TRAP_WAVES` in
-/// mandelbrot.wgsl). A frame's iterate pipeline is the one for the highest tier among its traps, and
+/// Which of the shader's trap-shape switches compiles a shape's code in (`TRAP_EXTRA`, `TRAP_WAVES`,
+/// `TRAP_DRAWING` in mandelbrot.wgsl). A frame's iterate pipeline is the one for the highest tier among its traps, and
 /// each tier's pipelines carry the lower tiers' shapes too, so one pipeline draws any pair. A frame
 /// whose traps need no more than `Base` runs the code it ran before either switch existed.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Hash)]
@@ -539,11 +539,15 @@ pub enum TrapTier {
     /// the Extra pipelines so the six shapes there keep their speed (code added there for the F4.4
     /// outline cost them 7-10% on the RX 6800 XT, 2026-11-25).
     Waves,
+    /// `TRAP_DRAWING`, with the tiers below: a drawing's outline (coloring plan F4, part 4), whose
+    /// cell lookup and segment loop live only in its own pipelines (in the Extra ones they slowed the
+    /// six shapes there 7-10% on the RX 6800 XT, and the RTX 3070's trap matrix timed out).
+    Outline,
 }
 
 impl TrapTier {
     /// Every tier, lowest first.
-    pub const ALL: [TrapTier; 3] = [TrapTier::Base, TrapTier::Extra, TrapTier::Waves];
+    pub const ALL: [TrapTier; 4] = [TrapTier::Base, TrapTier::Extra, TrapTier::Waves, TrapTier::Outline];
 }
 
 /// The radius of the polygon and star shapes' outer corners at size 1, and the star's inner ones
@@ -603,9 +607,13 @@ pub enum TrapType {
     /// [`TrapPlace::harmonics`] odd harmonics (its Fourier series; first-order distance; user
     /// 2026-11-25).
     SquareWave,
+    /// A drawing's outline (coloring plan F4, part 4; [`crate::outline`]): the view's own, from an
+    /// SVG file or a text, which this type does not carry. Measured with it by
+    /// [`unit_dist_with`](Self::unit_dist_with); without it, as the point.
+    Outline,
 }
 
-const TRAPS: [TrapSpec; 11] = [
+const TRAPS: [TrapSpec; 12] = [
     TrapSpec { key: "point", wgsl: "TRAP_POINT", turns: false, sized: false, closed: false, tier: TrapTier::Base, phased: false, harmonic: false, overlaid: false },
     TrapSpec { key: "cross", wgsl: "TRAP_CROSS", turns: true, sized: false, closed: false, tier: TrapTier::Base, phased: false, harmonic: false, overlaid: false },
     TrapSpec { key: "circle", wgsl: "TRAP_CIRCLE", turns: false, sized: true, closed: true, tier: TrapTier::Base, phased: false, harmonic: false, overlaid: false },
@@ -617,6 +625,7 @@ const TRAPS: [TrapSpec; 11] = [
     TrapSpec { key: "s-curve", wgsl: "TRAP_S_CURVE", turns: true, sized: true, closed: false, tier: TrapTier::Extra, phased: false, harmonic: false, overlaid: false },
     TrapSpec { key: "sinc", wgsl: "TRAP_SINC", turns: true, sized: true, closed: false, tier: TrapTier::Waves, phased: false, harmonic: false, overlaid: false },
     TrapSpec { key: "square-wave", wgsl: "TRAP_SQUARE_WAVE", turns: true, sized: true, closed: false, tier: TrapTier::Waves, phased: true, harmonic: true, overlaid: false },
+    TrapSpec { key: "outline", wgsl: "TRAP_OUTLINE", turns: true, sized: true, closed: false, tier: TrapTier::Outline, phased: false, harmonic: false, overlaid: false },
 ];
 
 /// The polygon and star shapes in their own frame: `(n, outer radius, inner radius, the first outer
@@ -701,7 +710,7 @@ fn curve_dist(y: f64, (f, df): (f64, f64)) -> f64 {
 
 impl TrapType {
     /// Every shape, in the table's order.
-    pub const ALL: [TrapType; 11] = [
+    pub const ALL: [TrapType; 12] = [
         TrapType::Point,
         TrapType::Cross,
         TrapType::Circle,
@@ -713,6 +722,7 @@ impl TrapType {
         TrapType::SCurve,
         TrapType::Sinc,
         TrapType::SquareWave,
+        TrapType::Outline,
     ];
     /// This shape's row of the table.
     pub const fn spec(self) -> &'static TrapSpec {
@@ -751,6 +761,14 @@ impl TrapType {
                 (zy - SINE_AMP * s).abs() / (1.0 + (SINE_AMP * SINE_FREQ * c).powi(2)).sqrt()
             }
             TrapType::SquareWave => curve_dist(zy, square_wave(zx, phase, harmonics)),
+            _ => self.unit_dist(zx, zy),
+        }
+    }
+    /// How far `z` is from the unit shape at the origin, the outline's drawing for [`TrapType::Outline`]
+    /// (without one, the point): the shader's distance in `aux_step`.
+    pub fn unit_dist_with(self, outline: Option<&crate::outline::Outline>, zx: f64, zy: f64) -> f64 {
+        match (self, outline) {
+            (TrapType::Outline, Some(o)) => o.dist(zx, zy),
             _ => self.unit_dist(zx, zy),
         }
     }
@@ -794,6 +812,8 @@ impl TrapType {
             TrapType::SCurve => s_bowl(zx, zy).min(s_bowl(-zx, -zy)),
             TrapType::Sinc => curve_dist(zy, sinc(zx)),
             TrapType::SquareWave => curve_dist(zy, square_wave(zx, 0.0, HARMONICS_DEFAULT)),
+            // Its drawing is the view's, not this type's: `unit_dist_with` measures it.
+            TrapType::Outline => (zx * zx + zy * zy).sqrt(),
         }
     }
 
@@ -940,13 +960,21 @@ impl TrapPlace {
     /// How far `z` is from `shape` placed here: what the shader's `trap_dist` computes in f32, and
     /// exactly [`TrapType::unit_dist`] at the default.
     pub fn dist(self, shape: TrapType, zx: f64, zy: f64) -> f64 {
+        self.dist_with(shape, None, zx, zy)
+    }
+    /// [`dist`](Self::dist) with the view's outline, which [`TrapType::Outline`] measures from.
+    pub fn dist_with(self, shape: TrapType, outline: Option<&crate::outline::Outline>, zx: f64, zy: f64) -> f64 {
         if self.is_default() {
-            return shape.unit_dist(zx, zy);
+            return shape.unit_dist_with(outline, zx, zy);
         }
         let (c, s) = self.turn();
         let (dx, dy) = (zx - f64::from(self.center[0]), zy - f64::from(self.center[1]));
         let k = f64::from(self.size);
-        k * shape.unit_dist_at((c * dx + s * dy) / k, (c * dy - s * dx) / k, self.phase_radians(), self.count(shape))
+        let (ux, uy) = ((c * dx + s * dy) / k, (c * dy - s * dx) / k);
+        k * match (shape, outline) {
+            (TrapType::Outline, Some(o)) => o.dist(ux, uy),
+            _ => shape.unit_dist_at(ux, uy, self.phase_radians(), self.count(shape)),
+        }
     }
 
     /// This trap moved onto a point of `cycle` (coloring plan F4, part 2; `crate::cycle`), its
@@ -1003,16 +1031,20 @@ pub struct Trap {
     /// pixel's lane holds this one, an escaped pixel's the trap above. `None`: the inside measures
     /// the trap above, as before.
     pub inside: Option<(TrapType, TrapPlace)>,
+    /// The view's outline's key ([`crate::outline::Outline::key`]) when this trap or the inside's is
+    /// [`TrapType::Outline`], else 0: so a new drawing changes the trap as a new shape does, for
+    /// every key and cache that compares traps. The drawing itself travels beside the trap.
+    pub outline: u64,
 }
 
 impl Trap {
     /// `shape` placed at `place`, as the shape uses it.
     pub fn new(shape: TrapType, place: TrapPlace) -> Trap {
-        Trap { shape, place: place.for_shape(shape), inside: None }
+        Trap { shape, place: place.for_shape(shape), inside: None, outline: 0 }
     }
     /// `shape` at the default placement: the trap as it was before F4.
     pub fn of(shape: TrapType) -> Trap {
-        Trap { shape, place: TrapPlace::DEFAULT, inside: None }
+        Trap { shape, place: TrapPlace::DEFAULT, inside: None, outline: 0 }
     }
     /// This trap with the inside's own, `shape` at `place` as the shape uses it; none when that is
     /// this trap itself, which the inside then measures anyway (no second statistic, every bit as
@@ -1022,10 +1054,18 @@ impl Trap {
         let inside = (shape != self.shape || place != self.place).then_some((shape, place));
         Trap { inside, ..self }
     }
-    /// What keys hash: the shape's GPU number for this build and the placement's bits, and the
-    /// inside's own the same way.
-    pub fn key_bits(self) -> (u32, [u32; 7], Option<(u32, [u32; 7])>) {
-        (self.shape.gpu_id(), self.place.bits(), self.inside.map(|(s, p)| (s.gpu_id(), p.bits())))
+    /// Whether this trap or the inside's measures from the view's outline.
+    pub fn uses_outline(self) -> bool {
+        self.shape == TrapType::Outline || self.inside.is_some_and(|(s, _)| s == TrapType::Outline)
+    }
+    /// This trap with the view's outline's key (0: none), kept only where a trap measures from it.
+    pub fn with_outline(self, key: u64) -> Trap {
+        Trap { outline: if self.uses_outline() { key } else { 0 }, ..self }
+    }
+    /// What keys hash: the shape's GPU number for this build and the placement's bits, the inside's
+    /// own the same way, and the outline's key.
+    pub fn key_bits(self) -> (u32, [u32; 7], Option<(u32, [u32; 7])>, u64) {
+        (self.shape.gpu_id(), self.place.bits(), self.inside.map(|(s, p)| (s.gpu_id(), p.bits())), self.outline)
     }
 }
 
@@ -1134,6 +1174,9 @@ pub fn wgsl_ids() -> String {
     let _ = writeln!(s, "const TRAP_SINC_FREQ: f32 = {:?};", SINC_FREQ as f32);
     // The square wave sums at most this many harmonics, whatever reaches the shader.
     let _ = writeln!(s, "const TRAP_HARMONICS_MAX: u32 = {HARMONICS_MAX}u;");
+    // The outline's grid (`crate::outline`): cells per side and the half-width of the square it covers.
+    let _ = writeln!(s, "const OUTLINE_GRID: u32 = {}u;", crate::outline::GRID);
+    let _ = writeln!(s, "const OUTLINE_DOMAIN: f32 = {:?};", crate::outline::DOMAIN as f32);
     for st in Stat::ALL {
         let _ = writeln!(s, "const {}: u32 = {}u;", st.spec().wgsl, st.bit());
     }

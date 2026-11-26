@@ -61,6 +61,9 @@ const CARRIED_ELSEWHERE: &[&str] = &[
     "use_custom_palette",
     "coloring_hook",
     "coloring_hook_params",
+    // The trap's outline: its own lines (`trap_outline::outline_view_lines`).
+    "trap_outline",
+    "trap_outline_name",
 ];
 
 /// ⭐**Every coloring setting the session saves is accounted for in a view** (coloring plan B4): it

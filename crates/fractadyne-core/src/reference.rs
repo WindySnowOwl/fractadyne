@@ -1980,7 +1980,7 @@ pub struct BlaNode {
 /// Coloring parameters the per-node aux aggregates depend on. Only the `agg_*` lanes depend on
 /// these (not the A/B/r geometry), so they can be recomputed cheaply when coloring changes while
 /// the tree geometry stays cached. `Default` yields inert values for callers that don't fold aux.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct AuxAggParams {
     pub trap_type: crate::coloring::TrapType,
     /// Where the trap sits, turned and sized (F4), as the shape uses it
@@ -1990,6 +1990,9 @@ pub struct AuxAggParams {
     /// The inside's own trap, when it has one (`Trap::inside`): the fifth vec4's `.y` lane
     /// measures from it; else that lane repeats the trap's.
     pub trap_in: Option<(crate::coloring::TrapType, crate::coloring::TrapPlace)>,
+    /// The view's outline, which a [`TrapType::Outline`](crate::coloring::TrapType::Outline) trap
+    /// measures from (coloring plan F4, part 4).
+    pub outline: Option<std::sync::Arc<crate::outline::Outline>>,
     pub stripe_freq: f64,
     pub cmag: f64, // |c| of the reference (triangle-inequality)
     pub power: f64, // formula degree (triangle-inequality)
@@ -2003,6 +2006,7 @@ impl Default for AuxAggParams {
             trap_type: crate::coloring::TrapType::Point,
             trap_place: crate::coloring::TrapPlace::DEFAULT,
             trap_in: None,
+            outline: None,
             stripe_freq: 1.0,
             cmag: 0.0,
             power: 2.0,
@@ -2036,13 +2040,13 @@ pub fn merge_stripe(x: f64, y: f64, y_span: u32, alpha: f64) -> f64 {
 
 // Per-iterate aux stat contributions, mirroring the GPU `aux_step` (used to seed the BLA
 // aggregates; the shader folds the same quantities on a skip).
-pub(crate) fn aux_trap_dist(zx: f64, zy: f64, aux: AuxAggParams) -> f64 {
-    aux.trap_place.dist(aux.trap_type, zx, zy)
+pub(crate) fn aux_trap_dist(zx: f64, zy: f64, aux: &AuxAggParams) -> f64 {
+    aux.trap_place.dist_with(aux.trap_type, aux.outline.as_deref(), zx, zy)
 }
 
 /// The inside's own trap's distance (`AuxAggParams::trap_in`), or `trap` when it has none.
-pub(crate) fn aux_trap_in_dist(zx: f64, zy: f64, aux: AuxAggParams, trap: f64) -> f64 {
-    aux.trap_in.map_or(trap, |(s, p)| p.dist(s, zx, zy))
+pub(crate) fn aux_trap_in_dist(zx: f64, zy: f64, aux: &AuxAggParams, trap: f64) -> f64 {
+    aux.trap_in.map_or(trap, |(s, p)| p.dist_with(s, aux.outline.as_deref(), zx, zy))
 }
 pub(crate) fn aux_stripe_term(zx: f64, zy: f64, freq: f64) -> f64 {
     0.5 + 0.5 * (freq * zy.atan2(zx)).sin()
@@ -2135,7 +2139,7 @@ fn bla_level0_node(
     n: usize,
     orbit: &[[f32; 4]],
     eps: f64,
-    aux: AuxAggParams,
+    aux: &AuxAggParams,
     one: CFloatExp,
     d: u32,
 ) -> BlaNode {
@@ -2184,13 +2188,13 @@ pub fn build_bla_mandel(
     eps: f64,
     aux: AuxAggParams,
 ) -> Vec<Vec<BlaNode>> {
-    build_bla_mandel_impl(orbit, dc_max, eps, aux, BLA_PAR_THRESHOLD, 2)
+    build_bla_mandel_impl(orbit, dc_max, eps, &aux, BLA_PAR_THRESHOLD, 2)
 }
 
 /// [`build_bla_mandel`] for the `z^d + c` family of degree `d` (2..=8: Mandelbrot, Multibrot 3–8).
 /// Only level 0 knows the degree (its A and radius); merging is the same composition for every d.
 pub fn build_bla(orbit: &[[f32; 4]], dc_max: FloatExp, eps: f64, aux: AuxAggParams, d: u32) -> Vec<Vec<BlaNode>> {
-    build_bla_mandel_impl(orbit, dc_max, eps, aux, BLA_PAR_THRESHOLD, d)
+    build_bla_mandel_impl(orbit, dc_max, eps, &aux, BLA_PAR_THRESHOLD, d)
 }
 
 /// The body of [`build_bla_mandel`], with the parallel-fill threshold exposed so a test can force
@@ -2199,7 +2203,7 @@ fn build_bla_mandel_impl(
     orbit: &[[f32; 4]],
     dc_max: FloatExp,
     eps: f64,
-    aux: AuxAggParams,
+    aux: &AuxAggParams,
     par_threshold: usize,
     d: u32,
 ) -> Vec<Vec<BlaNode>> {
@@ -2284,7 +2288,7 @@ pub fn bla_to_gpu(levels: &[Vec<BlaNode>]) -> Vec<[f32; 4]> {
 /// [`bla_level0_node`], with no geometry. Kept in lockstep with it so the two produce identical
 /// `agg_*`.
 #[inline]
-fn bla_level0_aux(n: usize, orbit: &[[f32; 4]], aux: AuxAggParams) -> [f64; 4] {
+fn bla_level0_aux(n: usize, orbit: &[[f32; 4]], aux: &AuxAggParams) -> [f64; 4] {
     let (zr, zi) = sample_xy(&orbit[n]);
     // ⛔`sample_xy`, never the lane sums `z[0] + z[2]`: where the orbit dips under f32's range the
     // sample is stored extended ([0, k, m_re + 4, m_im], `pack_sample`), and its lane sums read as
@@ -2332,7 +2336,7 @@ pub fn bla_aux_lanes(orbit: &[[f32; 4]], aux: AuxAggParams) -> Vec<[f32; 5]> {
     // Each entry carries its span: the stripe lane's window merge needs the later run's length.
     let mut lvl0 = vec![([0.0f64; 5], 1u32); nstep];
     par_fill(&mut lvl0, BLA_PAR_THRESHOLD, |n| {
-        let [t, x, s, tin] = bla_level0_aux(n, orbit, aux);
+        let [t, x, s, tin] = bla_level0_aux(n, orbit, &aux);
         ([t, x, s, s, tin], 1)
     });
     let mut levels = vec![lvl0];

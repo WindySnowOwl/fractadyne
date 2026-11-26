@@ -103,6 +103,14 @@ fn trap_drawn(s: &ColoringSpec) -> bool {
     method(s) == ColorMethod::OrbitTrap || interior_trap(s)
 }
 
+/// A trap the picture depends on measures from the view's outline (coloring plan F4, part 4): the
+/// method's trap while it is drawn, or the inside's own, is the outline. A view then carries the
+/// outline (`trap_outline::outline_view_lines`).
+pub(crate) fn outline_in_view(s: &ColoringSpec) -> bool {
+    let outline = TrapType::Outline.key();
+    (trap_drawn(s) && s.trap_type == outline) || (inside_own_trap(s) && s.interior_trap == outline)
+}
+
 /// The trap method's inside has a trap of its own (`interior_trap`).
 fn inside_own_trap(s: &ColoringSpec) -> bool {
     method(s) == ColorMethod::OrbitTrap && interior_trap(s) && TrapType::parse_key(&s.interior_trap).is_some()
@@ -199,7 +207,7 @@ pub(crate) const FIELDS: [Field; 62] = [
     Field {
         key: "trap",
         name: "orbit trap",
-        doc: "The orbit trap's shape: point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc or square-wave (method \"trap\", or an inside colored by the trap).",
+        doc: "The orbit trap's shape: point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc, square-wave or outline (a drawing's, which the view carries as `trap_outline`; method \"trap\", or an inside colored by the trap).",
         access: Access::Choice(|s| &s.trap_type, |s, v| s.trap_type = v.to_string(), || {
             TrapType::ALL.iter().map(|t| t.key()).collect()
         }),
@@ -295,7 +303,7 @@ pub(crate) const FIELDS: [Field; 62] = [
     Field {
         key: "interior_trap",
         name: "inside trap",
-        doc: "The inside's own trap shape, point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc or square-wave, when the trap method colors the inside by a trap (the inside's own placement in the keys after). Left out: the method's trap.",
+        doc: "The inside's own trap shape, point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc, square-wave or outline, when the trap method colors the inside by a trap (the inside's own placement in the keys after). Left out: the method's trap.",
         access: Access::Choice(|s| &s.interior_trap, |s, v| s.interior_trap = v.to_string(), || {
             TrapType::ALL.iter().map(|t| t.key()).collect()
         }),

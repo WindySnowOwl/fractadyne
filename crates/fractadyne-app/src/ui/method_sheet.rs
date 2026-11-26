@@ -91,7 +91,9 @@ pub(crate) fn sheet_plan(caps: fractadyne_core::formula::FormulaCaps, frame: Fra
             let plain = SheetCell { method: m, trap: None, stripe_freq: None };
             match m.reads() {
                 Some(Stat::Trap) => {
-                    cells.extend(TrapType::ALL.into_iter().map(|t| SheetCell { trap: Some(t), ..plain }));
+                    // Not the outline: a cell is drawn without the view's drawing (it would show
+                    // the point again).
+                    cells.extend(TrapType::ALL.into_iter().filter(|t| *t != TrapType::Outline).map(|t| SheetCell { trap: Some(t), ..plain }));
                 }
                 Some(Stat::Stripe) => {
                     let mut freqs = vec![frame.stripe_freq];

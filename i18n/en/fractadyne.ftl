@@ -3086,6 +3086,18 @@ panel-inside-trap-hover = Color the inside of the set by a trap of its own, with
 # The button that moves the orbit trap onto the attracting cycle at the view's center (coloring plan F4).
 panel-trap-on-cycle = Place on the cycle
 panel-trap-on-cycle-hover = Move the trap onto the cycle that orbits inside the set settle on, at the view's center, so the inside of the set shows the trap's structure instead of one color. A point or a cross is centered on a point of the cycle; a circle keeps its center and passes through one. Press again for the cycle's next point.
+# The trap shape Outline's row (coloring plan F4, part 4): the drawing it measures from.
+panel-trap-outline = Drawing
+panel-trap-outline-load = Load SVG…
+panel-trap-outline-load-hover = Use a drawing's outline as the trap: the paths and shapes of an SVG file, scaled to fit the trap. The view saves the outline itself, so it opens the same without the file.
+# The file dialog's filter for Load SVG….
+trap-outline-filter = SVG drawings
+# The Drawing row before any is loaded.
+trap-outline-none = none loaded
+# $name: the file's name. $segments: how many straight lines its outline became.
+trap-outline-loaded = The outline of { $name }: { $segments } lines
+# $name: the file's name. $reason: why, in English.
+trap-outline-failed = { $name } cannot be used as an outline: { $reason }
 # After the button: the cycle's period and which of its points the trap is on (from 1).
 trap-on-cycle-done = The trap is on the cycle: period { $period }, point { $point } of { $period }.
 trap-on-cycle-outside = No cycle to place the trap on: the view's center is outside the set, or at the very edge of its part of the set.
@@ -4116,6 +4128,7 @@ trap-sine = Sine wave
 trap-s-curve = S curve
 trap-sinc = Sinc
 trap-square-wave = Square wave
+trap-outline = Outline
 # Palette animation: none.
 palette-anim-off = Off
 palette-anim-forward = Forward

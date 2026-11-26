@@ -75,6 +75,17 @@ detail is in the git history.
   now fitted to its own values, as the live view fits the screen, so the video looks like the
   view. Fitting a frame costs about a quarter more time at 2x2 supersampling. A frame depends on
   nothing but its own view, so one full turn of the trap's phase rendered once loops seamlessly.
+- **An orbit trap in the shape of your own drawing.** The trap shape Outline takes its shape from
+  an SVG file: Load SVG... under Trap shape reads the drawing's paths and shapes (rectangles,
+  circles, ellipses, lines, polylines and polygons, with their transforms; text and images are left
+  out) and makes their outline the trap, fitted to the trap's size as the star is. So a logo, a
+  letter or a curve you drew threads through the filaments the way the built-in shapes do. It turns,
+  sizes and moves like them, works at every depth, and Place on the cycle centers it on the cycle
+  point. A drawing with a great many lines is simplified to at most 4096. A view file keeps the
+  outline itself (`trap_outline`, with the file's name), so a shared view opens the same without
+  the SVG; on the command line it is `--trap outline --trap-outline FILE.svg`. Frames that draw no
+  outline keep the speed they had: its code is compiled only into pipelines of its own, built in
+  the background once a view has a drawing.
 - **Move, turn and size the orbit trap.** Under Trap shape the panel now has the trap's center, x
   and y, and a rotation for the cross and a size, its radius, for the circle. Where the trap sits
   decides which orbits come near it, so moving it rearranges the bands and rings it draws, inside the

@@ -353,6 +353,8 @@ fn every_session_field_survives_save_and_reload() {
         interior_trap_harmonics: 3,
         trap_sine_harmonics: 4,
         interior_trap_sine_harmonics: 6,
+        trap_outline: "M -1 0 L 1 0 L 0 1".into(),
+        trap_outline_name: "tri.svg".into(),
         custom_palette: vec![[0.0, 0.1, 0.2, 0.3], [1.0, 0.4, 0.5, 0.6]],
         custom_palette_flat: true,
         custom_segments: vec![PaletteSegment {
@@ -864,6 +866,7 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
         "trap_harmonics", "interior_trap_harmonics",
         // The sine wave trap's overlaid harmonics (user 2026-11-25).
         "trap_sine_harmonics", "interior_trap_sine_harmonics",
+        "trap_outline", "trap_outline_name",
     ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {

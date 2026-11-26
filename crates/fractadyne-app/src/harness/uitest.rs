@@ -445,6 +445,10 @@ enum Screen {
     /// ...then the star (F4 part 3): another picture, the live view's iterate pipeline built with the
     /// shapes compiled in (`TRAP_EXTRA`; without them the star would measure as the point).
     TrapShapeStar,
+    /// ...then the outline (F4 part 4): a drawing's, set as Load SVG... sets one, drawn live (the
+    /// outline in the reference buffer's last section); the panel's Drawing row with its name, and
+    /// the view's text carrying the outline.
+    TrapShapeOutline,
     /// The sine wave trap at phase 0...
     TrapSinePhase0,
     /// ...then shifted a quarter wave (user 2026-11-25): another picture, the phase reaching the
@@ -1486,6 +1490,7 @@ fn build_steps() -> Vec<Step> {
         screen("inside-own-trap", Screen::InsideOwnTrap),
         screen("trap-shape-point", Screen::TrapShapePoint),
         screen("trap-shape-star", Screen::TrapShapeStar),
+        screen("trap-shape-outline", Screen::TrapShapeOutline),
         screen("trap-sine-phase-0", Screen::TrapSinePhase0),
         screen("trap-sine-phase", Screen::TrapSinePhase),
         screen("trap-square-wave-1", Screen::TrapSquareWave1),
@@ -2088,6 +2093,33 @@ impl FractadyneApp {
             name: "trap-square-wave-harmonics-drawn-live".into(),
             verdict: if d.is_some_and(|d| d >= 3.0) && harmonics == 12 { Verdict::Pass } else { Verdict::Fail },
             detail: format!("against {before}, the mean difference in levels: {d:?}; the trap's harmonics {harmonics}"),
+        });
+    }
+
+    /// The outline draws another picture live than the point and the star do (a mean difference of
+    /// 3 levels or more from each: without the outline on the GPU it would measure as the point),
+    /// and the view's text carries it (`trap_outline=`, with its name).
+    fn uitest_trap_outline_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, checks: &mut Vec<Check>) {
+        let diff = |before: &str| {
+            let b = ut.results.iter().rev().find(|r| r.name == before);
+            view.zip(b).and_then(|((px, _), b)| {
+                let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+                let s: f64 = px.chunks_exact(4).zip(prev.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+                Some(s / (3 * (px.len() / 4)).max(1) as f64)
+            })
+        };
+        let (point, star) = (diff("trap-shape-point"), diff("trap-shape-star"));
+        checks.push(Check {
+            name: "trap-shape-outline-drawn-live".into(),
+            verdict: if point.is_some_and(|d| d >= 3.0) && star.is_some_and(|d| d >= 3.0) { Verdict::Pass } else { Verdict::Fail },
+            detail: format!("the mean difference in levels against trap-shape-point {point:?}, against trap-shape-star {star:?}"),
+        });
+        let text = self.view_metadata();
+        let carried = text.lines().any(|l| l.starts_with("trap_outline=M ")) && text.lines().any(|l| l == "trap_outline_name=heart.svg");
+        checks.push(Check {
+            name: "trap-shape-outline-in-the-view".into(),
+            verdict: if carried { Verdict::Pass } else { Verdict::Fail },
+            detail: format!("the view's text carries the outline and its name: {carried} ({} bytes)", text.len()),
         });
     }
 
@@ -3660,6 +3692,23 @@ impl FractadyneApp {
                 self.coloring.trap_phase_anim = false;
                 self.dialogs.right_panel_open = true;
             }
+            // F4 part 4: the star's view, the outline of a heart-like drawing (two arcs as polylines
+            // and a point), as an SVG file's would be set.
+            Screen::TrapShapeOutline => {
+                let arc = |cx: f64, a0: f64| -> Vec<[f64; 2]> {
+                    (0..=12).map(|k| a0 + std::f64::consts::PI * k as f64 / 12.0).map(|a| [cx + 0.5 * a.cos(), 0.5 * a.sin()]).collect()
+                };
+                let paths = [arc(0.5, 0.0), arc(-0.5, 0.0), vec![[-1.0, 0.0], [0.0, -1.2], [1.0, 0.0]]];
+                let o = fractadyne_core::outline::Outline::from_paths(&paths).expect("the walk's outline");
+                self.coloring.set_outline(Some(o), "heart.svg".into());
+                self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+                self.coloring.interior = None;
+                self.coloring.interior_trap = None;
+                self.coloring.trap_place = crate::TrapPlace::DEFAULT;
+                self.coloring.trap_type = crate::TrapType::Outline;
+                self.coloring.trap_phase_anim = false;
+                self.dialogs.right_panel_open = true;
+            }
             // C3: the Julia-link point again (filaments enough to shade), Smooth, point sampled; the
             // shading off, on toward white, then toward the inside's near-black, one change a step.
             Screen::EdgeShadeOff | Screen::EdgeShade | Screen::EdgeShadeInside | Screen::EdgeShadePanel => {
@@ -4432,6 +4481,7 @@ impl FractadyneApp {
                     | Screen::TrapSquareWave
                     | Screen::TrapSineHarmonics
                     | Screen::TrapPhaseAnimating
+                    | Screen::TrapShapeOutline
                     | Screen::EdgeShadeOff
                     | Screen::EdgeShade
                     | Screen::EdgeShadeInside
@@ -5396,6 +5446,9 @@ impl FractadyneApp {
         }
         if let StepKind::Screen(Screen::TrapPhaseAnimating) = step.kind {
             self.uitest_trap_phase_animating_checks(ut, &mut checks);
+        }
+        if let StepKind::Screen(Screen::TrapShapeOutline) = step.kind {
+            self.uitest_trap_outline_checks(ut, inside_view.as_ref(), &mut checks);
         }
 
         // ---- edge shading (coloring plan C3) ----

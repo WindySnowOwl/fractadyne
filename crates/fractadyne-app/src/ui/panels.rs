@@ -19,6 +19,7 @@ impl crate::FractadyneApp {
     /// The trap's shape (the orbit trap method's, or the inside's when the trap colors it, B5) and
     /// where it sits (F4): drawn with whichever uses it.
     fn trap_shape_row(&mut self, ui: &mut egui::Ui) {
+        let before = self.coloring.trap_type;
         labelled(ui, &tr!(panel_trap_shape), |ui| {
             egui::ComboBox::from_id_salt("panel_trap_shape")
                 .selected_text(self.coloring.trap_type.label())
@@ -28,6 +29,14 @@ impl crate::FractadyneApp {
                     }
                 });
         });
+        // The outline picked with none loaded asks for a drawing (F4 part 4).
+        if self.coloring.trap_type != before {
+            let ctx = ui.ctx().clone();
+            self.coloring.trap_type = self.trap_outline_picked(&ctx, self.coloring.trap_type, before);
+        }
+        if self.coloring.trap_type == TrapType::Outline {
+            self.trap_outline_row(ui);
+        }
         trap_place_rows(ui, self.coloring.trap_type, &mut self.coloring.trap_place, &mut self.coloring.trap_phase_anim);
         self.trap_on_cycle_button(ui, false);
     }
@@ -36,6 +45,7 @@ impl crate::FractadyneApp {
     /// default). Its own has the same placement rows as the method's.
     fn inside_trap_rows(&mut self, ui: &mut egui::Ui) {
         let same = tr!(panel_inside_trap_same);
+        let before = self.coloring.interior_trap;
         labelled(ui, &tr!(panel_inside_trap), |ui| {
             egui::ComboBox::from_id_salt("panel_inside_trap")
                 .selected_text(self.coloring.interior_trap.map_or(same.clone(), |t| t.label()))
@@ -51,7 +61,16 @@ impl crate::FractadyneApp {
                 ui.scroll_to_cursor(Some(egui::Align::Min));
             }
         });
+        if self.coloring.interior_trap != before && self.coloring.interior_trap == Some(TrapType::Outline) {
+            let ctx = ui.ctx().clone();
+            if self.trap_outline_picked(&ctx, TrapType::Outline, TrapType::Point) != TrapType::Outline {
+                self.coloring.interior_trap = before;
+            }
+        }
         if let Some(shape) = self.coloring.interior_trap {
+            if shape == TrapType::Outline {
+                self.trap_outline_row(ui);
+            }
             trap_place_rows(ui, shape, &mut self.coloring.interior_trap_place, &mut self.coloring.trap_phase_anim);
             self.trap_on_cycle_button(ui, true);
         }

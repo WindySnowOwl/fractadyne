@@ -259,6 +259,12 @@ pub struct ColoringSpec {
     pub trap_sine_harmonics: u32,
     #[serde(default = "default_sine_harmonics")]
     pub interior_trap_sine_harmonics: u32,
+    /// The view's trap outline (coloring plan F4, part 4), which an Outline trap measures from: its
+    /// text (`fractadyne_core::outline::Outline::text`), empty for none, and what it was loaded from.
+    #[serde(default)]
+    pub trap_outline: String,
+    #[serde(default)]
+    pub trap_outline_name: String,
     /// Custom gradient stops `[pos, r, g, b]` (DISPLAY-space RGB) from the gradient editor.
     #[serde(default)]
     pub custom_palette: Vec<[f32; 4]>,
@@ -988,6 +994,8 @@ impl Default for ColoringSpec {
             interior_trap_harmonics: DEFAULT_TRAP_HARMONICS,
             trap_sine_harmonics: 1,
             interior_trap_sine_harmonics: 1,
+            trap_outline: String::new(),
+            trap_outline_name: String::new(),
             custom_palette: Vec::new(),
             custom_palette_flat: false,
             custom_segments: Vec::new(),

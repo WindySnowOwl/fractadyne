@@ -6,7 +6,7 @@ fn the_keys_are_the_persisted_ones() {
     let keys: Vec<_> = ColorMethod::ALL.iter().map(|m| m.key()).collect();
     assert_eq!(keys, ["smooth", "stripe", "triangle", "trap", "distance", "fringe", "decomposition"]);
     let traps: Vec<_> = TrapType::ALL.iter().map(|t| t.key()).collect();
-    assert_eq!(traps, ["point", "cross", "circle", "line", "square", "hexagon", "star", "sine", "s-curve", "sinc", "square-wave"]);
+    assert_eq!(traps, ["point", "cross", "circle", "line", "square", "hexagon", "star", "sine", "s-curve", "sinc", "square-wave", "outline"]);
 }
 
 /// Each variant's row is its own, and the GPU number is the row's position.
@@ -252,7 +252,10 @@ fn the_shader_constants_are_the_table() {
     }
     // ...and the square wave's most harmonics.
     assert_eq!(ids.matches(&format!("const TRAP_HARMONICS_MAX: u32 = {HARMONICS_MAX}u;")).count(), 1);
-    assert_eq!(consts, ColorMethod::ALL.len() + TrapType::ALL.len() + Stat::ALL.len() + InteriorShading::ALL.len() + dims.len() + 1);
+    // ...and the outline's grid (F4 part 4): its cells per side and its half-width.
+    assert_eq!(ids.matches(&format!("const OUTLINE_GRID: u32 = {}u;", crate::outline::GRID)).count(), 1);
+    assert_eq!(ids.matches(&format!("const OUTLINE_DOMAIN: f32 = {:?};", crate::outline::DOMAIN as f32)).count(), 1);
+    assert_eq!(consts, ColorMethod::ALL.len() + TrapType::ALL.len() + Stat::ALL.len() + InteriorShading::ALL.len() + dims.len() + 1 + 2);
     // Every other line is a comment or blank, so the block can go anywhere at module scope.
     for l in ids.lines().filter(|l| !l.starts_with("const ")) {
         assert!(l.is_empty() || l.starts_with("//"), "{l:?}");
@@ -329,13 +332,15 @@ fn each_trap_shape_says_what_it_uses() {
             ("s-curve", true, true, false),
             ("sinc", true, true, false),
             ("square-wave", true, true, false),
+            ("outline", true, true, false),
         ]
     );
     // Which pipelines carry each shape's code: the six of F4 part 3 in the Extra ones, the two waves
-    // in their own, so adding them left the six's pipelines as they were.
+    // in their own and the outline (F4 part 4) in its own, so adding each left the pipelines below
+    // it as they were.
     let tiers: Vec<_> = TrapType::ALL.iter().map(|t| t.spec().tier).collect();
-    use TrapTier::{Base, Extra, Waves};
-    assert_eq!(tiers, [Base, Base, Base, Extra, Extra, Extra, Extra, Extra, Extra, Waves, Waves]);
+    use TrapTier::{Base, Extra, Outline, Waves};
+    assert_eq!(tiers, [Base, Base, Base, Extra, Extra, Extra, Extra, Extra, Extra, Waves, Waves, Outline]);
 }
 
 /// At the default placement every shape measures exactly as it always did, bit for bit: the

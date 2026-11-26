@@ -315,6 +315,8 @@ pub struct ExportRequest {
     pub trap_place: fractadyne_core::coloring::TrapPlace,
     /// The inside's own trap — see `MandelbrotParams::trap_in`.
     pub trap_in: Option<(fractadyne_core::coloring::TrapType, fractadyne_core::coloring::TrapPlace)>,
+    /// The view's trap outline (coloring plan F4, part 4), when a trap of the render measures from it.
+    pub outline: Option<std::sync::Arc<crate::OutlineGpu>>,
     pub aa_filter: u32,
     pub interior_col: [f32; 4],
     /// What else may color the inside (coloring plan B5); the default, the method's own interior.
@@ -356,13 +358,25 @@ impl ExportRequest {
         crate::trap_tier(self.iter_stats(), self.trap_type, self.trap_place, self.trap_in)
     }
 
+    /// Where the trap outline starts in the reference buffer ([`Self::upload_reference`]): last.
+    fn outline_base(&self) -> usize {
+        let rn_bla = if self.rn_bla_k() > 0 { self.rn_bla.len() } else { 0 };
+        self.orbit.len() + self.bla.len() + rn_bla + self.crit_span()[1] as usize
+    }
+
+    /// The outline's uniform row ([`crate::outline_row`]).
+    fn outline_row(&self) -> [u32; 4] {
+        crate::outline_row(self.outline_base(), self.outline.as_deref(), true)
+    }
+
     /// The reference storage buffer: the orbit, its BLA tree from index `orbit.len()`, then the
     /// u-space tree ([`Self::rn_uniform`] points the shader at it), then a Julia view's critical
     /// orbit ([`Self::crit_span`]; neither tree exists for one).
     fn upload_reference(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<wgpu::Buffer, GpuError> {
         let rn_bla: &[[f32; 4]] = if self.rn_bla_k() > 0 { self.rn_bla.as_slice() } else { &[] };
         let crit = self.crit_span();
-        let tail = self.bla.len() + rn_bla.len() + crit[1] as usize;
+        let outline = self.outline.as_deref().map_or(&[][..], |o| o.data.as_slice());
+        let tail = self.bla.len() + rn_bla.len() + crit[1] as usize + outline.len();
         check_orbit_binding(device, self.orbit.len(), tail)?;
         let orbit_buf = make_orbit_buffer(device, (self.orbit.len() + tail).max(1) as u32);
         if !self.orbit.is_empty() {
@@ -379,6 +393,9 @@ impl ExportRequest {
         if crit[1] > 0 {
             let off = crit[0] as u64 * 16;
             queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(&self.crit[..crit[1] as usize]));
+        }
+        if !outline.is_empty() {
+            queue.write_buffer(&orbit_buf, self.outline_base() as u64 * 16, bytemuck::cast_slice(outline));
         }
         Ok(orbit_buf)
     }
@@ -2137,6 +2154,7 @@ impl<'a> TileRenderer<'a> {
             trap: crate::trap_uniform(req.trap_place),
             trap_in: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
             trap_in_row: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
+            outline_row: req.outline_row(),
         };
         queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3229,6 +3247,7 @@ fn render_iter_tiled_impl(
                 trap: if accum { crate::trap_uniform(req.trap_place) } else { crate::TrapU::default() },
                 trap_in: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
                 trap_in_row: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
+                outline_row: req.outline_row(),
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3789,6 +3808,7 @@ impl GatherPass {
                 trap: crate::TrapU::default(),
                 trap_in: crate::TrapU::default(),
                 trap_in_row: [0; 4],
+                outline_row: [0; 4],
             };
             queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -4129,6 +4149,7 @@ fn render_iter_passes(
         trap: crate::TrapU::default(),
         trap_in: crate::TrapU::default(),
         trap_in_row: [0; 4],
+        outline_row: [0; 4],
     };
     // The speed probe's passes (`render_iter_probe`) run the exact-repeat check OFF (bit 1).
     if live.is_some() {

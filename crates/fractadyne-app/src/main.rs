@@ -98,6 +98,7 @@ mod coloring_fields;
 mod coloring_hook;
 mod startup_shaders;
 mod trap_cycle;
+mod trap_outline;
 mod view_coloring;
 mod scripting;
 mod session_outcome;
@@ -3344,6 +3345,7 @@ impl ColoringLabel for TrapType {
             TrapType::SCurve => tr!(trap_s_curve),
             TrapType::Sinc => tr!(trap_sinc),
             TrapType::SquareWave => tr!(trap_square_wave),
+            TrapType::Outline => tr!(trap_outline),
         }
     }
 }
@@ -6928,6 +6930,13 @@ struct ColoringConfig {
     /// Cycle the sine wave trap's phase (the method's and the inside's) over time, at the palette's
     /// Speed (`advance_palette_anim`). Persisted.
     trap_phase_anim: bool,
+    /// The view's trap outline (coloring plan F4, part 4): the drawing an Outline trap, the
+    /// method's or the inside's, measures from ([`ColoringConfig::outline_for`]), the same drawing
+    /// packed for the GPU (built once per drawing), and what it was loaded from. Persisted, as
+    /// its text and name ([`ColoringConfig::set_outline`]).
+    trap_outline: Option<std::sync::Arc<fractadyne_core::outline::Outline>>,
+    trap_outline_gpu: Option<std::sync::Arc<fractadyne_gpu::OutlineGpu>>,
+    trap_outline_name: String,
     /// What colors the inside of the set (coloring plan B5); `None`: the method's own
     /// (`InteriorMode::of_method`: the orbit trap its trap, every other method one color), so a view
     /// that never chose keeps its look whichever method it takes. Persisted.
@@ -6996,10 +7005,26 @@ impl ColoringConfig {
     /// a turn or size the shape ignores re-iterates nothing.
     fn trap(&self) -> Trap {
         let t = Trap::new(self.trap_type, self.trap_place);
-        match self.interior_trap {
+        let t = match self.interior_trap {
             Some(shape) if self.inside_trap_on(self.color_method) => t.with_inside(shape, self.interior_trap_place),
             _ => t,
-        }
+        };
+        t.with_outline(self.trap_outline.as_ref().map_or(0, |o| o.key()))
+    }
+
+    /// The view's outline, when `trap` (the method's or the inside's) measures from it.
+    fn outline_for(&self, trap: Trap) -> Option<std::sync::Arc<fractadyne_core::outline::Outline>> {
+        self.trap_outline.clone().filter(|_| trap.uses_outline())
+    }
+    /// [`Self::outline_for`], packed for the GPU.
+    fn outline_gpu_for(&self, trap: Trap) -> Option<std::sync::Arc<fractadyne_gpu::OutlineGpu>> {
+        self.trap_outline_gpu.clone().filter(|_| trap.uses_outline())
+    }
+    /// Make `outline` the view's, under `name` (a file's or a text's); `None` clears it.
+    fn set_outline(&mut self, outline: Option<fractadyne_core::outline::Outline>, name: String) {
+        self.trap_outline_gpu = outline.as_ref().map(|o| std::sync::Arc::new(fractadyne_gpu::OutlineGpu::of(o)));
+        self.trap_outline = outline.map(std::sync::Arc::new);
+        self.trap_outline_name = name;
     }
 
     /// Whether the inside of `method`'s view has a trap of its own: the trap method, its inside
@@ -7253,6 +7278,8 @@ struct DialogState {
 /// and `--log-palette`.
 fn coloring_from_session(s: &fractadyne_state::SessionState, args: &[String]) -> ColoringConfig {
     let c = &s.coloring;
+    // The view's outline from its saved text (one that is not one is set aside, logged).
+    let outline = crate::trap_outline::outline_from_text(&c.trap_outline, &c.trap_outline_name).map(std::sync::Arc::new);
     ColoringConfig {
         // By id; a session saved before ids (or by a newer build, with a palette this one
         // lacks) falls back to its number, read through the frozen table.
@@ -7301,6 +7328,10 @@ fn coloring_from_session(s: &fractadyne_state::SessionState, args: &[String]) ->
         interior_trap: TrapType::parse_key(&c.interior_trap),
         interior_trap_place: interior_trap_place_of(c),
         trap_phase_anim: s.trap_phase_anim,
+        // The same drawing packed for the GPU, once per drawing.
+        trap_outline_gpu: outline.as_deref().map(|o| std::sync::Arc::new(fractadyne_gpu::OutlineGpu::of(o))),
+        trap_outline: outline,
+        trap_outline_name: c.trap_outline_name.clone(),
         interior: InteriorMode::parse_key(&c.interior),
         interior_palette: fractadyne_color::preset_by_id(&c.interior_palette),
         interior_color: c.interior_color,
@@ -9698,6 +9729,16 @@ impl FractadyneApp {
             let r = slider_range::TRAP_HARMONICS;
             self.coloring.trap_place.sine_harmonics = n.clamp(*r.start(), *r.end());
         }
+        // The outline trap's drawing (coloring plan F4, part 4), as Load SVG... reads it.
+        if let Some(path) = val("--trap-outline") {
+            match crate::trap_outline::read_svg_outline(std::path::Path::new(path)) {
+                (name, Ok(o)) => self.coloring.set_outline(Some(o), name),
+                (name, Err(reason)) => {
+                    eprintln!("fractadyne: --trap-outline: {name}: {reason}.");
+                    crate::exit(2)
+                }
+            }
+        }
         // The inside's own trap (the trap method's inside colored by a trap of its own).
         if let Some(t) = val("--interior-trap") {
             match (t.as_str(), TrapType::parse_key(t)) {
@@ -9743,6 +9784,12 @@ impl FractadyneApp {
         {
             let r = slider_range::TRAP_HARMONICS;
             self.coloring.interior_trap_place.sine_harmonics = n.clamp(*r.start(), *r.end());
+        }
+        // An outline trap needs a drawing: from --trap-outline, or the session's.
+        let wants_outline = self.coloring.trap_type == TrapType::Outline || self.coloring.interior_trap == Some(TrapType::Outline);
+        if wants_outline && self.coloring.trap_outline.is_none() && (val("--trap").is_some() || val("--interior-trap").is_some()) {
+            eprintln!("fractadyne: an outline trap needs its drawing: add --trap-outline FILE.svg.");
+            crate::exit(2)
         }
         // The inside (coloring plan B5, C1): what colors it, the trap's palette, a solid color.
         if let Some(m) = val("--interior") {
@@ -10107,6 +10154,8 @@ impl FractadyneApp {
             interior_trap_phase: self.coloring.interior_trap_place.phase,
             interior_trap_harmonics: self.coloring.interior_trap_place.harmonics,
             interior_trap_sine_harmonics: self.coloring.interior_trap_place.sine_harmonics,
+            trap_outline: self.coloring.trap_outline.as_ref().map_or_else(String::new, |o| o.text().to_string()),
+            trap_outline_name: self.coloring.trap_outline_name.clone(),
             custom_palette: self.coloring.custom_palette.clone(),
             custom_palette_flat: self.coloring.custom_palette_flat,
             custom_segments: self.coloring.custom_segments.clone(),
@@ -10169,6 +10218,13 @@ impl FractadyneApp {
         c.trap_place = trap_place_of(s);
         c.interior_trap = TrapType::parse_key(&s.interior_trap);
         c.interior_trap_place = interior_trap_place_of(s);
+        // The outline, parsed again only when its text changed (that builds its grid).
+        if c.trap_outline.as_ref().map_or("", |o| o.text()) == s.trap_outline {
+            c.trap_outline_name = s.trap_outline_name.clone();
+        } else {
+            let o = crate::trap_outline::outline_from_text(&s.trap_outline, &s.trap_outline_name);
+            c.set_outline(o, s.trap_outline_name.clone());
+        }
         c.custom_palette = s.custom_palette.clone();
         c.custom_palette_flat = s.custom_palette_flat;
         c.custom_segments = s.custom_segments.clone();
@@ -16418,8 +16474,13 @@ impl FractadyneApp {
             s.trap_phase = 0.0;
             s.interior_trap_phase = 0.0;
         }
+        // The trap outline (F4 part 4) by its key, and only when a drawn trap measures from it: its
+        // text runs to thousands of points, and its name draws nothing.
+        s.trap_outline = String::new();
+        s.trap_outline_name = String::new();
         let mut sink = Sink(Default::default());
         let _ = serde_json::to_writer(&mut sink, &s);
+        sink.0.write_u64(self.coloring.outline_for(self.coloring.trap()).map_or(0, |o| o.key()));
         sink.0.finish()
     }
 

@@ -51,6 +51,10 @@ astro-float = "0.9"
 rug = { version = "1", default-features = false, features = ["float", "integer", "std"] }
 gmp-mpfr-sys = { version = "1", default-features = false, features = ["mpfr", "c-no-tests"] }
 rfd = "0.15"
+# A custom orbit-trap outline from an SVG file (coloring plan F4, part 4): a read-only XML tree (no
+# DTD, so no entity expansion from an untrusted file) and SVG's path data and transforms.
+roxmltree = { version = "0.21", default-features = false, features = ["std"] }
+svgtypes = "0.16"
 thiserror = "2"
 
 # Internal crates
