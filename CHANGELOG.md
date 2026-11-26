@@ -46,8 +46,8 @@ detail is in the git history.
   corners sharper and its sides steeper, each a little more calculation in every step of every
   orbit. The square wave has a Phase and its animation too, as the sine wave does. Place on the
   cycle puts the sinc's peak on the cycle point. Frames that draw neither keep the speed they had:
-  the two shapes are compiled only into pipelines of their own, built the first time a frame draws
-  one. A view file keeps the count (`trap_harmonics`, and `interior_trap_harmonics` for the inside's
+  the two shapes are compiled only into pipelines of their own, built in the background as
+  Fractadyne starts. A view file keeps the count (`trap_harmonics`, and `interior_trap_harmonics` for the inside's
   own trap), and on the command line they are `--trap sinc`, `--trap square-wave` and
   `--trap-harmonics N`.
 - **The sine wave trap's harmonics, overlaid.** A Harmonics row under the sine wave draws its

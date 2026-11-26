@@ -1955,20 +1955,25 @@ pub fn warm_trap_shapes(render_state: &egui_wgpu::RenderState) {
     if render_state.adapter.get_info().backend == wgpu::Backend::Gl {
         return;
     }
-    let (src, extra) = {
+    let (src, extra, waves) = {
         let guard = render_state.renderer.read();
         let Some(r) = guard.callback_resources.get::<Renderer>() else { return };
-        (r.iter_src.clone(), r.iter_tiers[tier_slot(TrapTier::Extra)].clone())
+        (r.iter_src.clone(), r.iter_tiers[tier_slot(TrapTier::Extra)].clone(), r.iter_tiers[tier_slot(TrapTier::Waves)].clone())
     };
     let device = render_state.device.clone();
+    // The Extra pair first, then the waves' (the sinc, the square wave, an overlaid sine wave): left
+    // to its first use, the waves' cold build stalled the RX 6800 XT 3.5 s inside the method sheet's
+    // Sinc cell, and the walk captured the sheet before a cell had calculated (PLUTO dev.11,
+    // 2026-11-26). Built here it also warms the driver's cache the exports' own builds hit.
     let _ = std::thread::Builder::new().name("fd-trap-shapes".into()).spawn(move || {
         extra.get_or_init(|| build_trap_shapes(&device, &src, "a worker", TrapTier::Extra));
+        waves.get_or_init(|| build_trap_shapes(&device, &src, "a worker", TrapTier::Waves));
     });
 }
 
 /// Have the live renderer's pipelines for the trap shapes of `tier` ready before a frame that draws
-/// one reaches the paint callback: waiting for [`warm_trap_shapes`]'s worker (the Extra tier), or
-/// building them here (OpenGL; the Waves tier, the first time a frame draws a sinc or a square wave).
+/// one reaches the paint callback: waiting for [`warm_trap_shapes`]'s worker (both tiers), or
+/// building them here (OpenGL, the first time a frame draws one).
 /// `true` when they were not ready and the caller's thread waited, so the app can leave the time out
 /// of the frame's price, as for a custom formula ([`prepare_custom_now`]). The base tier is always
 /// ready.
