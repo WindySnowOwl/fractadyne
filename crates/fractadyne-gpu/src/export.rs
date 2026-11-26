@@ -586,6 +586,9 @@ pub(crate) fn tile_trace_on() -> bool {
 #[cfg(test)]
 #[path = "../tests/unit/export/tile_cap.rs"]
 mod tile_cap;
+#[cfg(test)]
+#[path = "../tests/unit/export/tile_apron.rs"]
+mod tile_apron;
 
 /// Iteration-window pricing for the per-tile chunked iterate — the actuator the area cap cannot
 /// be (crash-1787292746): a dwell-bound tile is LATENCY-bound, so its wall is
@@ -1672,6 +1675,9 @@ struct ExportPlan {
     occupancy: bool,
     rn_bla: bool,
     state_size: [u32; 2],
+    /// Output pixels each tile iterates past every side that has a neighboring tile (its apron):
+    /// 1 for a lit export, whose relief reads a 3x3 neighborhood, else 0 (`apron_plan`).
+    apron: u32,
 }
 
 /// The samples one tile of `plan` holds (its state's area).
@@ -1679,7 +1685,62 @@ fn plan_tile_samples(plan: &ExportPlan) -> u64 {
     u64::from(plan.state_size[0]) * u64::from(plan.state_size[1])
 }
 
+/// The plan of a request's tiles; a lit export's tiles take an apron (`ExportPlan::apron`).
 fn export_plan(limits: &wgpu::Limits, req: &ExportRequest, allow_chunking: bool) -> ExportPlan {
+    export_plan_with(limits, req, allow_chunking, req.light == 1)
+}
+
+/// The tile, the occupancy grid and the chunk state's size with an apron of `apron` output pixels
+/// (0 or 1) around each tile, from the `tile` the bounds allow: the tile gives up those pixels,
+/// so the area it iterates is the planned one and every bound (texture, buffer, work, card) holds
+/// as without; the state has room for the wall-adaptive cap's floor of 16 px (`export_tile_cap`,
+/// which can lift a smaller planned tile to it) and the apron around it. `(tile, row_h, col_w,
+/// state_size)`; with no apron exactly the plan as before.
+fn apron_plan(tile: u32, w: u32, h: u32, ss: u32, occupancy: bool, apron: u32) -> (u32, u32, u32, [u32; 2]) {
+    let tile = if apron > 0 { tile.saturating_sub(2 * apron).max(1) } else { tile };
+    let (row_h, col_w) = (balanced_extent(h, tile), balanced_extent(w, tile));
+    let state_size = if occupancy {
+        [(col_w + 2 * apron) * ss, (row_h + 2 * apron) * ss]
+    } else if apron > 0 {
+        let side = (tile.max(16) + 2 * apron) * ss;
+        [side, side]
+    } else {
+        [tile * ss, tile * ss]
+    };
+    (tile, row_h, col_w, state_size)
+}
+
+/// The apron of the tile at `(tx0, ty0)`, `tw`x`th` output px, of a `w`x`h` frame: `apron` on each
+/// side that has a neighboring tile, 0 at the frame's edges (which clamp, as a frame in one
+/// piece does). `[left, top, right, bottom]`.
+fn tile_apron_sides(tx0: u32, ty0: u32, tw: u32, th: u32, w: u32, h: u32, apron: u32) -> [u32; 4] {
+    [
+        if tx0 > 0 { apron } else { 0 },
+        if ty0 > 0 { apron } else { 0 },
+        if tx0 + tw < w { apron } else { 0 },
+        if ty0 + th < h { apron } else { 0 },
+    ]
+}
+
+/// The spotlight (`Vignette`: its center in the frame's uv, its radius and softness as fractions
+/// of the frame's height) in the coordinates of the tile at `(tx0, ty0)`, `tw`x`th` output px, of a
+/// `w`x`h` frame, which the color pass measures it in (its own uv, its own height). Exact: the
+/// shader's distance in tile heights is the frame's scaled by h / th, and so are both edges of its
+/// smoothstep. (2026-11-26: a tiled export, a 4K tour frame say, drew a spotlight in every tile.)
+/// `(center, radius, soft)`.
+fn tile_vignette(center: [f32; 2], radius: f32, soft: f32, tx0: u32, ty0: u32, tw: u32, th: u32, w: u32, h: u32) -> ([f32; 2], f32, f32) {
+    let (tw, th) = (tw.max(1) as f32, th.max(1) as f32);
+    let c = [(center[0] * w as f32 - tx0 as f32) / tw, (center[1] * h as f32 - ty0 as f32) / th];
+    let k = h as f32 / th;
+    (c, radius * k, soft * k)
+}
+
+/// [`tile_apron_sides`] packed for `ColorU.tile_apron`, a byte a side.
+fn pack_tile_apron(s: [u32; 4]) -> u32 {
+    s[0] | (s[1] << 8) | (s[2] << 16) | (s[3] << 24)
+}
+
+fn export_plan_with(limits: &wgpu::Limits, req: &ExportRequest, allow_chunking: bool, apron: bool) -> ExportPlan {
     let max_dim = limits.max_texture_dimension_2d;
     let max_buf = limits.max_buffer_size;
     let w = req.width.max(1);
@@ -1757,9 +1818,9 @@ fn export_plan(limits: &wgpu::Limits, req: &ExportRequest, allow_chunking: bool)
         .clamp(1, 2048);
     // Step-bounded tiles split the frame into EQUAL rows and columns (see `balanced_extent`), and
     // their state is allocated at that size; the others are at most `tile` square.
-    let (row_h, col_w) = (balanced_extent(h, tile), balanced_extent(w, tile));
-    let state_size = if occupancy { [col_w * ss, row_h * ss] } else { [tile * ss, tile * ss] };
-    ExportPlan { w, h, ss, tile, row_h, col_w, fe, chunk_scope, occupancy, rn_bla: req.rn_bla_k() > 0, state_size }
+    let apron = u32::from(apron);
+    let (tile, row_h, col_w, state_size) = apron_plan(tile, w, h, ss, occupancy, apron);
+    ExportPlan { w, h, ss, tile, row_h, col_w, fe, chunk_scope, occupancy, rn_bla: req.rn_bla_k() > 0, state_size, apron }
 }
 
 /// One tile's output and what it cost (see [`ExportResult`] for the meaning of each figure).
@@ -1810,6 +1871,8 @@ struct TileRenderer<'a> {
     full: [f32; 2],
     /// [`ExportRequest::ref_fold`], scanned once for every tile.
     fold: [u32; 4],
+    /// The color uniforms every tile shares, but for its apron (`tile_apron`), written per tile.
+    cu: ColorUniforms,
     /// Read back each tile's ITERATION values (the G-buffer `fs_iterate` writes) instead of its
     /// colors: [`render_iter_multi`], whose caller colors the whole frame once it knows the frame's
     /// escape range (a normalized export). Requires `ss = 1`, so a tile's iteration texture is the
@@ -1966,7 +2029,7 @@ impl<'a> TileRenderer<'a> {
             relief_steep_px: req.relief.gpu_steep_px(),
             relief_highlight: req.relief.gpu_highlight(),
             relief_shininess: req.relief.shininess,
-            _pad_relief: 0,
+            tile_apron: 0,
             relief_hl_col: req.relief.gpu_color(),
             eq: eqw.row,
             eq_knots: eqw.knots,
@@ -2002,6 +2065,7 @@ impl<'a> TileRenderer<'a> {
             step: [sxh, sxl, syh, syl],
             full: [w as f32 * ss as f32, h as f32 * ss as f32],
             fold: req.ref_fold(),
+            cu,
             iter_only: false,
         })
     }
@@ -2012,8 +2076,25 @@ impl<'a> TileRenderer<'a> {
         let ss = self.plan.ss;
         let t_tile = std::time::Instant::now();
         let (mut iterate_ms, mut color_ms, mut max_dispatch_ms, mut max_work, mut packs) = (0.0f64, 0.0f64, 0.0f64, 0u64, 0u32);
-        let iw = tw * ss;
-        let ih = th * ss;
+        // A lit export's apron (`ExportPlan::apron`): output pixels past each side that has a
+        // neighboring tile, iterated with the tile so the color pass reads the frame's pixels
+        // there. Never for an iterate-only tile, whose texture is read back as the tile.
+        let apron = if self.iter_only { 0 } else { self.plan.apron };
+        let sides = tile_apron_sides(tx0, ty0, tw, th, self.plan.w, self.plan.h, apron);
+        let [al, at, ar, ab] = sides;
+        let iw = (tw + al + ar) * ss;
+        let ih = (th + at + ab) * ss;
+        // The color uniforms' per-tile words: the apron, and a spotlight in the tile's own
+        // coordinates (`tile_vignette`).
+        let spot = self.cu.vig_on == 1;
+        if apron > 0 || spot {
+            let mut cu = ColorUniforms { tile_apron: pack_tile_apron(sides), ..self.cu };
+            if spot {
+                let (c, r, s) = tile_vignette(self.cu.vig_center, self.cu.vig_radius, self.cu.vig_soft, tx0, ty0, tw, th, self.plan.w, self.plan.h);
+                (cu.vig_center, cu.vig_radius, cu.vig_soft) = (c, r, s);
+            }
+            queue.write_buffer(&self.color_uniform, 0, bytemuck::bytes_of(&cu));
+        }
         let [sxh, sxl, syh, syl] = self.step;
 
         let mut iu = IterUniforms {
@@ -2022,7 +2103,7 @@ impl<'a> TileRenderer<'a> {
             center: req.center,
             julia_c: req.julia_c,
             res: self.full,
-            px_offset: [(tx0 * ss) as f32 + req.jitter[0] * ss as f32, (ty0 * ss) as f32 + req.jitter[1] * ss as f32],
+            px_offset: [((tx0 - al) * ss) as f32 + req.jitter[0] * ss as f32, ((ty0 - at) * ss) as f32 + req.jitter[1] * ss as f32],
             max_iter: req.max_iter,
             orbit_len: req.orbit_len,
             mode: req.mode,
@@ -2656,7 +2737,8 @@ fn render_multi_impl(
         let share = DeviceShare { tiles: r.tiles_total, pixels: r.width as u64 * r.height as u64, iterate_ms: r.iterate_ms, color_ms: r.color_ms, error: None };
         return Ok((r, vec![share]));
     }
-    let plan = export_plan(&min_limits(&limits), req, true);
+    // Iterate-only tiles are read back whole: no apron (and no tile given up for one).
+    let plan = export_plan_with(&min_limits(&limits), req, true, false);
     let rects = multi_tile_rects(&plan);
     let n = rects.len();
     let next = AtomicUsize::new(0);
@@ -4395,7 +4477,7 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         relief_steep_px: req.relief.gpu_steep_px(),
         relief_highlight: req.relief.gpu_highlight(),
         relief_shininess: req.relief.shininess,
-        _pad_relief: 0,
+        tile_apron: 0,
         relief_hl_col: req.relief.gpu_color(),
         eq: eqw.row,
         eq_knots: eqw.knots,

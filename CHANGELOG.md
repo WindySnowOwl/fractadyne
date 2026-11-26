@@ -281,6 +281,14 @@ detail is in the git history.
   color out, so the view opened elsewhere shaded its edges toward whatever color was set there.
   They keep it now, and the Inside row shows the color's swatch whenever the edges use it, so it
   can be seen and changed.
+- **Exports with relief lighting have no seams.** A large or deep export is rendered in tiles,
+  and relief lighting smooths each pixel's slope over its neighbors; at a tile's edge it had only
+  its own tile's, so fine detail crossing the edge showed a broken line. Each tile now renders a
+  pixel past its edges for its neighbors, and a lit export is the same picture however it is cut.
+  Exports without the light are unchanged.
+- **A rendered tour draws its spotlight once.** A tour's spotlight dims the picture outside a
+  circle; in a frame rendered in tiles, a 4K frame say, each tile drew a circle of its own. Now
+  every tile draws its part of the one circle.
 - **The overview map keeps up with the coloring.** The map in the corner was drawn again for a new
   palette or a new method, but not when the orbit trap's shape or place, the stripe density, the
   cycle or the offset changed, so it could still show an S curve after the trap had become a sine

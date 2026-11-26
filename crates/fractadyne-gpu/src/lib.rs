@@ -539,12 +539,15 @@ pub(crate) struct ColorUniforms {
     pub(crate) grid_col: [f32; 4],
     /// The relief light's surface and highlight ([`ReliefLight`], coloring plan C5): a row of the
     /// slope from the distance (45 degrees this many output pixels from the set; 0 = 45 degrees
-    /// everywhere, the classic relief), the highlight's strength (0 = none) and shininess and a pad
-    /// word, then a row of the highlight's color. `ColorU.relief_*` mirror them.
+    /// everywhere, the classic relief), the highlight's strength (0 = none) and shininess and an
+    /// export tile's apron, then a row of the highlight's color. `ColorU.relief_*` mirror them.
     pub(crate) relief_steep_px: f32,
     pub(crate) relief_highlight: f32,
     pub(crate) relief_shininess: f32,
-    pub(crate) _pad_relief: u32,
+    /// An export tile's apron, its sides' widths in output pixels, a byte each (left, top, right,
+    /// bottom; [`crate::export`]'s `tile_apron_sides`): 0 but for a lit export's tiles, whose
+    /// color pass then draws the texture's inner pixels and reads the apron's as neighbors.
+    pub(crate) tile_apron: u32,
     pub(crate) relief_hl_col: [f32; 4],
     /// Histogram equalization ([`Equalize`], coloring plan C6): a row of the frame's share and
     /// sweeps and the dissolve's, then each one's remap knots, 64 rows of four ([`EQ_ROWS`]).
@@ -4860,7 +4863,7 @@ impl CallbackTrait for MandelbrotParams {
             relief_steep_px: self.relief.gpu_steep_px(),
             relief_highlight: self.relief.gpu_highlight(),
             relief_shininess: self.relief.shininess,
-            _pad_relief: 0,
+            tile_apron: 0,
             relief_hl_col: self.relief.gpu_color(),
             eq: eqw.row,
             eq_knots: eqw.knots,

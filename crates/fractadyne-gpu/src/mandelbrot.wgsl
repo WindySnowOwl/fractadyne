@@ -4199,7 +4199,9 @@ struct ColorU {
     relief_steep_px: f32,
     relief_highlight: f32,
     relief_shininess: f32,
-    _pad_relief: u32,
+    // An export tile's apron, in what was this row's pad word (`fs_color`; mirrors
+    // `ColorUniforms.tile_apron`).
+    tile_apron: u32,
     relief_hl_col: vec4<f32>,
     // Histogram equalization (coloring plan C6, `equalized`): the frame's share and sweeps, the
     // dissolve's share and sweeps; then each map's remap knots 0..255 (knot 256 is 1), four a row.
@@ -4839,18 +4841,26 @@ fn relief_highlight(nu: vec2<f32>, k: f32, ld: vec2<f32>) -> f32 {
 
 @fragment
 fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
-    let tex_dim = textureDimensions(iter_tex); // = screen × ss
+    let tex_dim = textureDimensions(iter_tex); // = (screen + apron) × ss
     let ss = max(cu.ss, 1u);
     // Texels a tap stands for: 1 (every texel) but for a palette-browser thumbnail at ss > 2.
     let stride = clamp(cu.tap_stride, 1u, ss);
-    let screen_dim = tex_dim / ss;
+    // An export tile's apron (`tile_apron`: its sides' widths in output pixels, a byte each, left,
+    // top, right, bottom): pixels iterated past each side that has a neighboring tile, so the
+    // relief's 3x3 neighborhood, and the palette anti-aliasing's next pixel, read the frame's
+    // pixels there, not this tile's edge again. 0 but for a lit export's tiles (2026-11-26: a lit
+    // export had a seam wherever fine detail crossed a tile's edge).
+    let apron_lt = vec2<u32>(cu.tile_apron & 0xffu, (cu.tile_apron >> 8u) & 0xffu);
+    let apron_rb = vec2<u32>((cu.tile_apron >> 16u) & 0xffu, (cu.tile_apron >> 24u) & 0xffu);
+    let tex_px = tex_dim / ss;                     // the texture's pixels, the apron's included
+    let screen_dim = tex_px - apron_lt - apron_rb; // the pixels this pass draws
     // ⭐The stored distance is per TEXEL; read it per OUTPUT pixel (`de_px_shift`). Texels across one
     // output pixel = the texture's width over the output's, times a reprojection's zoom since the
     // frozen frame (it magnifies the frozen texels). With no output width given that is log2(ss)
     // exactly — an export tile, the zoom-video assembler. Until 2026-11-08 nothing shifted, so a
     // 2×-supersampled view read every distance one octave too far: the Distance colors and the
     // glow bands moved whenever the anti-aliasing level, or the motion resolution, changed.
-    let out_w = select(f32(screen_dim.x), cu.display_w, cu.display_w > 0.0);
+    let out_w = select(f32(tex_px.x), cu.display_w, cu.display_w > 0.0);
     let zoomed = select(1.0, cu.uv_scale, cu.reproject == 1u);
     de_px_shift = log2(max(f32(tex_dim.x) * zoomed, 1.0e-6) / max(out_w, 1.0));
     tap_px = max(cu.aa_scale * exp2(-de_px_shift) * f32(stride), 1.0e-3);
@@ -4874,7 +4884,7 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
         }
     }
     let uv = clamp(suv, vec2<f32>(0.0), vec2<f32>(1.0));
-    let pix = vec2<i32>(uv * vec2<f32>(screen_dim)); // screen pixel index
+    let pix = vec2<i32>(uv * vec2<f32>(screen_dim)) + vec2<i32>(apron_lt); // its pixel in the texture
     let maxc = vec2<i32>(tex_dim) - vec2<i32>(1, 1);
 
     // Analytic palette anti-aliasing footprint: how much palette PHASE this output pixel spans,

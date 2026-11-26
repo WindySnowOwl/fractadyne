@@ -14250,9 +14250,10 @@ zoom = \"1e94\"
         // sampled, so a pixel is one texel. The normal is the shader's: the pixel's own mixed 1:3 with
         // its 3x3 neighborhood's mean, from the normal lanes. The classic relief (one slope) is a case
         // too. A CONTROL each (another slope, highlight or shininess) must differ. The export is cut into
-        // 16-px tiles (the least any card's tile can be, so the same on every card) and the pixels
-        // beside a tile's edge are left out: the color pass clamps the 3x3 neighborhood to its tile,
-        // so there it is not the frame's (a seam, TODO.md). Then the slope is in output pixels: the
+        // 16-px tiles (the least any card's tile can be, so the same on every card), and every pixel
+        // counts, those beside a tile's edge too: a lit export's tiles iterate an apron, so the 3x3
+        // neighborhood is the frame's there (2026-11-26; before, the color pass clamped it to the
+        // tile, a seam, and those pixels were left out). Then the slope is in output pixels: the
         // frame's mean brightening by the highlight at ss 1 and ss 2 agree, and twice the steepness
         // (the control) does not.
         if want("relief") {
@@ -14374,18 +14375,11 @@ zoom = \"1e94\"
                     })
                     .collect()
             };
-            // The share of pixels more than one 8-bit level apart, and the largest gap, over the
-            // pixels whose 3x3 neighborhood lies inside their tile.
-            let inside_tile = |i: usize| {
-                let (x, y) = (i as u32 % w, i as u32 / w);
-                ![0, TILE - 1].contains(&(x % TILE)) && ![0, TILE - 1].contains(&(y % TILE))
-            };
+            // The share of pixels more than one 8-bit level apart, and the largest gap, over every
+            // pixel, the tiles' edges included.
             let apart = |g: &[f32], c: &[[f64; 3]]| -> (f64, f64) {
                 let (mut n, mut bad, mut worst) = (0usize, 0usize, 0.0f64);
-                for (i, (px, want)) in g.chunks_exact(4).zip(c).enumerate() {
-                    if !inside_tile(i) {
-                        continue;
-                    }
+                for (px, want) in g.chunks_exact(4).zip(c) {
                     let d = (0..3).map(|k| (px[k] as f64 - want[k]).abs() * 255.0).fold(0.0, f64::max);
                     n += 1;
                     worst = worst.max(d);
@@ -14426,10 +14420,61 @@ zoom = \"1e94\"
                 ok_all &= ok;
                 lines.push(line);
             }
+            // The seam itself (2026-11-26): the same lit export cut into tiles of two sizes, so their
+            // edges fall in different places, is the same picture to the bit, the palette point
+            // sampled and anti-aliased by its neighbors (whose next pixel a tile's edge needs too).
+            // Without the tiles' apron the 3x3 neighborhood clamps to each tile and they differ
+            // along every edge.
+            let tilings = |aa: fractadyne_gpu::PaletteAa, lit: bool, spot: bool| -> Option<(usize, f32)> {
+                let cut = |side: u32| -> Option<Vec<f32>> {
+                    let mut r = req.clone();
+                    r.light = lit as u32;
+                    r.relief = relief(8.0, 0.5, 64.0, white);
+                    r.ss = 1;
+                    r.aa_palette = aa;
+                    // A tour's spotlight, off center (2026-11-26: a tiled export drew one in every tile).
+                    if spot {
+                        r.vignette = fractadyne_gpu::Vignette { on: 1, dim: 0.7, soft: 0.08, center: [0.35, 0.6], radius: 0.28 };
+                    }
+                    r.tile_px_max = Some(side);
+                    let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
+                    fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel).ok().map(|x| x.pixels)
+                };
+                let (a, b) = (cut(TILE)?, cut(40)?);
+                // More than a hundredth of an 8-bit level: the spotlight, placed for each tile, differs
+                // in the last bits of a float (906 pixels by under 0.001 levels); the relief, nowhere.
+                let differ = a
+                    .chunks_exact(4)
+                    .zip(b.chunks_exact(4))
+                    .filter(|(p, q)| p.iter().zip(q.iter()).any(|(x, y)| (x - y).abs() * 255.0 > 0.01))
+                    .count();
+                let worst = a.iter().zip(&b).map(|(p, q)| (p - q).abs()).fold(0.0f32, f32::max);
+                Some((differ, worst * 255.0))
+            };
+            let seams: Vec<(&str, Option<(usize, f32)>)> = vec![
+                ("lit, point sampled", tilings(fractadyne_gpu::PaletteAa::Off, true, false)),
+                ("lit, anti-aliased by neighbors", tilings(fractadyne_gpu::PaletteAa::Neighbors, true, false)),
+                ("a spotlight, unlit", tilings(fractadyne_gpu::PaletteAa::Off, false, true)),
+            ];
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "an export is the same picture however it is tiled (the relief, a spotlight)".into(),
+                params: format!("the same view, {w}x{h}, ss 1: the relief at 8 px with its highlight, and a tour's spotlight; tiles of at most {TILE} and of at most 40 px (the card may cut smaller), pixel by pixel"),
+                result: seams
+                    .iter()
+                    .map(|(n, r)| match r {
+                        Some((d, worst)) => format!("{n}: {d} pixels differ (max {worst:.3} levels)"),
+                        None => format!("{n}: no render"),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                threshold: "no pixel more than 0.01 levels apart",
+                pass: ready && seams.iter().all(|(_, r)| matches!(r, Some((0, _)))),
+            });
             push_check(&mut checks, &mut last_check_t, SelfCheck {
                 category: "export",
                 name: "relief lighting is its definition".into(),
-                params: format!("the coloring-method tour's point at 1e10x, {w}x{h}, ss 1, point sampled, unity, the default light (angle, Relief); the classic relief and three slopes and highlights, each against `relief_slope`, `relief_diffuse` and `relief_highlight` of the normal lanes (the pixel's own mixed 1:3 with its 3x3 neighborhood's mean, as the shader does) and the distance lane, applied to the export without the light ({near} escaped pixels within 64 px of the set); {TILE}-px tiles, the pixels beside a tile's edge left out; another slope, shininess or color as the control"),
+                params: format!("the coloring-method tour's point at 1e10x, {w}x{h}, ss 1, point sampled, unity, the default light (angle, Relief); the classic relief and three slopes and highlights, each against `relief_slope`, `relief_diffuse` and `relief_highlight` of the normal lanes (the pixel's own mixed 1:3 with its 3x3 neighborhood's mean, as the shader does) and the distance lane, applied to the export without the light ({near} escaped pixels within 64 px of the set); {TILE}-px tiles, every pixel judged, those beside a tile's edge too; another slope, shininess or color as the control"),
                 result: lines.join("; "),
                 threshold: "at most 0.5% of the pixels more than 1 level apart; the control 1% or more",
                 pass: ok_all,
