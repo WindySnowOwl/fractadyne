@@ -2794,6 +2794,7 @@ panel-trap-sine-harmonics-hover = Berapa banyak harmonik gelombang sinus yang di
 panel-inside = Bagian dalam
 panel-inside-hover = Apa yang mewarnai bagian dalam himpunan.
 panel-inside-color-hover = Warna bagian dalam himpunan.
+panel-inside-color-edges-hover = Warna tujuan bayangan tepi (Bayangan tepi, Warna bagian dalam). Bagian dalam itu sendiri diwarnai oleh perangkap orbit.
 inside-solid = Warna polos
 inside-solid-desc = Satu warna untuk seluruh bagian dalam himpunan.
 inside-trap = Perangkap orbit

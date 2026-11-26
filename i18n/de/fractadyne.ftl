@@ -2875,6 +2875,7 @@ panel-trap-sine-harmonics-hover = Wie viele Harmonische der Sinuswelle über ihr
 panel-inside = Innen
 panel-inside-hover = Was das Innere der Menge färbt.
 panel-inside-color-hover = Die Farbe des Inneren der Menge.
+panel-inside-color-edges-hover = Die Farbe, zu der die Ränder hin schattiert werden (Randschattierung, Innenfarbe). Das Innere selbst färbt die Orbitfalle.
 inside-solid = Einfarbig
 inside-solid-desc = Eine Farbe für das ganze Innere der Menge.
 inside-trap = Orbitfalle

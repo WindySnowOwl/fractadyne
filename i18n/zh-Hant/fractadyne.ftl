@@ -2794,6 +2794,7 @@ panel-trap-sine-harmonics-hover = 在正弦波上疊加繪製多少個諧波，�
 panel-inside = 內部
 panel-inside-hover = 集合內部的著色方式。
 panel-inside-color-hover = 集合內部的顏色。
+panel-inside-color-edges-hover = 邊緣被染向的顏色（邊緣著色、內部顏色）。內部本身由軌道陷阱著色。
 inside-solid = 純色
 inside-solid-desc = 整個集合內部使用同一種顏色。
 inside-trap = 軌道陷阱

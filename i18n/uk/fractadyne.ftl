@@ -3023,6 +3023,7 @@ panel-trap-sine-harmonics-hover = Скільки гармонік синусої
 panel-inside = Усередині
 panel-inside-hover = Чим забарвлено внутрішність множини.
 panel-inside-color-hover = Колір внутрішності множини.
+panel-inside-color-edges-hover = Колір, до якого затінюються краї (Тіні біля краю, Колір усередині). Саму внутрішність фарбує пастка орбіти.
 inside-solid = Суцільний колір
 inside-solid-desc = Один колір для всієї внутрішності множини.
 inside-trap = Пастка орбіти

@@ -3094,6 +3094,7 @@ trap-on-cycle-not-ready = The view's reference orbit is still being calculated. 
 panel-inside = Inside
 panel-inside-hover = What colors the inside of the set.
 panel-inside-color-hover = The color of the inside of the set.
+panel-inside-color-edges-hover = The color the edges are shaded toward (Edge shading, Inside color). The inside itself is colored by the orbit trap.
 inside-solid = Solid color
 inside-solid-desc = One color for the whole inside of the set.
 inside-trap = Orbit trap

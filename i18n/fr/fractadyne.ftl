@@ -2875,6 +2875,7 @@ panel-trap-sine-harmonics-hover = Combien d’harmoniques de l’onde sinusoïda
 panel-inside = Intérieur
 panel-inside-hover = Ce qui colore l’intérieur de l’ensemble.
 panel-inside-color-hover = La couleur de l’intérieur de l’ensemble.
+panel-inside-color-edges-hover = La couleur vers laquelle les bords sont ombrés (Ombrage des bords, Couleur intérieure). L’intérieur lui-même est coloré par le piège orbital.
 inside-solid = Couleur unie
 inside-solid-desc = Une seule couleur pour tout l’intérieur de l’ensemble.
 inside-trap = Piège orbital
