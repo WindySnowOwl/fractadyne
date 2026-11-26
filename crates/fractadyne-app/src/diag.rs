@@ -198,6 +198,8 @@ pub(crate) fn init(args: &[String]) {
         std::env::var("FRACTADYNE_CONSOLE").ok().as_deref(),
         std::env::var("FRACTADYNE_TRACE").ok().as_deref(),
     ));
+    // A console window made for this launch says whose it is, before anything else prints in it.
+    console_banner();
 
     // FRACTADYNE_LOG=0 disables the file (stderr behavior is unchanged either way).
     let file_log_on = std::env::var("FRACTADYNE_LOG").map_or(true, |v| v != "0");
@@ -1654,6 +1656,68 @@ fn install_console_ctrl_handler() {
 
 #[cfg(not(windows))]
 fn install_console_ctrl_handler() {}
+
+/// ⭐**Say whose console window this is** (user, 2026-11-25: "In the console panel that opens, can
+/// you add an initial message that this is a fractadyne window?"). Fractadyne is a console program,
+/// so that a command line keeps its output, and Windows gives a launch from Explorer, the Start menu
+/// or a shortcut a console window of its own beside the app's. A bare launch prints nothing to it
+/// ([`console_default`]), so it was a blank window named after the program's path. When the console
+/// was made for this process alone it gets a title and a first line saying what it is. A terminal
+/// the program was started from is the person's own and is left as it was, and so is output going
+/// to a file or a pipe, which a script reads.
+///
+/// English, as the command line is in every language (the Languages window says so).
+fn console_banner() {
+    use std::io::IsTerminal;
+    if !own_console() || !std::io::stderr().is_terminal() {
+        return;
+    }
+    set_console_title("Fractadyne console");
+    eprintln!("{}", console_banner_text(&crate::sysinfo::version_string()));
+}
+
+/// The console window's first lines ([`console_banner`]), for `version` (`sysinfo::version_string`).
+pub(crate) fn console_banner_text(version: &str) -> String {
+    format!(
+        "Fractadyne v{version} started.\n\
+         This is its console window: Fractadyne writes its error messages here, and closing this \
+         window closes Fractadyne too.\n"
+    )
+}
+
+/// Whether this process's console was made for it alone: the only process attached to it. A
+/// terminal's shell is attached to its console too, and a process started without one has none.
+#[cfg(windows)]
+fn own_console() -> bool {
+    unsafe extern "system" {
+        fn GetConsoleProcessList(list: *mut u32, count: u32) -> u32;
+    }
+    let mut pids = [0u32; 2];
+    // SAFETY: a buffer of `pids.len()` ids, which the call fills at most (it returns the count,
+    // larger than the buffer when more are attached, and 0 when there is no console).
+    unsafe { GetConsoleProcessList(pids.as_mut_ptr(), pids.len() as u32) == 1 }
+}
+
+#[cfg(not(windows))]
+fn own_console() -> bool {
+    false
+}
+
+/// Name the console window (its title bar, its taskbar button, a terminal's tab). Best-effort.
+#[cfg(windows)]
+fn set_console_title(title: &str) {
+    unsafe extern "system" {
+        fn SetConsoleTitleW(title: *const u16) -> i32;
+    }
+    let wide: Vec<u16> = title.encode_utf16().chain([0]).collect();
+    // SAFETY: a string ended by a 0, valid for the call, which copies it.
+    unsafe {
+        SetConsoleTitleW(wide.as_ptr());
+    }
+}
+
+#[cfg(not(windows))]
+fn set_console_title(_title: &str) {}
 
 /// The exit code when stdout or stderr was closed by its reader: 128 + SIGPIPE, what a shell
 /// reports for a Unix program its pipe killed.

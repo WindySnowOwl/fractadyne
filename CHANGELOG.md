@@ -19,6 +19,11 @@ detail is in the git history.
   screen that says what is happening and counts the seconds while the shaders build behind it.
   Later starts are as quick as before and never show it. On OpenGL the window cannot redraw while
   they build, and the screen says it may stop responding until they finish.
+- **The console window says what it is.** Started from the Start menu, a shortcut or Explorer,
+  Fractadyne opens a console window beside its own, and that window stayed blank, named after the
+  program's path. Now it is titled "Fractadyne console" and starts with the version and what it is
+  for: Fractadyne writes its error messages there, and closing it closes Fractadyne too. A terminal
+  Fractadyne is started from is left as it was.
 - **Six new orbit trap shapes.** Besides the point, the cross and the circle, the orbit trap can
   be a line, a square, a hexagon, a 5-point star, a sine wave or an S curve. Each draws a picture
   of its own: at the overview the shape itself shows around the set, and deeper each threads its
