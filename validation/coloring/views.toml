@@ -604,6 +604,11 @@ check = "flat"
 reason = "The true picture is one color. Every pixel's orbit passes within ~1e-40 of the point and of the axes (CPU at 1,000 bits, 2026-11-15: 2.3e-40 to 1.7e-39 and 7e-41 to 2e-40 for three pixels), far under the 1e-20 floor of the trap's log map, so every pixel takes the floor's color, through BLA and in the plain render alike. (Through BLA it was another flat color until 2026-11-15: the BLA nodes read the orbit's extended-range dips as lane sums.) The line, the sine wave and the S curve pass through the origin too (F4 part 3, 2026-11-24) and are as flat; the closed shapes, which do not, are not."
 
 [[known]]
+cell = "mandelbrot-corpus07-1e30/trap-square-wave"
+check = "flat"
+reason = "The square wave crosses the origin: its jump at u = 0 is a vertical segment through 0, and at 1e30x every pixel's orbit passes near 0, so every pixel's nearest approach takes the trap's floor color (2026-11-26, the first full self-test after the waves). The accelerator checks pass, so the plain render is the same one color. As the line, the sine wave and the S curve at the deep views. Turned a quarter wave (phase 90 degrees) it is not flat here, which is where the trap-place self-test judges it."
+
+[[known]]
 cell = "mandelbrot-misiurewicz-7.4e143/triangle"
 check = "flat"
 reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe."
