@@ -68,6 +68,13 @@ detail is in the git history.
   Two keyframes at the same place hold the view still while the sine wave or the square wave
   travels along itself, played live or rendered by `--render-tour` as frames or an mp4. A new
   example does just that: `fractadyne --render-tour tours/trap-phase-cycle.toml --mp4`.
+- **A rendered tour fits the orbit trap's palettes as the screen does.** With the Orbit trap method,
+  "Always fit range" spreads the palette over the trap's values in view, and the inside's fit does
+  the same for the inside's palette. A tour rendered with `--render-tour` used neither and drew
+  its frames at the fixed rate, paler and flatter than the view it was made from. Each frame is
+  now fitted to its own values, as the live view fits the screen, so the video looks like the
+  view. Fitting a frame costs about a quarter more time at 2x2 supersampling. A frame depends on
+  nothing but its own view, so one full turn of the trap's phase rendered once loops seamlessly.
 - **Move, turn and size the orbit trap.** Under Trap shape the panel now has the trap's center, x
   and y, and a rotation for the cross and a size, its radius, for the circle. Where the trap sits
   decides which orbits come near it, so moving it rearranges the bands and rings it draws, inside the

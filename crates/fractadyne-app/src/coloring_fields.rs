@@ -191,7 +191,7 @@ pub(crate) const FIELDS: [Field; 62] = [
     Field {
         key: "interior_fit",
         name: "inside fit",
-        doc: "Live view and its exports: fit the inside's palette to the trap values measured inside the set on screen (when the inside is colored by the trap). An offline render keeps the fixed rate.",
+        doc: "Fit the inside's palette to the trap values measured inside the set (when the inside is colored by the trap): on screen for the live view and its exports, each frame's own for a tour render. Other offline renders keep the fixed rate.",
         access: Access::Flag(|s| s.interior_fit, |s, v| s.interior_fit = v),
         parents: &["method", "interior"],
         shows: interior_trap,
@@ -663,7 +663,7 @@ pub(crate) const FIELDS: [Field; 62] = [
     Field {
         key: "normalize_fit",
         name: "always fit range",
-        doc: "Live view only: always fit the palette to the escape range (method \"smooth\" or \"trap\").",
+        doc: "Always fit the palette to the range in view: the escape range for method \"smooth\" (live view only; an offline render uses `[render]` `normalize`), the trap's values for method \"trap\" (on screen for the live view and its exports, each frame's own for a tour render).",
         access: Access::Flag(|s| s.normalize_fit, |s, v| s.normalize_fit = v),
         parents: &["method"],
         shows: uses_fit,

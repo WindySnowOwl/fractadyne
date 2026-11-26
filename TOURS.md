@@ -61,7 +61,7 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `stripe_tail_len` | int, 4 to 1048576 | 16 | The tail's length in iterations (with `stripe_tail`). |
 | `interior` | string: solid \| trap | (left out) | What colors the inside of the set: "solid" (one color) or "trap" (how near each orbit came to the orbit trap, through `interior_palette`). Left out: the method's own (method "trap" colors it by its trap, every other method one color). |
 | `interior_palette` | string: a palette id, such as "ember" | (left out) | The palette the trap colors the inside with, a preset's id (when the inside is colored by the trap). Left out: the outside palette. |
-| `interior_fit` | bool | false | Live view and its exports: fit the inside's palette to the trap values measured inside the set on screen (when the inside is colored by the trap). An offline render keeps the fixed rate. |
+| `interior_fit` | bool | false | Fit the inside's palette to the trap values measured inside the set (when the inside is colored by the trap): on screen for the live view and its exports, each frame's own for a tour render. Other offline renders keep the fixed rate. |
 | `trap` | string: point \| cross \| circle \| line \| square \| hexagon \| star \| sine \| s-curve \| sinc \| square-wave | "point" | The orbit trap's shape: point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc or square-wave (method "trap", or an inside colored by the trap). |
 | `trap_x` | float, -4 to 4 | 0 | Where the orbit trap sits in the orbit's plane, its real coordinate (with the trap). |
 | `trap_y` | float, -4 to 4 | 0 | Where the orbit trap sits in the orbit's plane, its imaginary coordinate (with the trap). |
@@ -105,7 +105,7 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `palette_hi` | [r, g, b], 0 to 1 | [0.95, 0.8, 0.45] | Duotone's highlight, Binary's color outside the set, as display-space [r, g, b] (with `palette_mode`). |
 | `interior_color` | [r, g, b], 0 to 1 | [0.02, 0.02, 0.03] | The color of a solid inside, as display-space [r, g, b], and the color `edge_inside` shades the edges toward whatever colors the inside (when the inside is solid or `edge_inside` is on; Duotone and Binary use `palette_lo`). |
 | `normalize_live` | bool | true | Live view only: Normalize deep colors (method "smooth"). An offline render uses `[render]` `normalize`. |
-| `normalize_fit` | bool | false | Live view only: always fit the palette to the escape range (method "smooth" or "trap"). |
+| `normalize_fit` | bool | false | Always fit the palette to the range in view: the escape range for method "smooth" (live view only; an offline render uses `[render]` `normalize`), the trap's values for method "trap" (on screen for the live view and its exports, each frame's own for a tour render). |
 | `log_scale` | bool | false | Log color scale wherever the palette is normalized (method "smooth" or "trap"). |
 | `transfer` | string: linear \| sqrt \| cbrt \| root4 \| log \| loglog \| square | "linear" | The curve the palette is spread through wherever it is normalized (method "smooth" or "trap"): linear, sqrt, cbrt, root4, loglog or square; log is written `log_scale = true`, as older files have it (and `transfer = "log"` reads as log). |
 | `equalize` | float, 0 to 1 | 0 | Equalize colors, 0 to 1: the share of histogram coloring mixed into the palette map wherever it is normalized, so each color takes about the same area of the picture (method "smooth", and "trap" with normalize_fit; 0: the fitted map alone). |

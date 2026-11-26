@@ -74,7 +74,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe", "round-trip",
     "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize", "palette-oklab",
-    "tour-equalize", "video-equalize", "trap-equalize", "lossy-formats",
+    "tour-equalize", "video-equalize", "trap-equalize", "lossy-formats", "tour-trap-fit",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -13426,6 +13426,15 @@ zoom = \"1e94\"
             }
         }
 
+        // ---- A tour frame fits the orbit trap's palettes to its own values (2026-11-26) ----
+        // As the live view fits them to the screen's ("Always fit range", the inside's fit):
+        // `tour_trap_fit`.
+        if want("tour-trap-fit") {
+            for c in self.tour_trap_fit_checks(device, queue) {
+                push_check(&mut checks, &mut last_check_t, c);
+            }
+        }
+
         // ---- Equalize colors for the orbit trap (coloring plan C6c) ----
         // One render of a trap view gives the trap lane and the GPU's own histogram of it (the one
         // the live view reads, on its 4x4 grid). Its distribution (`trap_quantiles`) against every
@@ -16324,3 +16333,4 @@ mod wait_alive_tests;
 mod frame_signature_tests;
 
 mod round_trip;
+mod tour_trap_fit;
