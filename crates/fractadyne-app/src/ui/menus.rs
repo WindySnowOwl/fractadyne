@@ -269,25 +269,21 @@ impl FractadyneApp {
         // Newton has no free parameter, so it has no Julia and no dual view. The options stay
         // VISIBLE and disabled rather than vanishing: a picker whose contents change shape as you
         // move through it is harder to learn than one where something is grayed with a reason.
+        // ⛔The reason goes in `on_disabled_hover_text`: egui shows `on_hover_text` only on an
+        // enabled widget, so the "has no Julia set" text this once chose there never showed.
         ui.add_enabled_ui(can_julia, |ui| {
             if ui
                 .radio(cur == crate::ShowMode::Julia, tr!(menu_show_julia))
-                .on_hover_text(if can_julia {
-                    tr!(menu_show_julia_hover, name = name)
-                } else {
-                    tr!(menu_show_julia_none, name = name)
-                })
+                .on_hover_text(tr!(menu_show_julia_hover, name = name))
+                .on_disabled_hover_text(tr!(menu_show_julia_none, name = name))
                 .clicked()
             {
                 pick = Some(crate::ShowMode::Julia);
             }
             if ui
                 .radio(cur == crate::ShowMode::Both, tr!(menu_show_both))
-                .on_hover_text(if can_julia {
-                    tr!(menu_show_both_hover, name = name)
-                } else {
-                    tr!(menu_show_both_none, name = name)
-                })
+                .on_hover_text(tr!(menu_show_both_hover, name = name))
+                .on_disabled_hover_text(tr!(menu_show_both_none, name = name))
                 .clicked()
             {
                 pick = Some(crate::ShowMode::Both);
@@ -766,6 +762,7 @@ impl FractadyneApp {
                             if ui
                                 .button(format!("{}  (M)", tr!(menu_tools_find_minibrot)))
                                 .on_hover_text(tr!(menu_tools_find_minibrot_hover))
+                                .on_disabled_hover_text(tr!(menu_tools_no_nucleus, name = self.fractal.display_name()))
                                 .clicked()
                             {
                                 self.find_minibrot(&ctx);
@@ -774,6 +771,7 @@ impl FractadyneApp {
                             if ui
                                 .button(tr!(menu_tools_solver))
                                 .on_hover_text(tr!(menu_tools_solver_hover))
+                                .on_disabled_hover_text(tr!(menu_tools_no_nucleus, name = self.fractal.display_name()))
                                 .clicked()
                             {
                                 self.open_goto();
@@ -1189,6 +1187,7 @@ impl FractadyneApp {
                         egui::SelectableLabel::new(self.julia_mode, tr!(menu_toolbar_julia)),
                     )
                     .on_hover_text(tr!(menu_toolbar_julia_hover))
+                    .on_disabled_hover_text(tr!(menu_show_julia_none, name = self.fractal.display_name()))
                     .clicked()
                 {
                     let m = if self.julia_mode { crate::ShowMode::Set } else { crate::ShowMode::Julia };
@@ -1202,6 +1201,7 @@ impl FractadyneApp {
                         egui::SelectableLabel::new(self.dual, crate::icons::DUAL),
                     )
                     .on_hover_text(tr!(menu_toolbar_dual_hover))
+                    .on_disabled_hover_text(tr!(menu_show_both_none, name = self.fractal.display_name()))
                     .clicked()
                 {
                     let m = if self.dual { crate::ShowMode::Set } else { crate::ShowMode::Both };

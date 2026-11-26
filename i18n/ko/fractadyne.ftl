@@ -356,6 +356,7 @@ menu-tools-find-minibrot = 미니브로트 찾기 + 확대
 menu-tools-find-minibrot-hover = 뉴턴 방법으로 뷰 중심을 근처 미니브로트의 정확한 중심에 맞추고, 그 주기를 알려 주고, 미니브로트 자체의 배율까지 확대합니다 — 한 번에 여러 자릿수를 건너뛰는 경우가 많습니다. 이미 그보다 깊이 있다면 중심만 이동합니다.
 menu-tools-solver = 뉴턴 / Misiurewicz 솔버…
 menu-tools-solver-hover = 정확한 미니브로트 중심(주기 + 크기) 또는 뷰에 가장 가까운 Misiurewicz 점을 구합니다 — 반발 승수 λ와 함께, 완전한 정밀도의 뉴턴 방법으로. 솔버가 들어 있는 위치 대화 상자를 엽니다.
+menu-tools-no-nucleus = Fractadyne에는 { $name }용 미니브로트 솔버가 없습니다.
 # Followed by its shortcut, (A).
 menu-tools-autopilot = 자동 줌(자동 조종)
 menu-tools-autopilot-stop = 자동 조종 중지

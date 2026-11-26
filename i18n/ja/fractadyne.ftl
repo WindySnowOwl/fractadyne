@@ -356,6 +356,7 @@ menu-tools-find-minibrot = ミニブロットを探してズーム
 menu-tools-find-minibrot-hover = ニュートン法でビューの中心を近くのミニブロットの正確な中心に合わせ、その周期を表示し、ミニブロット自体の大きさまでズームします。1回で何桁も深くなることがよくあります。すでにそれより深い場合は、中心だけが移動します。
 menu-tools-solver = Newton / Misiurewiczソルバー…
 menu-tools-solver-hover = ビューに最も近い、ミニブロットの正確な中心（周期とサイズ）またはMisiurewicz点を求めます。完全な精度でのニュートン法と、反発的な乗数λを使います。ソルバーのある位置ダイアログが開きます。
+menu-tools-no-nucleus = Fractadyneには{ $name }用のミニブロットのソルバーがありません。
 # Followed by its shortcut, (A).
 menu-tools-autopilot = 自動ズーム（オートパイロット）
 menu-tools-autopilot-stop = オートパイロットを停止

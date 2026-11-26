@@ -356,6 +356,7 @@ menu-tools-find-minibrot = Temukan minibrot + zoom ke sana
 menu-tools-find-minibrot-hover = Dengan metode Newton, tepatkan pusat tampilan ke pusat persis minibrot di dekatnya, laporkan periodenya, lalu zoom ke skala minibrot itu sendiri — sering kali banyak orde besaran dalam satu langkah. Sudah lebih dalam darinya? Hanya pusatnya yang berpindah.
 menu-tools-solver = Pemecah Newton / Misiurewicz…
 menu-tools-solver-hover = Cari pusat persis minibrot (periode + ukuran) atau titik Misiurewicz yang terdekat dengan tampilan — metode Newton dengan presisi penuh, beserta pengali tolak λ. Membuka dialog lokasi, tempat pemecah-pemecah itu berada.
+menu-tools-no-nucleus = Fractadyne tidak memiliki pemecah minibrot untuk { $name }.
 # Followed by its shortcut, (A).
 menu-tools-autopilot = Zoom otomatis (autopilot)
 menu-tools-autopilot-stop = Hentikan autopilot
