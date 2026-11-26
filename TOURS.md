@@ -69,6 +69,7 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `trap_size` | float, 0.01 to 10 | 1 | The trap's size: the circle's radius, the polygons' and the star's outer corners' distance from its center, the waves' and the S curve's scale (the shapes with a size: not the point, the cross or the line). |
 | `trap_phase` | float, -180 to 180 | 0 | A wave trap's phase, in degrees: the wave shifted along itself, a full wave every 360 (the shapes with a phase: the sine wave and the square wave). |
 | `trap_harmonics` | int, 1 to 32 | 5 | How many odd harmonics the square wave trap sums, 1 (a sine wave) to 32: more make its corners sharper and its sides steeper (the shapes with harmonics: the square wave). |
+| `trap_sine_harmonics` | int, 1 to 32 | 1 | How many of the sine wave trap's harmonics are drawn over it at its height, 1 (the wave alone) to 32: the waves of two, three, ... times its frequency (the shapes with overlaid harmonics: the sine wave). |
 | `interior_trap` | string: point \| cross \| circle \| line \| square \| hexagon \| star \| sine \| s-curve \| sinc \| square-wave | (left out) | The inside's own trap shape, point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc or square-wave, when the trap method colors the inside by a trap (the inside's own placement in the keys after). Left out: the method's trap. |
 | `interior_trap_x` | float, -4 to 4 | 0 | The inside's own trap's center, its real coordinate (with `interior_trap`). |
 | `interior_trap_y` | float, -4 to 4 | 0 | The inside's own trap's center, its imaginary coordinate (with `interior_trap`). |
@@ -76,6 +77,7 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `interior_trap_size` | float, 0.01 to 10 | 1 | The inside's own trap's size, as `trap_size`. |
 | `interior_trap_phase` | float, -180 to 180 | 0 | The inside's own trap's phase, as `trap_phase`. |
 | `interior_trap_harmonics` | int, 1 to 32 | 5 | The inside's own trap's harmonics, as `trap_harmonics`. |
+| `interior_trap_sine_harmonics` | int, 1 to 32 | 1 | The inside's own sine wave's overlaid harmonics, as `trap_sine_harmonics`. |
 | `light` | bool | false | Relief lighting from the distance estimate. |
 | `light_angle` | float | 2.2 | The light's direction in radians (with `light`). |
 | `light_height` | float, 0.2 to 4 | 1.2 | Relief strength: smaller is sharper (with `light`). |

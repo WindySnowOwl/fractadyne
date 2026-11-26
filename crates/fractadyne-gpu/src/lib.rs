@@ -151,10 +151,12 @@ pub(crate) struct TrapU {
 
 /// The inside's own trap for the shader (`trap_in`, `trap_in_row`): its placement and
 /// `[1, its shape's GPU number, …]` while the frame accumulates the trap and the inside has one, and
-/// in the row's last two words the square wave's harmonics, `trap`'s and the inside's
-/// ([`TrapPlace::harmonics`](fractadyne_core::coloring::TrapPlace::harmonics)); zeros while the
-/// frame does not accumulate the trap (no second statistic: every frame as before).
+/// in the row's last two words each trap's count, the trap's (`trap_type`, a GPU number) and the
+/// inside's ([`TrapPlace::count`](fractadyne_core::coloring::TrapPlace::count): the square wave's
+/// harmonics, the sine wave's overlaid ones); zeros while the frame does not accumulate the trap (no
+/// second statistic: every frame as before).
 pub(crate) fn trap_in_uniform(
+    trap_type: u32,
     trap: fractadyne_core::coloring::TrapPlace,
     inside: Option<(fractadyne_core::coloring::TrapType, fractadyne_core::coloring::TrapPlace)>,
     accumulated: bool,
@@ -162,9 +164,10 @@ pub(crate) fn trap_in_uniform(
     if !accumulated {
         return (TrapU::default(), [0; 4]);
     }
+    let count = trap.count(fractadyne_core::coloring::TrapType::from_gpu_id(trap_type).unwrap_or_default());
     match inside {
-        Some((shape, place)) => (trap_uniform(place), [1, shape.gpu_id(), trap.harmonics, place.harmonics]),
-        None => (TrapU::default(), [0, 0, trap.harmonics, 0]),
+        Some((shape, place)) => (trap_uniform(place), [1, shape.gpu_id(), count, place.count(shape)]),
+        None => (TrapU::default(), [0, 0, count, 0]),
     }
 }
 
@@ -833,9 +836,9 @@ struct IterKey {
     trap_type: u32,
     /// The trap's placement (F4, `TrapPlace::bits`): moving the trap re-iterates, while the trap
     /// is accumulated (zeros otherwise).
-    trap_place: [u32; 6],
+    trap_place: [u32; 7],
     /// The inside's own trap, while the trap is accumulated.
-    trap_in: Option<(u32, [u32; 6])>,
+    trap_in: Option<(u32, [u32; 7])>,
     sa_skip: u32,
     bla_on: u32,
     /// Sub-pixel jitter (progressive SSAA): a changed jitter is a new sample and must re-iterate,
@@ -2747,20 +2750,22 @@ pub(crate) fn iter_constants(rn_bla: bool, tier: TrapTier) -> &'static std::coll
 }
 
 /// Which trap shapes a frame needs compiled in: the highest tier among its trap and the inside's own
-/// ([`fractadyne_core::coloring::TrapSpec::tier`]) while it accumulates the trap, else the base.
-/// ⛔A pipeline built without a shape's tier measures it as the point: every pipeline that iterates
-/// such a frame must ask this.
+/// as each is placed ([`fractadyne_core::coloring::TrapType::tier_for`]: a sine wave with harmonics
+/// overlaid is the waves') while it accumulates the trap, else the base.
+/// ⛔A pipeline built without a shape's tier measures it as the point (an overlaid sine wave as the
+/// wave alone): every pipeline that iterates such a frame must ask this.
 pub(crate) fn trap_tier(
     stats: fractadyne_core::coloring::StatSet,
     trap_type: u32,
+    trap_place: fractadyne_core::coloring::TrapPlace,
     trap_in: Option<(fractadyne_core::coloring::TrapType, fractadyne_core::coloring::TrapPlace)>,
 ) -> TrapTier {
     use fractadyne_core::coloring::{Stat, TrapType};
     if !stats.has(Stat::Trap) {
         return TrapTier::Base;
     }
-    let tier = TrapType::from_gpu_id(trap_type).map_or(TrapTier::Base, |t| t.spec().tier);
-    tier.max(trap_in.map_or(TrapTier::Base, |(t, _)| t.spec().tier))
+    let tier = TrapType::from_gpu_id(trap_type).map_or(TrapTier::Base, |t| t.tier_for(trap_place));
+    tier.max(trap_in.map_or(TrapTier::Base, |(t, p)| t.tier_for(p)))
 }
 
 /// [`fullscreen_pipeline`] with its own vertex stage (`vs_split_tiles`: a split refresh's tiles).
@@ -4200,7 +4205,7 @@ impl MandelbrotParams {
             stripe_tail: stripe && self.stripe_tail,
             stripe_tail_len: if stripe { self.stripe_tail_len } else { 0 },
             trap_type: if orbit_stats.has(Stat::Trap) { self.trap_type } else { 0 },
-            trap_place: if orbit_stats.has(Stat::Trap) { self.trap_place.bits() } else { [0; 6] },
+            trap_place: if orbit_stats.has(Stat::Trap) { self.trap_place.bits() } else { [0; 7] },
             trap_in: self.trap_in.filter(|_| orbit_stats.has(Stat::Trap)).map(|(s, p)| (s.gpu_id(), p.bits())),
             sa_skip: self.sa_skip,
             bla_on: self.bla_on,
@@ -4414,7 +4419,7 @@ impl MandelbrotParams {
     }
     /// Which trap shapes this frame's iterate pipeline needs compiled in ([`trap_tier`]).
     pub fn trap_tier(&self) -> TrapTier {
-        trap_tier(self.iter_stats(), self.trap_type, self.trap_in)
+        trap_tier(self.iter_stats(), self.trap_type, self.trap_place, self.trap_in)
     }
 }
 
@@ -5010,8 +5015,8 @@ impl CallbackTrait for MandelbrotParams {
                 map: StripMap::default(),
                 fold,
                 trap: trap_uniform(self.trap_place),
-                trap_in: trap_in_uniform(self.trap_place, self.trap_in, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
-                trap_in_row: trap_in_uniform(self.trap_place, self.trap_in, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
+                trap_in: trap_in_uniform(self.trap_type, self.trap_place, self.trap_in, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
+                trap_in_row: trap_in_uniform(self.trap_type, self.trap_place, self.trap_in, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
             };
             // A split pass is a single full-frame pass by definition (`MandelbrotParams::split`).
             let split_on = self.split[0] > 1 && self.chunk_range.is_none() && self.tile.is_none();

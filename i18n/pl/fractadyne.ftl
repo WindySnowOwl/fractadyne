@@ -2961,6 +2961,8 @@ panel-trap-phase-animate-hover = Przesuwa fazę w czasie, w tempie suwaka Szybko
 # The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
 panel-trap-harmonics = Harmoniczne
 panel-trap-harmonics-hover = Ile nieparzystych harmonicznych fali prostokątnej jest sumowanych: 1 to fala sinusoidalna, więcej daje ostrzejsze narożniki i bardziej strome zbocza. Każda to trochę więcej obliczeń w każdym kroku każdej orbity. Także --trap-harmonics dla --render.
+# The sine wave trap's overlaid harmonics (user 2026-11-25): the Harmonics row under the sine wave.
+panel-trap-sine-harmonics-hover = Ile harmonicznych fali sinusoidalnej rysuje się na niej, każdą na jej wysokości: 1 to sama fala, 2 dodaje falę o podwójnej częstotliwości, 3 o potrójnej i tak dalej. Każda to trochę więcej obliczeń w każdym kroku każdej orbity. Także --trap-sine-harmonics dla --render.
 panel-inside = Wnętrze
 panel-inside-hover = Czym kolorowane jest wnętrze zbioru.
 panel-inside-color-hover = Kolor wnętrza zbioru.

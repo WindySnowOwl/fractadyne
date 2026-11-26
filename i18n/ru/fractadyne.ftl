@@ -2927,6 +2927,8 @@ panel-trap-phase-animate-hover = Меняет фазу со временем, с
 # The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
 panel-trap-harmonics = Гармоники
 panel-trap-harmonics-hover = Сколько нечётных гармоник прямоугольной волны складывается: 1 даёт синусоиду, а чем их больше, тем острее углы и круче склоны. Каждая добавляет немного вычислений на каждом шаге каждой орбиты. Также --trap-harmonics для --render.
+# The sine wave trap's overlaid harmonics (user 2026-11-25): the Harmonics row under the sine wave.
+panel-trap-sine-harmonics-hover = Сколько гармоник синусоиды рисуется поверх неё, каждая на её высоте: 1 даёт одну волну, 2 добавляет волну удвоенной частоты, 3 утроенной и так далее. Каждая добавляет немного вычислений на каждом шаге каждой орбиты. Также --trap-sine-harmonics для --render.
 panel-inside = Внутри
 panel-inside-hover = Чем окрашена внутренность множества.
 panel-inside-color-hover = Цвет внутренности множества.

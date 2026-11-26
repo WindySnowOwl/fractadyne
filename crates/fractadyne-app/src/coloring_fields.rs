@@ -113,7 +113,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 60] = [
+pub(crate) const FIELDS: [Field; 62] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -270,6 +270,19 @@ pub(crate) const FIELDS: [Field; 60] = [
         shows: |s| trap_drawn(s) && TrapType::from_key(&s.trap_type).spec().harmonic,
     },
     Field {
+        key: "trap_sine_harmonics",
+        name: "trap sine harmonics",
+        doc: "How many of the sine wave trap's harmonics are drawn over it at its height, 1 (the wave alone) to 32: the waves of two, three, ... times its frequency (the shapes with overlaid harmonics: the sine wave).",
+        access: Access::Count(
+            |s| s.trap_sine_harmonics,
+            |s, v| s.trap_sine_harmonics = v,
+            *slider_range::TRAP_HARMONICS.start(),
+            *slider_range::TRAP_HARMONICS.end(),
+        ),
+        parents: &["method", "interior", "trap"],
+        shows: |s| trap_drawn(s) && TrapType::from_key(&s.trap_type).spec().overlaid,
+    },
+    Field {
         key: "interior_trap",
         name: "inside trap",
         doc: "The inside's own trap shape, point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc or square-wave, when the trap method colors the inside by a trap (the inside's own placement in the keys after). Left out: the method's trap.",
@@ -331,6 +344,19 @@ pub(crate) const FIELDS: [Field; 60] = [
         ),
         parents: &["method", "interior", "interior_trap"],
         shows: |s| inside_own_trap(s) && TrapType::from_key(&s.interior_trap).spec().harmonic,
+    },
+    Field {
+        key: "interior_trap_sine_harmonics",
+        name: "inside trap sine harmonics",
+        doc: "The inside's own sine wave's overlaid harmonics, as `trap_sine_harmonics`.",
+        access: Access::Count(
+            |s| s.interior_trap_sine_harmonics,
+            |s, v| s.interior_trap_sine_harmonics = v,
+            *slider_range::TRAP_HARMONICS.start(),
+            *slider_range::TRAP_HARMONICS.end(),
+        ),
+        parents: &["method", "interior", "interior_trap"],
+        shows: |s| inside_own_trap(s) && TrapType::from_key(&s.interior_trap).spec().overlaid,
     },
     Field {
         key: "light",

@@ -351,6 +351,8 @@ fn every_session_field_survives_save_and_reload() {
         interior_trap_phase: -30.0,
         trap_harmonics: 11,
         interior_trap_harmonics: 3,
+        trap_sine_harmonics: 4,
+        interior_trap_sine_harmonics: 6,
         custom_palette: vec![[0.0, 0.1, 0.2, 0.3], [1.0, 0.4, 0.5, 0.6]],
         custom_palette_flat: true,
         custom_segments: vec![PaletteSegment {
@@ -860,6 +862,8 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
         "trap_phase", "interior_trap_phase",
         // The square wave trap's harmonics (user 2026-11-25).
         "trap_harmonics", "interior_trap_harmonics",
+        // The sine wave trap's overlaid harmonics (user 2026-11-25).
+        "trap_sine_harmonics", "interior_trap_sine_harmonics",
     ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {

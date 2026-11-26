@@ -2790,6 +2790,8 @@ panel-trap-phase-animate-hover = 速度スライダーの速さで位相を時�
 # The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
 panel-trap-harmonics = 高調波
 panel-trap-harmonics-hover = 矩形波の奇数次高調波をいくつ足し合わせるかです。1は正弦波で、増やすほど角が鋭く、辺が急になります。1つ増えるごとに、すべての軌道のすべてのステップで計算が少し増えます。--renderでは--trap-harmonicsも使えます。
+# The sine wave trap's overlaid harmonics (user 2026-11-25): the Harmonics row under the sine wave.
+panel-trap-sine-harmonics-hover = 正弦波の高調波をいくつ同じ高さで重ねて描くかです。1は波だけ、2は2倍の周波数の波を加え、3は3倍の波を加え、以下同様です。1つ増えるごとに、すべての軌道のすべてのステップで計算が少し増えます。--renderでは--trap-sine-harmonicsも使えます。
 panel-inside = 内部
 panel-inside-hover = 集合の内部を何で着色するか。
 panel-inside-color-hover = 集合の内部の色。

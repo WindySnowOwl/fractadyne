@@ -304,14 +304,24 @@ fn a_frame_needs_the_gated_shapes_exactly_when_it_draws_one() {
     use fractadyne_core::coloring::{Stat, StatSet, TrapPlace, TrapType};
     let trap = StatSet::of(Stat::Trap);
     for t in TrapType::ALL {
-        assert_eq!(super::trap_tier(trap, t.gpu_id(), None), t.spec().tier, "{t:?}");
-        assert_eq!(super::trap_tier(StatSet::of(Stat::Stripe), t.gpu_id(), None), Base, "{t:?}: the trap is not accumulated");
-        assert_eq!(super::trap_tier(trap, TrapType::Point.gpu_id(), Some((t, TrapPlace::DEFAULT))), t.spec().tier, "the inside's {t:?}");
+        let d = TrapPlace::DEFAULT;
+        assert_eq!(super::trap_tier(trap, t.gpu_id(), d, None), t.spec().tier, "{t:?}");
+        assert_eq!(super::trap_tier(StatSet::of(Stat::Stripe), t.gpu_id(), d, None), Base, "{t:?}: the trap is not accumulated");
+        assert_eq!(super::trap_tier(trap, TrapType::Point.gpu_id(), d, Some((t, d))), t.spec().tier, "the inside's {t:?}");
         // The higher of the two: a wave inside lifts a star's frame, and the other way round.
-        let wave = Some((TrapType::Sinc, TrapPlace::DEFAULT));
-        assert_eq!(super::trap_tier(trap, t.gpu_id(), wave), Waves, "{t:?} with a sinc inside");
-        assert_eq!(super::trap_tier(trap, TrapType::SquareWave.gpu_id(), Some((t, TrapPlace::DEFAULT))), Waves, "a square wave with {t:?} inside");
+        let wave = Some((TrapType::Sinc, d));
+        assert_eq!(super::trap_tier(trap, t.gpu_id(), d, wave), Waves, "{t:?} with a sinc inside");
+        assert_eq!(super::trap_tier(trap, TrapType::SquareWave.gpu_id(), d, Some((t, d))), Waves, "a square wave with {t:?} inside");
     }
+    // The sine wave with harmonics overlaid is the waves' (its loop is kept out of the Extra
+    // pipelines), the trap's or the inside's; alone it stays Extra's.
+    let overlaid = TrapPlace { sine_harmonics: 4, ..TrapPlace::DEFAULT }.for_shape(TrapType::Sine);
+    assert_eq!(super::trap_tier(trap, TrapType::Sine.gpu_id(), TrapPlace::DEFAULT, None), Extra);
+    assert_eq!(super::trap_tier(trap, TrapType::Sine.gpu_id(), overlaid, None), Waves);
+    assert_eq!(super::trap_tier(trap, TrapType::Point.gpu_id(), TrapPlace::DEFAULT, Some((TrapType::Sine, overlaid))), Waves);
+    // A count the shape does not use changes nothing.
+    let stray = TrapPlace { sine_harmonics: 4, ..TrapPlace::DEFAULT };
+    assert_eq!(super::trap_tier(trap, TrapType::Star.gpu_id(), stray.for_shape(TrapType::Star), None), Extra);
     let of = |tier| TrapType::ALL.iter().filter(|t| t.spec().tier == tier).map(|t| t.key()).collect::<Vec<_>>();
     assert_eq!(of(Extra), ["line", "square", "hexagon", "star", "sine", "s-curve"]);
     assert_eq!(of(Waves), ["sinc", "square-wave"]);
@@ -332,15 +342,20 @@ fn the_inside_trap_uniform_is_off_unless_accumulated() {
     use fractadyne_core::coloring::{TrapPlace, TrapType, HARMONICS_DEFAULT};
     let inside = Some((TrapType::Circle, TrapPlace { center: [0.1, 0.4], rotation: 0.0, size: 0.3, phase: 0.0, ..TrapPlace::DEFAULT }));
     let plain = TrapPlace::DEFAULT;
-    assert_eq!(super::trap_in_uniform(plain, None, true), (super::TrapU::default(), [0, 0, HARMONICS_DEFAULT, 0]));
-    assert_eq!(super::trap_in_uniform(plain, inside, false), (super::TrapU::default(), [0; 4]));
-    let (u, row) = super::trap_in_uniform(plain, inside, true);
+    let point = TrapType::Point.gpu_id();
+    assert_eq!(super::trap_in_uniform(point, plain, None, true), (super::TrapU::default(), [0, 0, HARMONICS_DEFAULT, 0]));
+    assert_eq!(super::trap_in_uniform(point, plain, inside, false), (super::TrapU::default(), [0; 4]));
+    let (u, row) = super::trap_in_uniform(point, plain, inside, true);
     assert_eq!(row, [1, TrapType::Circle.gpu_id(), HARMONICS_DEFAULT, HARMONICS_DEFAULT]);
     assert_eq!((u.on, u.center, u.size), (1, [0.1, 0.4], 0.3));
     // A square wave's own count, the trap's and the inside's.
     let wave = |n: u32| TrapPlace { harmonics: n, ..TrapPlace::DEFAULT }.for_shape(TrapType::SquareWave);
-    let (_, row) = super::trap_in_uniform(wave(12), Some((TrapType::SquareWave, wave(3))), true);
+    let (_, row) = super::trap_in_uniform(TrapType::SquareWave.gpu_id(), wave(12), Some((TrapType::SquareWave, wave(3))), true);
     assert_eq!(row, [1, TrapType::SquareWave.gpu_id(), 12, 3]);
+    // A sine wave's word is its overlaid count, the trap's and the inside's.
+    let sine = |n: u32| TrapPlace { sine_harmonics: n, ..TrapPlace::DEFAULT }.for_shape(TrapType::Sine);
+    let (_, row) = super::trap_in_uniform(TrapType::Sine.gpu_id(), sine(4), Some((TrapType::Sine, sine(7))), true);
+    assert_eq!(row, [1, TrapType::Sine.gpu_id(), 4, 7]);
 }
 
 /// The trap uniform at the default placement is all zeros (`trap_on` 0: no transform in the

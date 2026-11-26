@@ -519,6 +519,8 @@ pub struct TrapSpec {
     pub phased: bool,
     /// It is summed from a number of harmonics ([`TrapPlace::harmonics`]): the square wave.
     pub harmonic: bool,
+    /// Its first harmonics can be drawn over it ([`TrapPlace::sine_harmonics`]): the sine wave.
+    pub overlaid: bool,
 }
 
 /// Which of the shader's trap-shape switches compiles a shape's code in (`TRAP_EXTRA`, `TRAP_WAVES` in
@@ -556,7 +558,9 @@ pub const S_RADIUS: f64 = 0.5;
 /// whole x.
 pub const SINC_FREQ: f64 = std::f64::consts::PI;
 /// How many odd harmonics the square wave sums ([`TrapPlace::harmonics`]): 1 is a sine wave, more make
-/// its corners sharper and its sides steeper, each one more work in every step of every orbit.
+/// its corners sharper and its sides steeper, each one more work in every step of every orbit. The
+/// same range holds the sine wave's overlaid harmonics ([`TrapPlace::sine_harmonics`]), 1 the wave
+/// alone.
 pub const HARMONICS_MIN: u32 = 1;
 pub const HARMONICS_MAX: u32 = 32;
 pub const HARMONICS_DEFAULT: u32 = 5;
@@ -587,7 +591,8 @@ pub enum TrapType {
     Hexagon,
     /// A 5-point star, outer corners on the unit circle ([`STAR_INNER`] inside), a point up.
     Star,
-    /// The sine wave y = [`SINE_AMP`]·sin([`SINE_FREQ`]·x) (its first-order distance).
+    /// The sine wave y = [`SINE_AMP`]·sin([`SINE_FREQ`]·x) (its first-order distance), and over it,
+    /// when [`TrapPlace::sine_harmonics`] asks, its next harmonics at the same height (the nearest).
     Sine,
     /// An S of two half-open bowls of radius [`S_RADIUS`], from y = −1 to 1 through the origin.
     SCurve,
@@ -601,17 +606,17 @@ pub enum TrapType {
 }
 
 const TRAPS: [TrapSpec; 11] = [
-    TrapSpec { key: "point", wgsl: "TRAP_POINT", turns: false, sized: false, closed: false, tier: TrapTier::Base, phased: false, harmonic: false },
-    TrapSpec { key: "cross", wgsl: "TRAP_CROSS", turns: true, sized: false, closed: false, tier: TrapTier::Base, phased: false, harmonic: false },
-    TrapSpec { key: "circle", wgsl: "TRAP_CIRCLE", turns: false, sized: true, closed: true, tier: TrapTier::Base, phased: false, harmonic: false },
-    TrapSpec { key: "line", wgsl: "TRAP_LINE", turns: true, sized: false, closed: false, tier: TrapTier::Extra, phased: false, harmonic: false },
-    TrapSpec { key: "square", wgsl: "TRAP_SQUARE", turns: true, sized: true, closed: true, tier: TrapTier::Extra, phased: false, harmonic: false },
-    TrapSpec { key: "hexagon", wgsl: "TRAP_HEXAGON", turns: true, sized: true, closed: true, tier: TrapTier::Extra, phased: false, harmonic: false },
-    TrapSpec { key: "star", wgsl: "TRAP_STAR", turns: true, sized: true, closed: true, tier: TrapTier::Extra, phased: false, harmonic: false },
-    TrapSpec { key: "sine", wgsl: "TRAP_SINE", turns: true, sized: true, closed: false, tier: TrapTier::Extra, phased: true, harmonic: false },
-    TrapSpec { key: "s-curve", wgsl: "TRAP_S_CURVE", turns: true, sized: true, closed: false, tier: TrapTier::Extra, phased: false, harmonic: false },
-    TrapSpec { key: "sinc", wgsl: "TRAP_SINC", turns: true, sized: true, closed: false, tier: TrapTier::Waves, phased: false, harmonic: false },
-    TrapSpec { key: "square-wave", wgsl: "TRAP_SQUARE_WAVE", turns: true, sized: true, closed: false, tier: TrapTier::Waves, phased: true, harmonic: true },
+    TrapSpec { key: "point", wgsl: "TRAP_POINT", turns: false, sized: false, closed: false, tier: TrapTier::Base, phased: false, harmonic: false, overlaid: false },
+    TrapSpec { key: "cross", wgsl: "TRAP_CROSS", turns: true, sized: false, closed: false, tier: TrapTier::Base, phased: false, harmonic: false, overlaid: false },
+    TrapSpec { key: "circle", wgsl: "TRAP_CIRCLE", turns: false, sized: true, closed: true, tier: TrapTier::Base, phased: false, harmonic: false, overlaid: false },
+    TrapSpec { key: "line", wgsl: "TRAP_LINE", turns: true, sized: false, closed: false, tier: TrapTier::Extra, phased: false, harmonic: false, overlaid: false },
+    TrapSpec { key: "square", wgsl: "TRAP_SQUARE", turns: true, sized: true, closed: true, tier: TrapTier::Extra, phased: false, harmonic: false, overlaid: false },
+    TrapSpec { key: "hexagon", wgsl: "TRAP_HEXAGON", turns: true, sized: true, closed: true, tier: TrapTier::Extra, phased: false, harmonic: false, overlaid: false },
+    TrapSpec { key: "star", wgsl: "TRAP_STAR", turns: true, sized: true, closed: true, tier: TrapTier::Extra, phased: false, harmonic: false, overlaid: false },
+    TrapSpec { key: "sine", wgsl: "TRAP_SINE", turns: true, sized: true, closed: false, tier: TrapTier::Extra, phased: true, harmonic: false, overlaid: true },
+    TrapSpec { key: "s-curve", wgsl: "TRAP_S_CURVE", turns: true, sized: true, closed: false, tier: TrapTier::Extra, phased: false, harmonic: false, overlaid: false },
+    TrapSpec { key: "sinc", wgsl: "TRAP_SINC", turns: true, sized: true, closed: false, tier: TrapTier::Waves, phased: false, harmonic: false, overlaid: false },
+    TrapSpec { key: "square-wave", wgsl: "TRAP_SQUARE_WAVE", turns: true, sized: true, closed: false, tier: TrapTier::Waves, phased: true, harmonic: true, overlaid: false },
 ];
 
 /// The polygon and star shapes in their own frame: `(n, outer radius, inner radius, the first outer
@@ -673,6 +678,22 @@ fn square_wave(x: f64, phase: f64, n: u32) -> (f64, f64) {
     (h * y, h * SINE_FREQ * dy)
 }
 
+/// The sine wave with its first `n` harmonics overlaid (user 2026-11-25): how far `(x, y)` is from
+/// the nearest of the curves y = [`SINE_AMP`]·sin(k·u), k = 1 to `n`, u = [`SINE_FREQ`]·x + `phase`,
+/// each to first order (the shader's `trap_sine_overlaid`). Each harmonic's angle is the last one's
+/// turned by u, so one sine and cosine serve them all; the first curve is the sine wave itself.
+fn sine_overlaid(x: f64, y: f64, phase: f64, n: u32) -> f64 {
+    let u = SINE_FREQ * x + phase;
+    let (s1, c1) = u.sin_cos();
+    let (mut s, mut c) = (s1, c1);
+    let mut best = f64::INFINITY;
+    for k in 1..=n {
+        best = best.min(curve_dist(y, (SINE_AMP * s, SINE_AMP * SINE_FREQ * f64::from(k) * c)));
+        (s, c) = (s * c1 + c * s1, c * c1 - s * s1);
+    }
+    best
+}
+
 /// How far `(x, y)` is from the curve whose height and slope at `x` are `(f, df)`, to first order.
 fn curve_dist(y: f64, (f, df): (f64, f64)) -> f64 {
     (y - f).abs() / (1.0 + df * df).sqrt()
@@ -718,10 +739,13 @@ impl TrapType {
         TrapType::parse_key(s).unwrap_or_default()
     }
     /// [`unit_dist`](Self::unit_dist) with a wave shifted by `phase` radians along itself (the sine,
-    /// `y = A·sin(F·x + phase)`, and the square wave) and the square wave summed from `harmonics` odd
-    /// harmonics; every other shape has neither.
-    pub fn unit_dist_at(self, zx: f64, zy: f64, phase: f64, harmonics: u32) -> f64 {
+    /// `y = A·sin(F·x + phase)`, and the square wave), and `count` its count ([`TrapPlace::count`]):
+    /// the square wave summed from that many odd harmonics, the sine wave with that many of its own
+    /// overlaid (1, the wave alone, exactly as before); every other shape has neither.
+    pub fn unit_dist_at(self, zx: f64, zy: f64, phase: f64, count: u32) -> f64 {
+        let harmonics = count;
         match self {
+            TrapType::Sine if count > 1 => sine_overlaid(zx, zy, phase, count),
             TrapType::Sine if phase != 0.0 => {
                 let (s, c) = (SINE_FREQ * zx + phase).sin_cos();
                 (zy - SINE_AMP * s).abs() / (1.0 + (SINE_AMP * SINE_FREQ * c).powi(2)).sqrt()
@@ -770,6 +794,17 @@ impl TrapType {
             TrapType::SCurve => s_bowl(zx, zy).min(s_bowl(-zx, -zy)),
             TrapType::Sinc => curve_dist(zy, sinc(zx)),
             TrapType::SquareWave => curve_dist(zy, square_wave(zx, 0.0, HARMONICS_DEFAULT)),
+        }
+    }
+
+    /// Which pipelines must carry this shape placed at `place` ([`TrapTier`]): its row's tier, but the
+    /// sine wave with harmonics overlaid is the waves' (its loop kept out of the Extra pipelines, as
+    /// the square wave's is).
+    pub fn tier_for(self, place: TrapPlace) -> TrapTier {
+        if self == TrapType::Sine && place.sine_harmonics > 1 {
+            TrapTier::Waves
+        } else {
+            self.spec().tier
         }
     }
 
@@ -830,6 +865,10 @@ pub struct TrapPlace {
     /// How many odd harmonics the square wave sums ([`TrapSpec::harmonic`]; user 2026-11-25),
     /// [`HARMONICS_MIN`] to [`HARMONICS_MAX`].
     pub harmonics: u32,
+    /// How many of the sine wave's harmonics are drawn, overlaid, at its height ([`TrapSpec::overlaid`];
+    /// user 2026-11-25): 1, the wave alone, to [`HARMONICS_MAX`]. Its own count, not the square
+    /// wave's, whose default of 5 would otherwise draw a sine wave picked after it five times over.
+    pub sine_harmonics: u32,
 }
 
 impl Default for TrapPlace {
@@ -840,7 +879,8 @@ impl Default for TrapPlace {
 
 impl TrapPlace {
     /// Each shape as it always was: at the origin, unturned, of size 1.
-    pub const DEFAULT: TrapPlace = TrapPlace { center: [0.0, 0.0], rotation: 0.0, size: 1.0, phase: 0.0, harmonics: HARMONICS_DEFAULT };
+    pub const DEFAULT: TrapPlace =
+        TrapPlace { center: [0.0, 0.0], rotation: 0.0, size: 1.0, phase: 0.0, harmonics: HARMONICS_DEFAULT, sine_harmonics: 1 };
     /// The sizes a placement computes with; [`for_shape`](Self::for_shape) clamps into them.
     pub const SIZE_MIN: f32 = 1.0e-4;
     pub const SIZE_MAX: f32 = 1.0e4;
@@ -859,15 +899,34 @@ impl TrapPlace {
             size: if spec.sized { fin(self.size, 1.0).clamp(Self::SIZE_MIN, Self::SIZE_MAX) } else { 1.0 },
             phase: if spec.phased { wrap_degrees(fin(self.phase, 0.0)) + 0.0 } else { 0.0 },
             harmonics: if spec.harmonic { self.harmonics.clamp(HARMONICS_MIN, HARMONICS_MAX) } else { HARMONICS_DEFAULT },
+            sine_harmonics: if spec.overlaid { self.sine_harmonics.clamp(HARMONICS_MIN, HARMONICS_MAX) } else { 1 },
+        }
+    }
+    /// The count `shape` draws with: the sine wave's overlaid harmonics, else the square wave's
+    /// (what the shader's `trap_harm` words carry).
+    pub fn count(self, shape: TrapType) -> u32 {
+        if shape.spec().overlaid {
+            self.sine_harmonics
+        } else {
+            self.harmonics
         }
     }
     /// Each shape as it always was.
     pub fn is_default(self) -> bool {
         self == Self::DEFAULT
     }
-    /// The six numbers' bits, for keys: `[center re, center im, rotation, size, phase, harmonics]`.
-    pub fn bits(self) -> [u32; 6] {
-        [self.center[0].to_bits(), self.center[1].to_bits(), self.rotation.to_bits(), self.size.to_bits(), self.phase.to_bits(), self.harmonics]
+    /// The seven numbers' bits, for keys: `[center re, center im, rotation, size, phase, harmonics,
+    /// sine harmonics]`.
+    pub fn bits(self) -> [u32; 7] {
+        [
+            self.center[0].to_bits(),
+            self.center[1].to_bits(),
+            self.rotation.to_bits(),
+            self.size.to_bits(),
+            self.phase.to_bits(),
+            self.harmonics,
+            self.sine_harmonics,
+        ]
     }
     /// The phase in radians.
     pub fn phase_radians(self) -> f64 {
@@ -887,7 +946,7 @@ impl TrapPlace {
         let (c, s) = self.turn();
         let (dx, dy) = (zx - f64::from(self.center[0]), zy - f64::from(self.center[1]));
         let k = f64::from(self.size);
-        k * shape.unit_dist_at((c * dx + s * dy) / k, (c * dy - s * dx) / k, self.phase_radians(), self.harmonics)
+        k * shape.unit_dist_at((c * dx + s * dy) / k, (c * dy - s * dx) / k, self.phase_radians(), self.count(shape))
     }
 
     /// This trap moved onto a point of `cycle` (coloring plan F4, part 2; `crate::cycle`), its
@@ -965,7 +1024,7 @@ impl Trap {
     }
     /// What keys hash: the shape's GPU number for this build and the placement's bits, and the
     /// inside's own the same way.
-    pub fn key_bits(self) -> (u32, [u32; 6], Option<(u32, [u32; 6])>) {
+    pub fn key_bits(self) -> (u32, [u32; 7], Option<(u32, [u32; 7])>) {
         (self.shape.gpu_id(), self.place.bits(), self.inside.map(|(s, p)| (s.gpu_id(), p.bits())))
     }
 }

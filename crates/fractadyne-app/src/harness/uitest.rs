@@ -456,6 +456,9 @@ enum Screen {
     /// iteration through the waves' own pipelines (`TRAP_WAVES`; without them the square wave would
     /// measure as the point); the panel's Harmonics row.
     TrapSquareWave,
+    /// The sine wave with four of its harmonics overlaid (user 2026-11-25): another picture than the
+    /// wave alone (`trap-sine-phase-0`), drawn live through the waves' pipelines.
+    TrapSineHarmonics,
     /// The sine wave with Animate the phase on (user 2026-11-25, "it seems to be blocky"): the phase
     /// turns, and every frame of it is drawn at the panel's resolution, none shrunk.
     TrapPhaseAnimating,
@@ -1474,6 +1477,7 @@ fn build_steps() -> Vec<Step> {
         screen("trap-sine-phase", Screen::TrapSinePhase),
         screen("trap-square-wave-1", Screen::TrapSquareWave1),
         screen("trap-square-wave", Screen::TrapSquareWave),
+        screen("trap-sine-harmonics", Screen::TrapSineHarmonics),
         screen("trap-phase-animating", Screen::TrapPhaseAnimating),
         screen("edge-shade-off", Screen::EdgeShadeOff),
         screen("edge-shade", Screen::EdgeShade),
@@ -2020,6 +2024,25 @@ impl FractadyneApp {
             name: "trap-phase-animating-full-resolution".into(),
             verdict: if ok { Verdict::Pass } else { Verdict::Fail },
             detail: format!("the phase now {phase:.1} (from 0); {shrunk} of {frames} frames shown smaller than the panel"),
+        });
+    }
+
+    /// The sine wave with four harmonics overlaid draws another picture live than the wave alone at the
+    /// same view and phase (`trap-sine-phase-0`; a mean difference of 3 levels or more), and the trap
+    /// carries the count.
+    fn uitest_trap_sine_harmonics_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, checks: &mut Vec<Check>) {
+        let before = "trap-sine-phase-0";
+        let b = ut.results.iter().rev().find(|r| r.name == before);
+        let d = view.zip(b).and_then(|((px, _), b)| {
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            let s: f64 = px.chunks_exact(4).zip(prev.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            Some(s / (3 * (px.len() / 4)).max(1) as f64)
+        });
+        let n = self.coloring.trap().place.sine_harmonics;
+        checks.push(Check {
+            name: "trap-sine-harmonics-drawn-live".into(),
+            verdict: if d.is_some_and(|d| d >= 3.0) && n == 4 { Verdict::Pass } else { Verdict::Fail },
+            detail: format!("against {before}, the mean difference in levels: {d:?}; the sine wave's harmonics {n}"),
         });
     }
 
@@ -3568,6 +3591,16 @@ impl FractadyneApp {
                 self.anim.palette_anim_speed = 0.15;
                 self.dialogs.right_panel_open = true;
             }
+            // The sine wave's view with four harmonics overlaid; the phase at 0, its animation off.
+            Screen::TrapSineHarmonics => {
+                self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+                self.coloring.interior = None;
+                self.coloring.interior_trap = None;
+                self.coloring.trap_type = crate::TrapType::Sine;
+                self.coloring.trap_place = crate::TrapPlace { sine_harmonics: 4, ..crate::TrapPlace::DEFAULT };
+                self.coloring.trap_phase_anim = false;
+                self.dialogs.right_panel_open = true;
+            }
             // The same view under the square wave, of one harmonic and then of twelve; the phase's
             // animation off (a clock).
             Screen::TrapSquareWave1 | Screen::TrapSquareWave => {
@@ -4345,6 +4378,7 @@ impl FractadyneApp {
                     | Screen::TrapSinePhase
                     | Screen::TrapSquareWave1
                     | Screen::TrapSquareWave
+                    | Screen::TrapSineHarmonics
                     | Screen::TrapPhaseAnimating
                     | Screen::EdgeShadeOff
                     | Screen::EdgeShade
@@ -5298,6 +5332,9 @@ impl FractadyneApp {
         }
         if let StepKind::Screen(Screen::TrapSquareWave) = step.kind {
             self.uitest_trap_harmonics_checks(ut, inside_view.as_ref(), &mut checks);
+        }
+        if let StepKind::Screen(Screen::TrapSineHarmonics) = step.kind {
+            self.uitest_trap_sine_harmonics_checks(ut, inside_view.as_ref(), &mut checks);
         }
         if let StepKind::Screen(Screen::TrapPhaseAnimating) = step.kind {
             self.uitest_trap_phase_animating_checks(ut, &mut checks);

@@ -3430,7 +3430,7 @@ pub(crate) fn equalize_of(v: f32) -> f32 {
 /// The trap's placement a spec carries (coloring plan F4), clamped into the panel's ranges; an
 /// unreadable number takes its default.
 pub(crate) fn trap_place_of(s: &fractadyne_state::ColoringSpec) -> TrapPlace {
-    trap_place_from(s.trap_x, s.trap_y, s.trap_rotation, s.trap_size, s.trap_phase, s.trap_harmonics)
+    trap_place_from(s.trap_x, s.trap_y, s.trap_rotation, s.trap_size, s.trap_phase, [s.trap_harmonics, s.trap_sine_harmonics])
 }
 
 /// The inside's own trap's placement a spec carries, as [`trap_place_of`].
@@ -3441,18 +3441,20 @@ pub(crate) fn interior_trap_place_of(s: &fractadyne_state::ColoringSpec) -> Trap
         s.interior_trap_rotation,
         s.interior_trap_size,
         s.interior_trap_phase,
-        s.interior_trap_harmonics,
+        [s.interior_trap_harmonics, s.interior_trap_sine_harmonics],
     )
 }
 
-fn trap_place_from(x: f32, y: f32, rotation: f32, size: f32, phase: f32, harmonics: u32) -> TrapPlace {
+/// `counts`: the square wave's harmonics and the sine wave's overlaid ones.
+fn trap_place_from(x: f32, y: f32, rotation: f32, size: f32, phase: f32, counts: [u32; 2]) -> TrapPlace {
     let clamp = |v: f32, r: std::ops::RangeInclusive<f32>, d: f32| if v.is_finite() { v.clamp(*r.start(), *r.end()) } else { d };
     TrapPlace {
         center: [clamp(x, slider_range::TRAP_CENTER, 0.0), clamp(y, slider_range::TRAP_CENTER, 0.0)],
         rotation: clamp(rotation, slider_range::TRAP_ROTATION, 0.0),
         size: clamp(size, slider_range::TRAP_SIZE, 1.0),
         phase: if phase.is_finite() { fractadyne_core::coloring::wrap_degrees(phase) } else { 0.0 },
-        harmonics: harmonics.clamp(*slider_range::TRAP_HARMONICS.start(), *slider_range::TRAP_HARMONICS.end()),
+        harmonics: counts[0].clamp(*slider_range::TRAP_HARMONICS.start(), *slider_range::TRAP_HARMONICS.end()),
+        sine_harmonics: counts[1].clamp(*slider_range::TRAP_HARMONICS.start(), *slider_range::TRAP_HARMONICS.end()),
     }
 }
 
@@ -9688,6 +9690,10 @@ impl FractadyneApp {
             let r = slider_range::TRAP_HARMONICS;
             self.coloring.trap_place.harmonics = n.clamp(*r.start(), *r.end());
         }
+        if let Some(n) = val("--trap-sine-harmonics").map(|s| arg_parse::<u32>("--trap-sine-harmonics", s, "a whole number, 1 to 32")) {
+            let r = slider_range::TRAP_HARMONICS;
+            self.coloring.trap_place.sine_harmonics = n.clamp(*r.start(), *r.end());
+        }
         // The inside's own trap (the trap method's inside colored by a trap of its own).
         if let Some(t) = val("--interior-trap") {
             match (t.as_str(), TrapType::parse_key(t)) {
@@ -9727,6 +9733,12 @@ impl FractadyneApp {
         if let Some(n) = val("--interior-trap-harmonics").map(|s| arg_parse::<u32>("--interior-trap-harmonics", s, "a whole number, 1 to 32")) {
             let r = slider_range::TRAP_HARMONICS;
             self.coloring.interior_trap_place.harmonics = n.clamp(*r.start(), *r.end());
+        }
+        if let Some(n) =
+            val("--interior-trap-sine-harmonics").map(|s| arg_parse::<u32>("--interior-trap-sine-harmonics", s, "a whole number, 1 to 32"))
+        {
+            let r = slider_range::TRAP_HARMONICS;
+            self.coloring.interior_trap_place.sine_harmonics = n.clamp(*r.start(), *r.end());
         }
         // The inside (coloring plan B5, C1): what colors it, the trap's palette, a solid color.
         if let Some(m) = val("--interior") {
@@ -10082,6 +10094,7 @@ impl FractadyneApp {
             trap_size: self.coloring.trap_place.size,
             trap_phase: self.coloring.trap_place.phase,
             trap_harmonics: self.coloring.trap_place.harmonics,
+            trap_sine_harmonics: self.coloring.trap_place.sine_harmonics,
             interior_trap: self.coloring.interior_trap.map_or(String::new(), |t| t.key().to_string()),
             interior_trap_x: self.coloring.interior_trap_place.center[0],
             interior_trap_y: self.coloring.interior_trap_place.center[1],
@@ -10089,6 +10102,7 @@ impl FractadyneApp {
             interior_trap_size: self.coloring.interior_trap_place.size,
             interior_trap_phase: self.coloring.interior_trap_place.phase,
             interior_trap_harmonics: self.coloring.interior_trap_place.harmonics,
+            interior_trap_sine_harmonics: self.coloring.interior_trap_place.sine_harmonics,
             custom_palette: self.coloring.custom_palette.clone(),
             custom_palette_flat: self.coloring.custom_palette_flat,
             custom_segments: self.coloring.custom_segments.clone(),

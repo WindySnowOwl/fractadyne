@@ -2789,6 +2789,8 @@ panel-trap-phase-animate-hover = 依速度滑桿的速率隨時間循環相位�
 # The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
 panel-trap-harmonics = 諧波
 panel-trap-harmonics-hover = 方波疊加多少個奇次諧波：1 為正弦波，越多則轉角越銳利、側邊越陡。每多一個，每條軌道的每一步都要多算一點。搭配 --render 時也可以使用 --trap-harmonics。
+# The sine wave trap's overlaid harmonics (user 2026-11-25): the Harmonics row under the sine wave.
+panel-trap-sine-harmonics-hover = 在正弦波上疊加繪製多少個諧波，每個都與它等高：1 為單獨的波，2 加上兩倍頻率的波，3 再加上三倍頻率的波，依此類推。每多一個，每條軌道的每一步都要多算一點。搭配 --render 時也可以使用 --trap-sine-harmonics。
 panel-inside = 內部
 panel-inside-hover = 集合內部的著色方式。
 panel-inside-color-hover = 集合內部的顏色。

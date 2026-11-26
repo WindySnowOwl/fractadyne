@@ -134,6 +134,16 @@ fn trap_place_rows(ui: &mut egui::Ui, shape: TrapType, place: &mut TrapPlace, ph
         }
         r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_harmonics_hover), tr!(panel_double_click_reset)));
     }
+    // The sine wave's overlaid harmonics (user 2026-11-25).
+    if spec.overlaid {
+        let r = labelled(ui, &tr!(panel_trap_harmonics), |ui| {
+            ui.add(egui::Slider::new(&mut place.sine_harmonics, crate::slider_range::TRAP_HARMONICS))
+        });
+        if slider_double_clicked(&r) {
+            place.sine_harmonics = reset.sine_harmonics;
+        }
+        r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_sine_harmonics_hover), tr!(panel_double_click_reset)));
+    }
     // A wave's phase, and its animation at the palette's Speed (user 2026-11-25).
     if spec.phased {
         let r = labelled(ui, &tr!(panel_trap_phase), |ui| {
