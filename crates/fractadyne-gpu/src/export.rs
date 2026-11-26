@@ -351,9 +351,9 @@ impl ExportRequest {
         crate::iter_stats(self.orbit_stats, self.color_method)
     }
 
-    /// Whether this request's iterate pipeline needs the trap shapes of F4 part 3 ([`crate::trap_extra`]).
-    pub fn trap_extra(&self) -> bool {
-        crate::trap_extra(self.iter_stats(), self.trap_type, self.trap_in)
+    /// Which trap shapes this request's iterate pipeline needs compiled in ([`crate::trap_tier`]).
+    pub fn trap_tier(&self) -> fractadyne_core::coloring::TrapTier {
+        crate::trap_tier(self.iter_stats(), self.trap_type, self.trap_in)
     }
 
     /// The reference storage buffer: the orbit, its BLA tree from index `orbit.len()`, then the
@@ -1089,7 +1089,7 @@ impl Packer {
         let formats = [ITER_FORMAT; 4];
         let pass_pipeline = crate::fullscreen_pipeline_c(
             device, shader, &layout, "fs_iterate_chunk_fe_packed", &formats, "export.pack_pass",
-            crate::iter_constants(rn_bla, false),
+            crate::iter_constants(rn_bla, fractadyne_core::coloring::TrapTier::Base),
         );
         let gather_pipeline =
             fullscreen_pipeline(device, shader, &layout, "fs_pack_gather", &formats, "export.pack_gather");
@@ -1333,7 +1333,7 @@ impl TileChunker {
             if fe { "fs_iterate_chunk_fe" } else { "fs_iterate_chunk" },
             &chunk_formats[..targets],
             "export.tilechunk_pipeline",
-            crate::iter_constants(rn_bla, false),
+            crate::iter_constants(rn_bla, fractadyne_core::coloring::TrapTier::Base),
         );
         let resolve_pipeline = fullscreen_pipeline(
             device, shader, &layout, "fs_resolve", &[ITER_FORMAT, ITER_FORMAT],
@@ -1843,7 +1843,7 @@ impl<'a> TileRenderer<'a> {
         let iter_pipeline = crate::iter_split::SplitModules::build(split.as_ref(), &shader, |m, half| {
             crate::fullscreen_pipeline_c(
                 device, m, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-                &format!("export.iter_pipeline{half}"), crate::iter_constants(plan.rn_bla, req.trap_extra()),
+                &format!("export.iter_pipeline{half}"), crate::iter_constants(plan.rn_bla, req.trap_tier()),
             )
         });
         let color_pipeline = crate::color_hook::color_pipeline(
@@ -2054,8 +2054,8 @@ impl<'a> TileRenderer<'a> {
             map: req.map,
             fold: self.fold,
             trap: crate::trap_uniform(req.trap_place),
-            trap_in: crate::trap_in_uniform(req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
-            trap_in_row: crate::trap_in_uniform(req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
+            trap_in: crate::trap_in_uniform(req.trap_place, req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
+            trap_in_row: crate::trap_in_uniform(req.trap_place, req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
         };
         queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -2828,26 +2828,26 @@ pub struct IterScaffold {
 
 impl IterScaffold {
     pub fn new(device: &wgpu::Device) -> Self {
-        Self::new_for(device, None, false)
+        Self::new_for(device, None, fractadyne_core::coloring::TrapTier::Base)
     }
 
     /// For a custom formula's module (`None` = the fixed one).
-    /// `trap_extra`: with the trap shapes of F4 part 3 compiled in ([`ExportRequest::trap_extra`]).
-    fn new_for(device: &wgpu::Device, custom: Option<&crate::custom::CustomShader>, trap_extra: bool) -> Self {
+    /// `tier`: with the trap shapes up to it compiled in ([`ExportRequest::trap_tier`]).
+    fn new_for(device: &wgpu::Device, custom: Option<&crate::custom::CustomShader>, tier: fractadyne_core::coloring::TrapTier) -> Self {
         // Split on OpenGL (`iter_split`); a custom formula's module keeps its own, leaner mode 2.
         let split = custom.is_none().then_some(crate::renderer_wgsl());
-        Self::from_shader(device, crate::shader_module_for(device, custom), split, trap_extra)
+        Self::from_shader(device, crate::shader_module_for(device, custom), split, tier)
     }
 
     /// For an exponential-map strip: the strip module ([`crate::strip`]), which every pipeline of a
     /// strip's render — its chunk passes, packed passes and resolve — is built from.
     fn new_strip(device: &wgpu::Device) -> Self {
         let src = crate::strip::source().expect("the strip module's slots");
-        Self::from_shader(device, crate::strip::module(device), Some(&src), false)
+        Self::from_shader(device, crate::strip::module(device), Some(&src), fractadyne_core::coloring::TrapTier::Base)
     }
 
     /// `split_src`: the source `shader` was made from, when its iterate pipeline may be split.
-    fn from_shader(device: &wgpu::Device, shader: wgpu::ShaderModule, split_src: Option<&str>, trap_extra: bool) -> Self {
+    fn from_shader(device: &wgpu::Device, shader: wgpu::ShaderModule, split_src: Option<&str>, tier: fractadyne_core::coloring::TrapTier) -> Self {
         let iter_bgl = iter_bind_group_layout(device);
         let iter_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("itertiled.layout"),
@@ -2858,7 +2858,7 @@ impl IterScaffold {
         let iter_pipeline = crate::iter_split::SplitModules::build(split.as_ref(), &shader, |m, half| {
             crate::fullscreen_pipeline_c(
                 device, m, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-                &format!("itertiled.pipeline{half}"), crate::iter_constants(false, trap_extra),
+                &format!("itertiled.pipeline{half}"), crate::iter_constants(false, tier),
             )
         });
         Self { shader, iter_bgl, iter_pipeline }
@@ -2984,13 +2984,13 @@ fn render_iter_tiled_impl(
     // private one — same shader/layout/pipeline either way, so output is byte-identical. A caller's
     // scaffold holds the FIXED module, so a custom formula always builds its own.
     let local_scaffold;
-    let sc = match scaffold.filter(|_| req.custom.is_none() && !strip && !req.trap_extra()) {
+    let sc = match scaffold.filter(|_| req.custom.is_none() && !strip && req.trap_tier() == fractadyne_core::coloring::TrapTier::Base) {
         Some(s) => s,
         None => {
             local_scaffold = if strip {
                 IterScaffold::new_strip(device)
             } else {
-                IterScaffold::new_for(device, req.custom.as_deref(), req.trap_extra())
+                IterScaffold::new_for(device, req.custom.as_deref(), req.trap_tier())
             };
             &local_scaffold
         }
@@ -3145,8 +3145,8 @@ fn render_iter_tiled_impl(
                 map: req.map,
                 fold,
                 trap: if accum { crate::trap_uniform(req.trap_place) } else { crate::TrapU::default() },
-                trap_in: crate::trap_in_uniform(req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
-                trap_in_row: crate::trap_in_uniform(req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
+                trap_in: crate::trap_in_uniform(req.trap_place, req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
+                trap_in_row: crate::trap_in_uniform(req.trap_place, req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3952,8 +3952,8 @@ fn render_iter_passes(
     // A lent live pipeline is the whole-frame one (`fs_iterate` from `vs_main`), never the split-set
     // geometry, and the built-in module's, never a custom formula's.
     debug_assert!(live.is_none() || (sets.is_none() && req.custom.is_none()));
-    // ...and without the trap shapes of F4 part 3: a request that draws one builds its own.
-    let live = live.filter(|_| !req.trap_extra());
+    // ...and without the trap shapes above the base: a request that draws one builds its own.
+    let live = live.filter(|_| req.trap_tier() == fractadyne_core::coloring::TrapTier::Base);
     let own;
     let (iter_pipeline, iter_bgl) = match live {
         Some(l) => (&l.pipeline, l.iter_bgl.clone()),
@@ -3975,12 +3975,12 @@ fn render_iter_passes(
                     crate::raster_pipeline_c(
                         device, m, &iter_layout, "vs_split_tiles", "fs_iterate",
                         &[ITER_FORMAT, ITER_FORMAT], &format!("selftest.iter_split_pipeline{half}"),
-                        crate::iter_constants(false, req.trap_extra()),
+                        crate::iter_constants(false, req.trap_tier()),
                     )
                 } else {
                     crate::fullscreen_pipeline_c(
                         device, m, &iter_layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-                        &format!("selftest.iter_pipeline{half}"), crate::iter_constants(false, req.trap_extra()),
+                        &format!("selftest.iter_pipeline{half}"), crate::iter_constants(false, req.trap_tier()),
                     )
                 }
             });

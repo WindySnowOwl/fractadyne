@@ -7466,6 +7466,12 @@ impl FractadyneApp {
                 (M::OrbitTrap, T::Sine, 1.0, at, "orbit-trap-sine"),
                 (M::OrbitTrap, T::Sine, 1.0, P { phase: 75.0, ..at }, "orbit-trap-sine-phased"),
                 (M::OrbitTrap, T::SCurve, 1.0, at, "orbit-trap-s-curve"),
+                // The waves (user 2026-11-25), in pipelines of their own (`TRAP_WAVES`): the shader's
+                // `trap_sinc` and `trap_square_wave` against core's, the square wave's count and phase
+                // through the uniform.
+                (M::OrbitTrap, T::Sinc, 1.0, at, "orbit-trap-sinc"),
+                (M::OrbitTrap, T::SquareWave, 1.0, at, "orbit-trap-square-wave"),
+                (M::OrbitTrap, T::SquareWave, 1.0, P { harmonics: 12, phase: 40.0, ..at }, "orbit-trap-square-wave-12-phased"),
                 (M::TriangleIneq, T::Point, 1.0, at, "triangle-ineq"),
                 (M::Stripe, T::Point, 5.0, at, "stripe"),
             ] {
@@ -7983,6 +7989,14 @@ impl FractadyneApp {
                 // Shifted along itself (user 2026-11-25): the phase must reach the GPU and the aggregates.
                 (T::Sine, P { phase: 75.0, ..d }, "sine wave at phase 75"),
                 (T::SCurve, d, "S curve"),
+                // The waves (user 2026-11-25): their own pipelines, and the square wave's count and
+                // phase through the uniform and the aggregates.
+                (T::Sinc, d, "sinc"),
+                // ⚠Not at phase 0: there the wave crosses the origin nearly upright (slope 7.6 at five
+                // harmonics), which the deep orbits here all come near, and the picture is too flat to
+                // judge (47 colors, the nudge 0.2%; 2026-11-25). The default count is the same here.
+                (T::SquareWave, P { phase: 90.0, ..d }, "square wave at phase 90"),
+                (T::SquareWave, P { harmonics: 12, phase: 40.0, ..d }, "square wave of 12 harmonics at phase 40"),
             ] {
                 self.coloring.trap_type = shape;
                 self.coloring.trap_place = place;
@@ -8189,7 +8203,7 @@ impl FractadyneApp {
                 self.render_cfg.auto_iter = false;
                 let cross = (T::Cross, P { center: [-0.2, 0.15], rotation: 35.0, ..P::DEFAULT });
                 // A shape of F4 part 3 for the inside, so the raw lanes' pipeline must carry it (`TRAP_EXTRA`).
-                let star = (T::Star, P { center: [0.1, 0.4], rotation: 15.0, size: 0.3, phase: 0.0 });
+                let star = (T::Star, P { center: [0.1, 0.4], rotation: 15.0, size: 0.3, ..P::DEFAULT });
                 const MRE: &str = "-9.5615882490732676063982994499490578147935343195074805633443741253353130261608583401177598055702619474609439701446982e-2";
                 const MIM: &str = "9.2407201125877521262558092669605306283394020346180079142271967031202190501107148187554958943606565429410592657638281e-1";
                 let at = |s: &str| fractadyne_core::parse_bf_prec(s, 512).expect("a coordinate");
@@ -8198,7 +8212,15 @@ impl FractadyneApp {
                 u.set_center_mag(at("-0.9173735445860097"), at("0.22966943698602013"), 3.0 / (0.105 * f64::from(h) / f64::from(w)));
                 let mut m = Viewport::new(f64::from(w), f64::from(h));
                 m.set_center_mag(at(MRE), at(MIM), 3.0e79);
-                for (label, vp, iters, deep) in [("view U, direct", u, 3000u32, false), ("the 9.3e78 minibrot at 3e79x, BLA", m, 200_000, true)] {
+                // And the waves' pipelines (user 2026-11-25): a square wave of 3 harmonics outside and
+                // one of 12, shifted, inside, so each trap's count reaches the shader by its own word.
+                let wave3 = (T::SquareWave, P { center: [-0.1, 0.05], harmonics: 3, ..P::DEFAULT });
+                let wave12 = (T::SquareWave, P { center: [0.1, 0.4], size: 0.5, phase: 40.0, harmonics: 12, ..P::DEFAULT });
+                let pairs = [(cross, star, "a turned cross, the inside's a star", ""), (wave3, wave12, "a square wave of 3 harmonics, the inside's one of 12 at phase 40", " (the square waves)")];
+                let views = [("view U, direct", u, 3000u32, false), ("the 9.3e78 minibrot at 3e79x, BLA", m, 200_000, true)];
+                for (v, pair) in views.iter().flat_map(|v| pairs.iter().map(move |p| (v, p))) {
+                    let (label, vp, iters, deep) = (v.0, &v.1, v.2, v.3);
+                    let (outer_trap, inner_trap, what, tag) = *pair;
                     self.render_cfg.max_iter = iters;
                     let lanes = |app: &mut Self, main: (T, P), inside: Option<(T, P)>| {
                         app.coloring.trap_type = main.0;
@@ -8213,13 +8235,13 @@ impl FractadyneApp {
                             .ok()
                             .map(|r| (r.pixels, r.aux, req.bla_on == 1 && req.mode == 2, on))
                     };
-                    let both = lanes(self, cross, Some(star));
-                    let outer = lanes(self, cross, None);
-                    let inner = lanes(self, star, None);
-                    // What a pipeline without the shapes would measure the placed star as: the point at
-                    // its center (the turn and size change only the rounding).
-                    let point = lanes(self, (T::Point, P { center: star.1.center, ..P::DEFAULT }), None);
-                    let name = format!("{label}: the inside's own trap colors the inside, the method's the outside");
+                    let both = lanes(self, outer_trap, Some(inner_trap));
+                    let outer = lanes(self, outer_trap, None);
+                    let inner = lanes(self, inner_trap, None);
+                    // What a pipeline without the shapes would measure the placed inside trap as: the
+                    // point at its center (the turn and size change only the rounding).
+                    let point = lanes(self, (T::Point, P { center: inner_trap.1.center, ..P::DEFAULT }), None);
+                    let name = format!("{label}: the inside's own trap colors the inside, the method's the outside{tag}");
                     match (both, outer, inner) {
                         (Some((tm, ta, bla, on)), Some((_, oa, ..)), Some((_, ia, ..)))
                             if !tm.is_empty()
@@ -8229,7 +8251,8 @@ impl FractadyneApp {
                                 && point.as_ref().is_some_and(|q| q.1.len() == ta.len()) =>
                         {
                             let pa = &point.as_ref().expect("the point's lanes").1;
-                            // The star is not that point: its lanes differ by more than 1e-3 on most pixels.
+                            // The inside trap is not that point: its lanes differ by more than 1e-3 on most
+                            // pixels.
                             let not_point = (0..tm.len() / 4)
                                 .filter(|&k| (ia[4 * k + 2] - pa[4 * k + 2]).abs() > 1.0e-3 * pa[4 * k + 2].abs().max(1.0e-30))
                                 .count();
@@ -8248,11 +8271,11 @@ impl FractadyneApp {
                             push_check(&mut checks, &mut last_check_t, SelfCheck {
                                 category: "Trap",
                                 name,
-                                params: format!("{w}x{h}, {iters} iter, method's trap a turned cross, the inside's a star; BLA {}", if bla { "engaged" } else { "off" }),
+                                params: format!("{w}x{h}, {iters} iter, method's trap {what}; BLA {}", if bla { "engaged" } else { "off" }),
                                 result: format!(
-                                    "{inside} of {n} pixels inside; {esc_bad} escaped and {in_bad} interior lanes off; the inside's own differs from the method trap's on {moved}; the star from the point at its center on {not_point}"
+                                    "{inside} of {n} pixels inside; {esc_bad} escaped and {in_bad} interior lanes off; the inside's own differs from the method trap's on {moved}; the inside trap from the point at its center on {not_point}"
                                 ),
-                                threshold: "the inside trap on; 0 lanes off; 500+ pixels inside and 500+ escaped; it differs on half the inside or more; the star is not the point on half the frame; BLA engaged at depth".into(),
+                                threshold: "the inside trap on; 0 lanes off; 500+ pixels inside and 500+ escaped; it differs on half the inside or more; the inside trap is not the point on half the frame; BLA engaged at depth".into(),
                                 pass: on
                                     && esc_bad == 0
                                     && in_bad == 0
@@ -11475,9 +11498,9 @@ zoom = \"1e94\"
                 stripe_tail: true,
                 stripe_tail_len: 900,
                 trap: TrapType::Circle,
-                trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6, phase: 0.0 },
+                trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6, phase: 0.0, ..crate::TrapPlace::DEFAULT },
                 interior_trap: Some(TrapType::Cross),
-                interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5, phase: 0.0 },
+                interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5, phase: 0.0, ..crate::TrapPlace::DEFAULT },
                 light: true,
                 light_angle: -1.25,
                 light_height: 3.5,
@@ -11563,7 +11586,7 @@ zoom = \"1e94\"
                     ViewColoring {
                         method: ColorMethod::OrbitTrap,
                         trap: TrapType::Cross,
-                        trap_place: crate::TrapPlace { center: [0.25, -0.5], rotation: 30.0, size: 1.0, phase: 0.0 },
+                        trap_place: crate::TrapPlace { center: [0.25, -0.5], rotation: 30.0, size: 1.0, phase: 0.0, ..crate::TrapPlace::DEFAULT },
                         ..d.clone()
                     },
                     &["method=trap", "trap=cross", "trap_x=0.25", "trap_y=-0.5", "trap_rotation=30"][..],
@@ -11572,7 +11595,7 @@ zoom = \"1e94\"
                     ViewColoring {
                         method: ColorMethod::OrbitTrap,
                         trap: TrapType::Circle,
-                        trap_place: crate::TrapPlace { center: [0.0, 0.125], rotation: 0.0, size: 0.5, phase: 0.0 },
+                        trap_place: crate::TrapPlace { center: [0.0, 0.125], rotation: 0.0, size: 0.5, phase: 0.0, ..crate::TrapPlace::DEFAULT },
                         ..d.clone()
                     },
                     &["method=trap", "trap=circle", "trap_y=0.125", "trap_size=0.5"][..],
@@ -11745,9 +11768,12 @@ zoom = \"1e94\"
                 interior_trap_y: 0.35,
                 interior_trap_rotation: -20.0,
                 interior_trap_size: 1.5,
-                // The sine wave's phase, kept whatever the shape, as the other placements.
+                // The waves' phase and the square wave's harmonics, kept whatever the shape, as the
+                // other placements.
                 trap_phase: 30.0,
                 interior_trap_phase: -45.0,
+                trap_harmonics: 9,
+                interior_trap_harmonics: 3,
                 custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
                 custom_palette_flat: true,
                 custom_segments: vec![fractadyne_state::PaletteSegment {

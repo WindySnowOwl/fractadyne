@@ -450,6 +450,12 @@ enum Screen {
     /// ...then shifted a quarter wave (user 2026-11-25): another picture, the phase reaching the
     /// live view's iteration; the panel's Phase row and its Animate box.
     TrapSinePhase,
+    /// The square wave trap of one harmonic, a sine wave...
+    TrapSquareWave1,
+    /// ...then of twelve (user 2026-11-25): another picture, the count reaching the live view's
+    /// iteration through the waves' own pipelines (`TRAP_WAVES`; without them the square wave would
+    /// measure as the point); the panel's Harmonics row.
+    TrapSquareWave,
     /// Edge shading (coloring plan C3): the Julia-link point in Smooth, point sampled, the shading
     /// off (the base)...
     EdgeShadeOff,
@@ -1457,6 +1463,8 @@ fn build_steps() -> Vec<Step> {
         screen("trap-shape-star", Screen::TrapShapeStar),
         screen("trap-sine-phase-0", Screen::TrapSinePhase0),
         screen("trap-sine-phase", Screen::TrapSinePhase),
+        screen("trap-square-wave-1", Screen::TrapSquareWave1),
+        screen("trap-square-wave", Screen::TrapSquareWave),
         screen("edge-shade-off", Screen::EdgeShadeOff),
         screen("edge-shade", Screen::EdgeShade),
         screen("edge-shade-inside", Screen::EdgeShadeInside),
@@ -1971,6 +1979,24 @@ impl FractadyneApp {
             name: "trap-sine-phase-drawn-live".into(),
             verdict: if d.is_some_and(|d| d >= 3.0) && phase == 90.0 { Verdict::Pass } else { Verdict::Fail },
             detail: format!("against {before}, the mean difference in levels: {d:?}; the trap's phase {phase}"),
+        });
+    }
+
+    /// The square wave of twelve harmonics draws another picture live than of one (a mean difference
+    /// of 3 levels or more), and the trap carries the count.
+    fn uitest_trap_harmonics_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, checks: &mut Vec<Check>) {
+        let before = "trap-square-wave-1";
+        let b = ut.results.iter().rev().find(|r| r.name == before);
+        let d = view.zip(b).and_then(|((px, _), b)| {
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            let s: f64 = px.chunks_exact(4).zip(prev.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            Some(s / (3 * (px.len() / 4)).max(1) as f64)
+        });
+        let harmonics = self.coloring.trap().place.harmonics;
+        checks.push(Check {
+            name: "trap-square-wave-harmonics-drawn-live".into(),
+            verdict: if d.is_some_and(|d| d >= 3.0) && harmonics == 12 { Verdict::Pass } else { Verdict::Fail },
+            detail: format!("against {before}, the mean difference in levels: {d:?}; the trap's harmonics {harmonics}"),
         });
     }
 
@@ -3483,6 +3509,18 @@ impl FractadyneApp {
                 self.coloring.trap_phase_anim = false;
                 self.dialogs.right_panel_open = true;
             }
+            // The same view under the square wave, of one harmonic and then of twelve; the phase's
+            // animation off (a clock).
+            Screen::TrapSquareWave1 | Screen::TrapSquareWave => {
+                self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+                self.coloring.interior = None;
+                self.coloring.interior_trap = None;
+                self.coloring.trap_type = crate::TrapType::SquareWave;
+                let harmonics = if matches!(s, Screen::TrapSquareWave) { 12 } else { 1 };
+                self.coloring.trap_place = crate::TrapPlace { harmonics, ..crate::TrapPlace::DEFAULT };
+                self.coloring.trap_phase_anim = false;
+                self.dialogs.right_panel_open = true;
+            }
             // C3: the Julia-link point again (filaments enough to shade), Smooth, point sampled; the
             // shading off, on toward white, then toward the inside's near-black, one change a step.
             Screen::EdgeShadeOff | Screen::EdgeShade | Screen::EdgeShadeInside | Screen::EdgeShadePanel => {
@@ -4240,6 +4278,8 @@ impl FractadyneApp {
                     | Screen::TrapShapeStar
                     | Screen::TrapSinePhase0
                     | Screen::TrapSinePhase
+                    | Screen::TrapSquareWave1
+                    | Screen::TrapSquareWave
                     | Screen::EdgeShadeOff
                     | Screen::EdgeShade
                     | Screen::EdgeShadeInside
@@ -5189,6 +5229,9 @@ impl FractadyneApp {
         }
         if let StepKind::Screen(Screen::TrapSinePhase) = step.kind {
             self.uitest_trap_phase_checks(ut, inside_view.as_ref(), &mut checks);
+        }
+        if let StepKind::Screen(Screen::TrapSquareWave) = step.kind {
+            self.uitest_trap_harmonics_checks(ut, inside_view.as_ref(), &mut checks);
         }
 
         // ---- edge shading (coloring plan C3) ----

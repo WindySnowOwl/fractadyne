@@ -3009,11 +3009,15 @@ panel-tail-length = Довжина хвоста
 panel-tail-length-unit = іт
 panel-tail-length-hover = Довжина вікна в ітераціях. Короткі вікна (8–32) дають класичні виразні смуги на будь-якій глибині; довші знову усереднюються до плаского кольору, бо член смуг довгої хаотичної орбіти усереднюється.
 panel-trap-shape = Форма пастки
-# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+# A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
+# the Speed slider.
 panel-trap-phase = Фаза
-panel-trap-phase-hover = Зсуває синусоїду вздовж неї самої: повна хвиля кожні 360°. Кожна фаза малює свій візерунок смуг.
+panel-trap-phase-hover = Зсуває хвилю вздовж неї самої: повна хвиля кожні 360°. Кожна фаза малює свій візерунок смуг.
 panel-trap-phase-animate = Анімувати фазу
 panel-trap-phase-animate-hover = Змінює фазу з часом, зі швидкістю повзунка «Швидкість». Кожен кадр обчислює вигляд заново, тому глибокий вигляд анімується повільно.
+# The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
+panel-trap-harmonics = Гармоніки
+panel-trap-harmonics-hover = Скільки непарних гармонік прямокутної хвилі додається: 1 дає синусоїду, а що їх більше, то гостріші кути й крутіші схили. Кожна додає трохи обчислень на кожному кроці кожної орбіти. Також --trap-harmonics для --render.
 panel-inside = Усередині
 panel-inside-hover = Чим забарвлено внутрішність множини.
 panel-inside-color-hover = Колір внутрішності множини.

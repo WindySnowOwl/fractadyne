@@ -353,9 +353,10 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     // default, so an ordinary view is byte-identical to one written before the keys existed.
     "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "interior_fit", "trap",
     // The trap's placement (coloring plan F4).
-    "trap_x", "trap_y", "trap_rotation", "trap_size", "trap_phase",
+    "trap_x", "trap_y", "trap_rotation", "trap_size", "trap_phase", "trap_harmonics",
     // The inside's own trap (the trap method's inside colored by a trap of its own).
     "interior_trap", "interior_trap_x", "interior_trap_y", "interior_trap_rotation", "interior_trap_size", "interior_trap_phase",
+    "interior_trap_harmonics",
     "light", "light_angle", "light_height", "light_steep", "light_steep_px", "light_highlight", "light_shininess", "light_highlight_color",
     "glow", "glow_strength", "glow_width",
     "palette_mode", "palette_lo", "palette_hi", "interior_color",
@@ -444,12 +445,14 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("trap_rotation", ValueKind::Float),
     ("trap_size", ValueKind::Float),
     ("trap_phase", ValueKind::Float),
+    ("trap_harmonics", ValueKind::Uint),
     ("interior_trap", ValueKind::Trap),
     ("interior_trap_x", ValueKind::Float),
     ("interior_trap_y", ValueKind::Float),
     ("interior_trap_rotation", ValueKind::Float),
     ("interior_trap_size", ValueKind::Float),
     ("interior_trap_phase", ValueKind::Float),
+    ("interior_trap_harmonics", ValueKind::Uint),
     ("light", ValueKind::Flag),
     ("light_angle", ValueKind::Float),
     ("light_height", ValueKind::Float),

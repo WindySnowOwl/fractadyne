@@ -2780,11 +2780,15 @@ panel-tail-length = Panjang ekor
 panel-tail-length-unit = it
 panel-tail-length-hover = Panjang jendela dalam iterasi. Jendela pendek (8–32) memberikan pita tebal klasik pada kedalaman berapa pun; jendela yang lebih panjang kembali merata-rata menjadi warna datar, karena suku garis dari orbit kacau yang panjang saling meniadakan.
 panel-trap-shape = Bentuk perangkap
-# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+# A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
+# the Speed slider.
 panel-trap-phase = Fase
-panel-trap-phase-hover = Menggeser gelombang sinus di sepanjang dirinya: satu gelombang penuh setiap 360°. Setiap fase menggambar pola pitanya sendiri.
+panel-trap-phase-hover = Menggeser gelombang di sepanjang dirinya: satu gelombang penuh setiap 360°. Setiap fase menggambar pola pitanya sendiri.
 panel-trap-phase-animate = Animasikan fase
 panel-trap-phase-animate-hover = Memutar fase seiring waktu, dengan laju penggeser Kecepatan. Setiap bingkai menghitung ulang tampilan, jadi tampilan yang dalam beranimasi lambat.
+# The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
+panel-trap-harmonics = Harmonik
+panel-trap-harmonics-hover = Berapa banyak harmonik ganjil gelombang persegi yang dijumlahkan: 1 adalah gelombang sinus, dan lebih banyak membuat sudutnya lebih tajam dan sisinya lebih curam. Masing-masing menambah sedikit perhitungan di setiap langkah setiap orbit. Juga --trap-harmonics untuk --render.
 panel-inside = Bagian dalam
 panel-inside-hover = Apa yang mewarnai bagian dalam himpunan.
 panel-inside-color-hover = Warna bagian dalam himpunan.

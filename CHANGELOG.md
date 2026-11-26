@@ -35,6 +35,16 @@ detail is in the git history.
   when only the light's rotation, the glow's bands or the trap's phase are animating. A view file
   keeps the phase (`trap_phase`, and `interior_trap_phase` for the inside's own trap), and on the
   command line it is `--trap-phase DEG`.
+- **Two more orbit trap shapes: the sinc and the square wave.** The sinc, sin(πx)/(πx), is one
+  peak whose ripples fade along the real axis. The square wave is added up from its odd harmonics,
+  and Harmonics, a new row under its shape, sets how many: 1 is a sine wave, and more make its
+  corners sharper and its sides steeper, each a little more calculation in every step of every
+  orbit. The square wave has a Phase and its animation too, as the sine wave does. Place on the
+  cycle puts the sinc's peak on the cycle point. Frames that draw neither keep the speed they had:
+  the two shapes are compiled only into pipelines of their own, built the first time a frame draws
+  one. A view file keeps the count (`trap_harmonics`, and `interior_trap_harmonics` for the inside's
+  own trap), and on the command line they are `--trap sinc`, `--trap square-wave` and
+  `--trap-harmonics N`.
 - **Move, turn and size the orbit trap.** Under Trap shape the panel now has the trap's center, x
   and y, and a rotation for the cross and a size, its radius, for the circle. Where the trap sits
   decides which orbits come near it, so moving it rearranges the bands and rings it draws, inside the

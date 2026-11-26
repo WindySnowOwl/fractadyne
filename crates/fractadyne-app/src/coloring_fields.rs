@@ -113,7 +113,7 @@ fn two_color_on(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 58] = [
+pub(crate) const FIELDS: [Field; 60] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -189,7 +189,7 @@ pub(crate) const FIELDS: [Field; 58] = [
     Field {
         key: "trap",
         name: "orbit trap",
-        doc: "The orbit trap's shape: point, cross, circle, line, square, hexagon, star, sine or s-curve (method \"trap\", or an inside colored by the trap).",
+        doc: "The orbit trap's shape: point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc or square-wave (method \"trap\", or an inside colored by the trap).",
         access: Access::Choice(|s| &s.trap_type, |s, v| s.trap_type = v.to_string(), || {
             TrapType::ALL.iter().map(|t| t.key()).collect()
         }),
@@ -238,7 +238,7 @@ pub(crate) const FIELDS: [Field; 58] = [
     Field {
         key: "trap_size",
         name: "trap size",
-        doc: "The trap's size: the circle's radius, the polygons' and the star's outer corners' distance from its center (the shapes with a size: not the point, the cross or the line).",
+        doc: "The trap's size: the circle's radius, the polygons' and the star's outer corners' distance from its center, the waves' and the S curve's scale (the shapes with a size: not the point, the cross or the line).",
         access: Access::Real(
             |s| s.trap_size,
             |s, v| s.trap_size = v,
@@ -251,15 +251,28 @@ pub(crate) const FIELDS: [Field; 58] = [
     Field {
         key: "trap_phase",
         name: "trap phase",
-        doc: "The sine wave trap's phase, in degrees: the wave shifted along itself, a full wave every 360 (the shapes with a phase: the sine wave).",
+        doc: "A wave trap's phase, in degrees: the wave shifted along itself, a full wave every 360 (the shapes with a phase: the sine wave and the square wave).",
         access: Access::Real(|s| s.trap_phase, |s, v| s.trap_phase = v, *slider_range::TRAP_PHASE.start(), *slider_range::TRAP_PHASE.end()),
         parents: &["method", "interior", "trap"],
         shows: |s| trap_drawn(s) && TrapType::from_key(&s.trap_type).spec().phased,
     },
     Field {
+        key: "trap_harmonics",
+        name: "trap harmonics",
+        doc: "How many odd harmonics the square wave trap sums, 1 (a sine wave) to 32: more make its corners sharper and its sides steeper (the shapes with harmonics: the square wave).",
+        access: Access::Count(
+            |s| s.trap_harmonics,
+            |s, v| s.trap_harmonics = v,
+            *slider_range::TRAP_HARMONICS.start(),
+            *slider_range::TRAP_HARMONICS.end(),
+        ),
+        parents: &["method", "interior", "trap"],
+        shows: |s| trap_drawn(s) && TrapType::from_key(&s.trap_type).spec().harmonic,
+    },
+    Field {
         key: "interior_trap",
         name: "inside trap",
-        doc: "The inside's own trap shape, point, cross, circle, line, square, hexagon, star, sine or s-curve, when the trap method colors the inside by a trap (the inside's own placement in the four keys after). Left out: the method's trap.",
+        doc: "The inside's own trap shape, point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc or square-wave, when the trap method colors the inside by a trap (the inside's own placement in the keys after). Left out: the method's trap.",
         access: Access::Choice(|s| &s.interior_trap, |s, v| s.interior_trap = v.to_string(), || {
             TrapType::ALL.iter().map(|t| t.key()).collect()
         }),
@@ -305,6 +318,19 @@ pub(crate) const FIELDS: [Field; 58] = [
         access: Access::Real(|s| s.interior_trap_phase, |s, v| s.interior_trap_phase = v, *slider_range::TRAP_PHASE.start(), *slider_range::TRAP_PHASE.end()),
         parents: &["method", "interior", "interior_trap"],
         shows: |s| inside_own_trap(s) && TrapType::from_key(&s.interior_trap).spec().phased,
+    },
+    Field {
+        key: "interior_trap_harmonics",
+        name: "inside trap harmonics",
+        doc: "The inside's own trap's harmonics, as `trap_harmonics`.",
+        access: Access::Count(
+            |s| s.interior_trap_harmonics,
+            |s, v| s.interior_trap_harmonics = v,
+            *slider_range::TRAP_HARMONICS.start(),
+            *slider_range::TRAP_HARMONICS.end(),
+        ),
+        parents: &["method", "interior", "interior_trap"],
+        shows: |s| inside_own_trap(s) && TrapType::from_key(&s.interior_trap).spec().harmonic,
     },
     Field {
         key: "light",

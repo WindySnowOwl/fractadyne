@@ -6,7 +6,7 @@ fn the_keys_are_the_persisted_ones() {
     let keys: Vec<_> = ColorMethod::ALL.iter().map(|m| m.key()).collect();
     assert_eq!(keys, ["smooth", "stripe", "triangle", "trap", "distance", "fringe", "decomposition"]);
     let traps: Vec<_> = TrapType::ALL.iter().map(|t| t.key()).collect();
-    assert_eq!(traps, ["point", "cross", "circle", "line", "square", "hexagon", "star", "sine", "s-curve"]);
+    assert_eq!(traps, ["point", "cross", "circle", "line", "square", "hexagon", "star", "sine", "s-curve", "sinc", "square-wave"]);
 }
 
 /// Each variant's row is its own, and the GPU number is the row's position.
@@ -244,12 +244,15 @@ fn the_shader_constants_are_the_table() {
         assert_eq!(ids.matches(&line).count(), 1, "{line}");
     }
     let consts = ids.lines().filter(|l| l.starts_with("const ")).count();
-    // ...and the trap shapes' four dimensions (F4 part 3), as core has them.
-    for (name, v) in [("TRAP_STAR_INNER", STAR_INNER), ("TRAP_SINE_AMP", SINE_AMP), ("TRAP_SINE_FREQ", SINE_FREQ), ("TRAP_S_RADIUS", S_RADIUS)] {
+    // ...and the trap shapes' five dimensions (F4 part 3, the sinc), as core has them.
+    let dims = [("TRAP_STAR_INNER", STAR_INNER), ("TRAP_SINE_AMP", SINE_AMP), ("TRAP_SINE_FREQ", SINE_FREQ), ("TRAP_S_RADIUS", S_RADIUS), ("TRAP_SINC_FREQ", SINC_FREQ)];
+    for (name, v) in dims {
         let line = format!("const {name}: f32 = {:?};", v as f32);
         assert_eq!(ids.matches(&line).count(), 1, "{line}");
     }
-    assert_eq!(consts, ColorMethod::ALL.len() + TrapType::ALL.len() + Stat::ALL.len() + InteriorShading::ALL.len() + 4);
+    // ...and the square wave's most harmonics.
+    assert_eq!(ids.matches(&format!("const TRAP_HARMONICS_MAX: u32 = {HARMONICS_MAX}u;")).count(), 1);
+    assert_eq!(consts, ColorMethod::ALL.len() + TrapType::ALL.len() + Stat::ALL.len() + InteriorShading::ALL.len() + dims.len() + 1);
     // Every other line is a comment or blank, so the block can go anywhere at module scope.
     for l in ids.lines().filter(|l| !l.starts_with("const ")) {
         assert!(l.is_empty() || l.starts_with("//"), "{l:?}");
@@ -324,8 +327,15 @@ fn each_trap_shape_says_what_it_uses() {
             ("star", true, true, true),
             ("sine", true, true, false),
             ("s-curve", true, true, false),
+            ("sinc", true, true, false),
+            ("square-wave", true, true, false),
         ]
     );
+    // Which pipelines carry each shape's code: the six of F4 part 3 in the Extra ones, the two waves
+    // in their own, so adding them left the six's pipelines as they were.
+    let tiers: Vec<_> = TrapType::ALL.iter().map(|t| t.spec().tier).collect();
+    use TrapTier::{Base, Extra, Waves};
+    assert_eq!(tiers, [Base, Base, Base, Extra, Extra, Extra, Extra, Extra, Extra, Waves, Waves]);
 }
 
 /// At the default placement every shape measures exactly as it always did, bit for bit: the
@@ -349,11 +359,11 @@ fn a_placed_trap_is_measured_in_the_orbits_plane() {
     let (cx, cy) = (f64::from(c[0]), f64::from(c[1]));
     let near = |a: f64, b: f64| (a - b).abs() < 1e-6;
     // The point: |z - center|, whatever the turn and size, which it does not use.
-    let point = TrapPlace { center: c, rotation: 30.0, size: 3.0, phase: 0.0 }.for_shape(TrapType::Point);
+    let point = TrapPlace { center: c, rotation: 30.0, size: 3.0, phase: 0.0, ..TrapPlace::DEFAULT }.for_shape(TrapType::Point);
     assert_eq!((point.rotation, point.size), (0.0, 1.0));
     assert!(near(point.dist(TrapType::Point, cx + 0.3, cy + 0.4), 0.5));
     // The circle: radius = size, centered; a turn changes nothing.
-    let circle = TrapPlace { center: c, rotation: 77.0, size: 0.5, phase: 0.0 }.for_shape(TrapType::Circle);
+    let circle = TrapPlace { center: c, rotation: 77.0, size: 0.5, phase: 0.0, ..TrapPlace::DEFAULT }.for_shape(TrapType::Circle);
     assert_eq!(circle.rotation, 0.0);
     for a in [0.0f64, 1.0, 2.5, 4.0] {
         assert!(near(circle.dist(TrapType::Circle, cx + 0.5 * a.cos(), cy + 0.5 * a.sin()), 0.0), "on the rim at {a}");
@@ -362,7 +372,7 @@ fn a_placed_trap_is_measured_in_the_orbits_plane() {
     assert!(near(circle.dist(TrapType::Circle, cx + 2.0, cy), 1.5));
     // The cross turned by 30 degrees: its arms run at 30 and 120 degrees through the center, and a
     // point at 75 degrees, between them, is r * sin 45 degrees from either.
-    let cross = TrapPlace { center: c, rotation: 30.0, size: 9.0, phase: 0.0 }.for_shape(TrapType::Cross);
+    let cross = TrapPlace { center: c, rotation: 30.0, size: 9.0, phase: 0.0, ..TrapPlace::DEFAULT }.for_shape(TrapType::Cross);
     assert_eq!(cross.size, 1.0);
     let at = |deg: f64, r: f64| {
         let a = deg.to_radians();
@@ -373,7 +383,7 @@ fn a_placed_trap_is_measured_in_the_orbits_plane() {
     }
     assert!(near(at(75.0, 1.0), std::f64::consts::FRAC_1_SQRT_2));
     // Unturned, the cross through the center is the axes moved there.
-    let plain = TrapPlace { center: c, rotation: 0.0, size: 1.0, phase: 0.0 };
+    let plain = TrapPlace { center: c, rotation: 0.0, size: 1.0, phase: 0.0, ..TrapPlace::DEFAULT };
     assert!(near(plain.dist(TrapType::Cross, cx + 0.25, cy - 0.5), 0.25));
 }
 
@@ -381,9 +391,9 @@ fn a_placed_trap_is_measured_in_the_orbits_plane() {
 /// size is clamped, and a negative zero is a zero (keys hash the bits).
 #[test]
 fn a_placement_for_a_shape_is_finite_and_clamped() {
-    let wild = TrapPlace { center: [f32::NAN, -0.0], rotation: f32::INFINITY, size: 0.0, phase: 0.0 };
+    let wild = TrapPlace { center: [f32::NAN, -0.0], rotation: f32::INFINITY, size: 0.0, phase: 0.0, ..TrapPlace::DEFAULT };
     let c = wild.for_shape(TrapType::Circle);
-    assert_eq!(c, TrapPlace { center: [0.0, 0.0], rotation: 0.0, size: TrapPlace::SIZE_MIN, phase: 0.0 });
+    assert_eq!(c, TrapPlace { center: [0.0, 0.0], rotation: 0.0, size: TrapPlace::SIZE_MIN, phase: 0.0, ..TrapPlace::DEFAULT });
     assert_eq!(c.center[1].to_bits(), 0.0f32.to_bits(), "no negative zero");
     let x = wild.for_shape(TrapType::Cross);
     assert_eq!((x.rotation, x.size), (0.0, 1.0));
@@ -396,14 +406,14 @@ fn a_placement_for_a_shape_is_finite_and_clamped() {
 /// trap itself, so a view whose inside "has its own" equal to the method's computes as one without.
 #[test]
 fn an_inside_trap_equal_to_the_trap_is_none() {
-    let moved = TrapPlace { center: [0.3, -0.2], rotation: 40.0, size: 2.0, phase: 0.0 };
+    let moved = TrapPlace { center: [0.3, -0.2], rotation: 40.0, size: 2.0, phase: 0.0, ..TrapPlace::DEFAULT };
     let t = Trap::new(TrapType::Cross, moved);
     assert_eq!(t.with_inside(TrapType::Cross, moved).inside, None, "the same trap");
     // The point ignores the turn and size, so a point with them is the plain point at that center.
     let p = Trap::new(TrapType::Point, TrapPlace { center: [0.3, -0.2], ..TrapPlace::DEFAULT });
     assert_eq!(p.with_inside(TrapType::Point, moved).inside, None, "the same point, as the point uses it");
     let inside = t.with_inside(TrapType::Circle, moved).inside.expect("a circle inside a cross");
-    assert_eq!(inside, (TrapType::Circle, TrapPlace { center: [0.3, -0.2], rotation: 0.0, size: 2.0, phase: 0.0 }));
+    assert_eq!(inside, (TrapType::Circle, TrapPlace { center: [0.3, -0.2], rotation: 0.0, size: 2.0, phase: 0.0, ..TrapPlace::DEFAULT }));
     assert_ne!(t.with_inside(TrapType::Circle, moved).key_bits(), t.key_bits());
 }
 
@@ -480,6 +490,56 @@ fn the_new_shapes_measure_their_outlines() {
     }
     let q = (0.5 * FRAC_1_SQRT_2, 0.5 - 0.5 * FRAC_1_SQRT_2);
     at(TrapType::SCurve, q.0, q.1, (q.0.hypot(q.1 + 0.5) - 0.5).abs());
+    // The sinc: its peak, its zeros at the whole numbers, a point on each side of where its formula
+    // changes from the series to the quotient, and the first ripple.
+    on(TrapType::Sinc, 0.0, 1.0);
+    for x in [-3.0, -1.0, 1.0, 2.0] {
+        on(TrapType::Sinc, x, 0.0);
+    }
+    for x in [0.5 / PI - 1e-9, 0.5 / PI + 1e-9, 0.1, 1.43] {
+        on(TrapType::Sinc, x, (PI * x).sin() / (PI * x));
+    }
+    at(TrapType::Sinc, 0.0, 0.25, 0.75);
+    // The square wave: its series summed directly, through the origin and on its plateaus.
+    let h = SINE_AMP * 4.0 / PI;
+    let series = |x: f64, n: u32| h * (0..n).map(|k| f64::from(2 * k + 1)).map(|m| (m * SINE_FREQ * x).sin() / m).sum::<f64>();
+    for x in [-1.3, -0.4, 0.0, 0.2, 0.9] {
+        on(TrapType::SquareWave, x, series(x, HARMONICS_DEFAULT));
+    }
+}
+
+/// The square wave is summed from its harmonics (user 2026-11-25): one is a sine wave of height
+/// A·4/π; more come nearer the square wave of height A, its plateau at a quarter period and its
+/// steep side at the origin; the count is kept only by the square wave, clamped, and is in the key.
+#[test]
+fn the_square_wave_is_summed_from_its_harmonics() {
+    use std::f64::consts::PI;
+    let wave = |n: u32| TrapPlace { harmonics: n, ..TrapPlace::DEFAULT }.for_shape(TrapType::SquareWave);
+    let h = SINE_AMP * 4.0 / PI;
+    let quarter = PI / 2.0 / SINE_FREQ;
+    // One harmonic: the sine wave of height h.
+    for x in [-0.6, 0.0, 0.15, quarter, 1.1] {
+        let d = wave(1).dist(TrapType::SquareWave, x, h * (SINE_FREQ * x).sin());
+        assert!(d < 1e-12, "one harmonic is a sine: off by {d} at {x}");
+    }
+    // At a quarter period the partial sums alternate about the plateau, A, and close on it.
+    let top = |n: u32| (0..n).map(|k| f64::from(2 * k + 1)).map(|m| h * (m * PI / 2.0).sin() / m).sum::<f64>();
+    assert!((top(32) - SINE_AMP).abs() < 0.02 * SINE_AMP, "{}", top(32));
+    assert!(wave(32).dist(TrapType::SquareWave, quarter, top(32)) < 1e-12);
+    assert!((top(32) - SINE_AMP).abs() < (top(2) - SINE_AMP).abs());
+    // The side at the origin is steeper with more of them: a point just above it is nearer.
+    let beside = |n: u32| wave(n).dist(TrapType::SquareWave, 0.0, 0.1);
+    assert!(beside(32) < beside(5) && beside(5) < beside(1), "{} {} {}", beside(32), beside(5), beside(1));
+    // Kept only by the square wave, and clamped.
+    assert_eq!((wave(0).harmonics, wave(1000).harmonics), (HARMONICS_MIN, HARMONICS_MAX));
+    for t in TrapType::ALL.into_iter().filter(|&t| t != TrapType::SquareWave) {
+        assert!(!t.spec().harmonic, "{t:?}");
+        assert_eq!(TrapPlace { harmonics: 9, ..TrapPlace::DEFAULT }.for_shape(t).harmonics, HARMONICS_DEFAULT, "{t:?}");
+    }
+    assert!(wave(HARMONICS_DEFAULT).is_default() && !wave(9).is_default());
+    assert_ne!(wave(9).bits(), wave(10).bits());
+    // The default count measures exactly as the unit shape.
+    assert_eq!(wave(HARMONICS_DEFAULT).dist(TrapType::SquareWave, 0.3, 0.1).to_bits(), TrapType::SquareWave.unit_dist(0.3, 0.1).to_bits());
 }
 
 /// A closed shape's radius toward any angle meets its outline; an open shape has none.
@@ -504,17 +564,27 @@ fn a_closed_shapes_radius_meets_its_outline() {
 #[test]
 fn the_new_shapes_are_placed_on_the_cycle() {
     let cycle = [[-0.02483685875720304, -0.2416742977846682], [-0.975163141242797, 0.2416742977846682]];
-    let turned = TrapPlace { center: [0.1, 0.0], rotation: 20.0, size: 1.0, phase: 0.0 };
+    let turned = TrapPlace { center: [0.1, 0.0], rotation: 20.0, size: 1.0, phase: 0.0, ..TrapPlace::DEFAULT };
     for t in [TrapType::Square, TrapType::Hexagon, TrapType::Star] {
         let (p, k) = turned.on_cycle(t, &cycle);
         assert_eq!((p.center, p.rotation), ([0.1, 0.0], 20.0), "{t:?} keeps its center and turn");
         assert!(p.dist(t, cycle[k][0], cycle[k][1]) < 1e-6, "{t:?} passes through the point it took");
     }
-    for t in [TrapType::Line, TrapType::Sine, TrapType::SCurve] {
+    for t in [TrapType::Line, TrapType::Sine, TrapType::SCurve, TrapType::SquareWave] {
         let (p, k) = turned.on_cycle(t, &cycle);
         assert_eq!(p.center, [cycle[k][0] as f32, cycle[k][1] as f32], "{t:?} is centered on the point");
         assert!(p.dist(t, cycle[k][0], cycle[k][1]) < 1e-6, "{t:?} passes through its center");
     }
+    // The sinc's peak goes on the point (its center is its size below it, turned), and placing it
+    // again moves on to the next point.
+    let sized = TrapPlace { size: 0.4, ..turned };
+    let (p, k) = sized.on_cycle(TrapType::Sinc, &cycle);
+    assert!(p.dist(TrapType::Sinc, cycle[k][0], cycle[k][1]) < 1e-6, "the sinc passes through the point it took");
+    let up = 20.0f64.to_radians() + std::f64::consts::FRAC_PI_2;
+    let peak = [f64::from(p.center[0]) + 0.4 * up.cos(), f64::from(p.center[1]) + 0.4 * up.sin()];
+    assert!((peak[0] - cycle[k][0]).hypot(peak[1] - cycle[k][1]) < 1e-6, "its peak is on it: {peak:?}");
+    let (_, next) = p.on_cycle(TrapType::Sinc, &cycle);
+    assert_eq!(next, (k + 1) % cycle.len());
 }
 
 /// The sine wave's phase shifts it along itself (user 2026-11-25): the wave at phase φ is the
@@ -533,9 +603,16 @@ fn the_sine_wave_s_phase_shifts_it_along_itself() {
     assert_eq!(phased(-180.0).phase, -180.0);
     assert!(phased(0.0).is_default() && !phased(10.0).is_default());
     assert_ne!(phased(10.0).bits(), phased(20.0).bits());
-    for t in TrapType::ALL.into_iter().filter(|&t| t != TrapType::Sine) {
+    for t in TrapType::ALL.into_iter().filter(|&t| t != TrapType::Sine && t != TrapType::SquareWave) {
         assert!(!t.spec().phased, "{t:?}");
         assert_eq!(TrapPlace { phase: 40.0, ..TrapPlace::DEFAULT }.for_shape(t).phase, 0.0, "{t:?} keeps no phase");
     }
     assert!(TrapType::Sine.spec().phased);
+    // The square wave's phase moves it along itself too, as the sine's does.
+    let sq = |deg: f32| TrapPlace { phase: deg, ..TrapPlace::DEFAULT }.for_shape(TrapType::SquareWave);
+    for (x, y) in [(0.1, 0.2), (-0.7, -0.05), (0.33, 0.29)] {
+        let (a, b) = (sq(75.0).dist(TrapType::SquareWave, x, y), TrapType::SquareWave.unit_dist(x + shift, y));
+        assert!((a - b).abs() < 1e-12, "the square wave at ({x}, {y}): {a} vs {b}");
+    }
+    assert!(TrapType::SquareWave.spec().phased);
 }

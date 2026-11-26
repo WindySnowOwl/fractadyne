@@ -2781,11 +2781,15 @@ panel-tail-length = 末尾の長さ
 panel-tail-length-unit = 回
 panel-tail-length-hover = 窓の長さ（反復回数）です。短い窓（8～32）はどの深度でも古典的な太い帯を生みます。長い窓では、長いカオス的な軌道のストライプ項が平均されて打ち消し合うため、再び平坦な色に近づきます。
 panel-trap-shape = トラップの形
-# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+# A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
+# the Speed slider.
 panel-trap-phase = 位相
-panel-trap-phase-hover = 正弦波をそれ自身に沿ってずらします。360°で1波長です。位相ごとに異なる帯の模様になります。
+panel-trap-phase-hover = 波をそれ自身に沿ってずらします。360°で1波長です。位相ごとに異なる帯の模様になります。
 panel-trap-phase-animate = 位相をアニメーション
 panel-trap-phase-animate-hover = 速度スライダーの速さで位相を時間とともに変化させます。フレームごとにビューを再計算するため、深いビューではゆっくり動きます。
+# The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
+panel-trap-harmonics = 高調波
+panel-trap-harmonics-hover = 矩形波の奇数次高調波をいくつ足し合わせるかです。1は正弦波で、増やすほど角が鋭く、辺が急になります。1つ増えるごとに、すべての軌道のすべてのステップで計算が少し増えます。--renderでは--trap-harmonicsも使えます。
 panel-inside = 内部
 panel-inside-hover = 集合の内部を何で着色するか。
 panel-inside-color-hover = 集合の内部の色。

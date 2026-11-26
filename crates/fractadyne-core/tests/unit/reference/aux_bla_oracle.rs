@@ -533,11 +533,11 @@ fn a_placed_traps_aggregates_measure_from_the_placed_trap() {
     use crate::coloring::{TrapPlace, TrapType};
     let orbit = vec![pack_sample(0.0, 0.0), pack_sample(0.25, 0.5), pack_sample(-0.6, 0.1), pack_sample(0.4, -0.3)];
     for (shape, raw) in [
-        (TrapType::Circle, TrapPlace { center: [0.1, 0.4], rotation: 0.0, size: 0.3, phase: 0.0 }),
-        (TrapType::Cross, TrapPlace { center: [-0.2, 0.15], rotation: 35.0, size: 1.0, phase: 0.0 }),
-        (TrapType::Point, TrapPlace { center: [0.5, -0.25], rotation: 0.0, size: 1.0, phase: 0.0 }),
+        (TrapType::Circle, TrapPlace { center: [0.1, 0.4], rotation: 0.0, size: 0.3, phase: 0.0, ..TrapPlace::DEFAULT }),
+        (TrapType::Cross, TrapPlace { center: [-0.2, 0.15], rotation: 35.0, size: 1.0, phase: 0.0, ..TrapPlace::DEFAULT }),
+        (TrapType::Point, TrapPlace { center: [0.5, -0.25], rotation: 0.0, size: 1.0, phase: 0.0, ..TrapPlace::DEFAULT }),
         // The sine wave shifted along itself (user 2026-11-25): its lane measures the phased curve.
-        (TrapType::Sine, TrapPlace { center: [0.05, -0.1], rotation: 20.0, size: 0.8, phase: 75.0 }),
+        (TrapType::Sine, TrapPlace { center: [0.05, -0.1], rotation: 20.0, size: 0.8, phase: 75.0, ..TrapPlace::DEFAULT }),
     ] {
         let place = raw.for_shape(shape);
         let aux = AuxAggParams { trap_type: shape, trap_place: place, ..AuxAggParams::default() };
@@ -574,7 +574,7 @@ fn a_placed_traps_aggregates_measure_from_the_placed_trap() {
 fn the_inside_trap_has_its_own_aggregate_lane() {
     use crate::coloring::{TrapPlace, TrapType};
     let orbit = vec![pack_sample(0.0, 0.0), pack_sample(0.25, 0.5), pack_sample(-0.6, 0.1), pack_sample(0.4, -0.3)];
-    let inside = (TrapType::Circle, TrapPlace { center: [0.1, 0.4], rotation: 0.0, size: 0.3, phase: 0.0 });
+    let inside = (TrapType::Circle, TrapPlace { center: [0.1, 0.4], rotation: 0.0, size: 0.3, phase: 0.0, ..TrapPlace::DEFAULT });
     let plain = AuxAggParams { trap_type: TrapType::Cross, ..AuxAggParams::default() };
     let with_in = AuxAggParams { trap_in: Some(inside), ..plain };
     let want: Vec<f64> = (1..orbit.len()).map(|k| {

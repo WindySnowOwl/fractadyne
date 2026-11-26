@@ -12,6 +12,8 @@
 use egui_wgpu::wgpu;
 use egui_wgpu::{CallbackResources, CallbackTrait, ScreenDescriptor};
 use std::sync::Arc;
+// Which trap shapes a pipeline compiles in (`iter_constants`, `trap_tier`).
+pub use fractadyne_core::coloring::TrapTier;
 
 mod assemble;
 pub use assemble::*;
@@ -122,7 +124,8 @@ pub(crate) struct IterUniforms {
     /// Two rows of its own after the fold row, so no field moved.
     pub(crate) trap: TrapU,
     /// THE INSIDE'S OWN TRAP (the shader's `trap_in_*`): its placement as [`trap_uniform`], then
-    /// `[on, shape, 0, 0]` ([`trap_in_row`]); zeros = none, the inside measures the trap above.
+    /// `[on, shape, the trap's harmonics, the inside's]` ([`trap_in_uniform`]); `on` 0 = none, the
+    /// inside measures the trap above. The two harmonics words were the row's padding.
     pub(crate) trap_in: TrapU,
     pub(crate) trap_in_row: [u32; 4],
 }
@@ -147,15 +150,21 @@ pub(crate) struct TrapU {
 }
 
 /// The inside's own trap for the shader (`trap_in`, `trap_in_row`): its placement and
-/// `[1, its shape's GPU number, 0, 0]` while the frame accumulates the trap and the inside has one;
-/// zeros otherwise (no second statistic: every frame as before).
+/// `[1, its shape's GPU number, …]` while the frame accumulates the trap and the inside has one, and
+/// in the row's last two words the square wave's harmonics, `trap`'s and the inside's
+/// ([`TrapPlace::harmonics`](fractadyne_core::coloring::TrapPlace::harmonics)); zeros while the
+/// frame does not accumulate the trap (no second statistic: every frame as before).
 pub(crate) fn trap_in_uniform(
+    trap: fractadyne_core::coloring::TrapPlace,
     inside: Option<(fractadyne_core::coloring::TrapType, fractadyne_core::coloring::TrapPlace)>,
     accumulated: bool,
 ) -> (TrapU, [u32; 4]) {
-    match inside.filter(|_| accumulated) {
-        Some((shape, place)) => (trap_uniform(place), [1, shape.gpu_id(), 0, 0]),
-        None => (TrapU::default(), [0; 4]),
+    if !accumulated {
+        return (TrapU::default(), [0; 4]);
+    }
+    match inside {
+        Some((shape, place)) => (trap_uniform(place), [1, shape.gpu_id(), trap.harmonics, place.harmonics]),
+        None => (TrapU::default(), [0, 0, trap.harmonics, 0]),
     }
 }
 
@@ -824,9 +833,9 @@ struct IterKey {
     trap_type: u32,
     /// The trap's placement (F4, `TrapPlace::bits`): moving the trap re-iterates, while the trap
     /// is accumulated (zeros otherwise).
-    trap_place: [u32; 5],
+    trap_place: [u32; 6],
     /// The inside's own trap, while the trap is accumulated.
-    trap_in: Option<(u32, [u32; 5])>,
+    trap_in: Option<(u32, [u32; 6])>,
     sa_skip: u32,
     bla_on: u32,
     /// Sub-pixel jitter (progressive SSAA): a changed jitter is a new sample and must re-iterate,
@@ -1774,10 +1783,11 @@ struct ChunkState {
 struct Renderer {
     /// What the iterate pipelines are built from, kept for [`Self::iter_extra`].
     iter_src: std::sync::Arc<IterSrc>,
-    /// The pair below with the trap shapes of F4 part 3 compiled in (`TRAP_EXTRA`), for a frame that
-    /// draws one ([`MandelbrotParams::trap_extra`]): built by a worker after start-up
-    /// ([`warm_trap_shapes`]), else when the app first needs them ([`prepare_trap_shapes_now`]).
-    iter_extra: std::sync::Arc<TrapShapePipelines>,
+    /// The pair below with the trap shapes above the base compiled in, one for each tier
+    /// ([`TrapTier`]; `TRAP_EXTRA`, then `TRAP_WAVES` too), for a frame that draws one
+    /// ([`MandelbrotParams::trap_tier`]): the Extra pair built by a worker after start-up
+    /// ([`warm_trap_shapes`]); either built when the app first needs it ([`prepare_trap_shapes_now`]).
+    iter_tiers: [std::sync::Arc<TrapShapePipelines>; 2],
     /// `fs_iterate`, whole or split by precision mode ([`iter_split`]).
     iter_pipeline: iter_split::ModePipelines,
     /// `fs_iterate` over a split refresh's tile geometry (`vs_split_tiles`; see
@@ -1864,11 +1874,11 @@ struct CustomPipelines {
     key: u64,
     iter: wgpu::RenderPipeline,
     iter_split: wgpu::RenderPipeline,
-    /// The module and layout the pair above came from, and the pair with the trap shapes of F4 part 3
-    /// compiled in, built when a frame first draws one.
+    /// The module and layout the pair above came from, and the pair for each trap tier above the base
+    /// ([`TrapTier`]), built when a frame first draws one of its shapes.
     module: wgpu::ShaderModule,
     layout: wgpu::PipelineLayout,
-    extra: std::sync::OnceLock<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
+    extra: [std::sync::OnceLock<(wgpu::RenderPipeline, wgpu::RenderPipeline)>; 2],
     chunk: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     chunk_fe: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
 }
@@ -1882,11 +1892,11 @@ struct IterSrc {
 }
 
 impl IterSrc {
-    /// `fs_iterate` full-screen and over a split refresh's tiles, with the trap shapes of F4 part 3
-    /// compiled in or not (`trap_extra`).
-    fn build(&self, device: &wgpu::Device, trap_extra: bool) -> (iter_split::ModePipelines, iter_split::ModePipelines) {
-        let c = iter_constants(false, trap_extra);
-        let tag = if trap_extra { ".traps" } else { "" };
+    /// `fs_iterate` full-screen and over a split refresh's tiles, with the trap shapes of `tier` and
+    /// below compiled in.
+    fn build(&self, device: &wgpu::Device, tier: TrapTier) -> (iter_split::ModePipelines, iter_split::ModePipelines) {
+        let c = iter_constants(false, tier);
+        let tag = tier_tag(tier);
         let iter = iter_split::SplitModules::build(self.split.as_ref(), &self.shader, |m, half| {
             fullscreen_pipeline_c(
                 device, m, &self.layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
@@ -1903,14 +1913,30 @@ impl IterSrc {
     }
 }
 
-/// The live iterate pair with the trap shapes of F4 part 3 compiled in, once built.
+/// The live iterate pair with a tier's trap shapes compiled in, once built.
 type TrapShapePipelines = std::sync::OnceLock<(iter_split::ModePipelines, iter_split::ModePipelines)>;
 
-/// Build the live iterate pair with the trap shapes compiled in, and say how long it took and where.
-fn build_trap_shapes(device: &wgpu::Device, src: &IterSrc, on: &str) -> (iter_split::ModePipelines, iter_split::ModePipelines) {
+/// A pipeline label's suffix for a trap tier: none for the base, as the labels always were.
+fn tier_tag(tier: TrapTier) -> &'static str {
+    match tier {
+        TrapTier::Base => "",
+        TrapTier::Extra => ".traps",
+        TrapTier::Waves => ".waves",
+    }
+}
+
+/// Where a tier above the base keeps its pipelines in `[_; 2]` (the Extra pair first).
+fn tier_slot(tier: TrapTier) -> usize {
+    usize::from(tier == TrapTier::Waves)
+}
+
+/// Build the live iterate pair with a tier's trap shapes compiled in, and say how long it took and
+/// where.
+fn build_trap_shapes(device: &wgpu::Device, src: &IterSrc, on: &str, tier: TrapTier) -> (iter_split::ModePipelines, iter_split::ModePipelines) {
     let t = std::time::Instant::now();
-    let p = src.build(device, true);
-    eprintln!("[fd-gpu] the trap shapes' iterate pipelines built on {on} in {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
+    let p = src.build(device, tier);
+    let what = if tier == TrapTier::Waves { "the trap waves'" } else { "the trap shapes'" };
+    eprintln!("[fd-gpu] {what} iterate pipelines built on {on} in {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
     p
 }
 
@@ -1929,45 +1955,52 @@ pub fn warm_trap_shapes(render_state: &egui_wgpu::RenderState) {
     let (src, extra) = {
         let guard = render_state.renderer.read();
         let Some(r) = guard.callback_resources.get::<Renderer>() else { return };
-        (r.iter_src.clone(), r.iter_extra.clone())
+        (r.iter_src.clone(), r.iter_tiers[tier_slot(TrapTier::Extra)].clone())
     };
     let device = render_state.device.clone();
     let _ = std::thread::Builder::new().name("fd-trap-shapes".into()).spawn(move || {
-        extra.get_or_init(|| build_trap_shapes(&device, &src, "a worker"));
+        extra.get_or_init(|| build_trap_shapes(&device, &src, "a worker", TrapTier::Extra));
     });
 }
 
-/// Have the live renderer's pipelines for the trap shapes of F4 part 3 ready before a frame that
-/// draws one reaches the paint callback: waiting for [`warm_trap_shapes`]'s worker, or building
-/// them here (OpenGL). `true` when they were not ready and the caller's thread waited, so the app
-/// can leave the time out of the frame's price, as for a custom formula ([`prepare_custom_now`]).
-pub fn prepare_trap_shapes_now(render_state: &egui_wgpu::RenderState) -> bool {
-    let (src, extra) = {
+/// Have the live renderer's pipelines for the trap shapes of `tier` ready before a frame that draws
+/// one reaches the paint callback: waiting for [`warm_trap_shapes`]'s worker (the Extra tier), or
+/// building them here (OpenGL; the Waves tier, the first time a frame draws a sinc or a square wave).
+/// `true` when they were not ready and the caller's thread waited, so the app can leave the time out
+/// of the frame's price, as for a custom formula ([`prepare_custom_now`]). The base tier is always
+/// ready.
+pub fn prepare_trap_shapes_now(render_state: &egui_wgpu::RenderState, tier: TrapTier) -> bool {
+    if tier == TrapTier::Base {
+        return false;
+    }
+    let (src, pair) = {
         let guard = render_state.renderer.read();
         let Some(r) = guard.callback_resources.get::<Renderer>() else { return false };
-        if r.iter_extra.get().is_some() {
+        let pair = &r.iter_tiers[tier_slot(tier)];
+        if pair.get().is_some() {
             return false;
         }
-        (r.iter_src.clone(), r.iter_extra.clone())
+        (r.iter_src.clone(), pair.clone())
     };
-    extra.get_or_init(|| build_trap_shapes(&render_state.device, &src, "the UI thread"));
+    pair.get_or_init(|| build_trap_shapes(&render_state.device, &src, "the UI thread", tier));
     true
 }
 
 impl CustomPipelines {
-    /// The `fs_iterate` pair for a frame, with the trap shapes of F4 part 3 compiled in when it draws
-    /// one (built then, once).
-    fn iter_pair(&self, device: &wgpu::Device, trap_extra: bool) -> (&wgpu::RenderPipeline, &wgpu::RenderPipeline) {
-        if !trap_extra {
+    /// The `fs_iterate` pair for a frame, with the trap shapes of its tier compiled in when it draws
+    /// one above the base (built then, once).
+    fn iter_pair(&self, device: &wgpu::Device, tier: TrapTier) -> (&wgpu::RenderPipeline, &wgpu::RenderPipeline) {
+        if tier == TrapTier::Base {
             return (&self.iter, &self.iter_split);
         }
-        let x = self.extra.get_or_init(|| {
-            let c = iter_constants(false, true);
+        let x = self.extra[tier_slot(tier)].get_or_init(|| {
+            let c = iter_constants(false, tier);
+            let tag = tier_tag(tier);
             (
-                fullscreen_pipeline_c(device, &self.module, &self.layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT], "fractadyne.custom.iter_pipeline.traps", c),
+                fullscreen_pipeline_c(device, &self.module, &self.layout, "fs_iterate", &[ITER_FORMAT, ITER_FORMAT], &format!("fractadyne.custom.iter_pipeline{tag}"), c),
                 raster_pipeline_c(
                     device, &self.module, &self.layout, "vs_split_tiles", "fs_iterate", &[ITER_FORMAT, ITER_FORMAT],
-                    "fractadyne.custom.iter_split_pipeline.traps", c,
+                    &format!("fractadyne.custom.iter_split_pipeline{tag}"), c,
                 ),
             )
         });
@@ -2031,7 +2064,7 @@ impl CustomPipelines {
                     ),
                 )
             });
-        CustomPipelines { key: shader.key, iter, iter_split, chunk, chunk_fe, module, layout, extra: std::sync::OnceLock::new() }
+        CustomPipelines { key: shader.key, iter, iter_split, chunk, chunk_fe, module, layout, extra: Default::default() }
     }
 }
 
@@ -2691,37 +2724,43 @@ pub(crate) fn fullscreen_pipeline_c(
 /// The iterate pipelines' overridable constants: `RN_BLA` compiles the renormalized step's u-space
 /// BLA in (only for a render whose request carries a tree). Off is the shader's default, so the
 /// empty map — the pipelines every other render builds — is unchanged.
-/// `trap_extra` compiles in the trap shapes of F4 part 3 (`TRAP_EXTRA`; [`trap_extra`]) for a frame
-/// that draws one; off, the empty map again.
-pub(crate) fn iter_constants(rn_bla: bool, trap_extra: bool) -> &'static std::collections::HashMap<String, f64> {
+/// `tier` compiles in the trap shapes above the base up to it ([`TrapTier`]: `TRAP_EXTRA` for the
+/// shapes of F4 part 3, and `TRAP_WAVES` with it for the sinc and the square wave; [`trap_tier`]) for
+/// a frame that draws one; the base, the empty map again.
+pub(crate) fn iter_constants(rn_bla: bool, tier: TrapTier) -> &'static std::collections::HashMap<String, f64> {
     use std::collections::HashMap;
     type Map = std::sync::OnceLock<HashMap<String, f64>>;
-    static MAPS: [Map; 4] = [Map::new(), Map::new(), Map::new(), Map::new()];
-    MAPS[usize::from(rn_bla) | usize::from(trap_extra) << 1].get_or_init(|| {
+    static MAPS: [Map; 6] = [Map::new(), Map::new(), Map::new(), Map::new(), Map::new(), Map::new()];
+    MAPS[usize::from(rn_bla) | (tier as usize) << 1].get_or_init(|| {
         let mut m = HashMap::new();
         if rn_bla {
             m.insert("RN_BLA".to_string(), 1.0);
         }
-        if trap_extra {
+        if tier >= TrapTier::Extra {
             m.insert("TRAP_EXTRA".to_string(), 1.0);
+        }
+        if tier >= TrapTier::Waves {
+            m.insert("TRAP_WAVES".to_string(), 1.0);
         }
         m
     })
 }
 
-/// Whether a frame needs the trap shapes of F4 part 3 compiled in: it accumulates the trap and its
-/// trap, or the inside's own, is one of them ([`fractadyne_core::coloring::TrapSpec::gated`]).
-/// ⛔A pipeline built without them measures such a shape as the point: every pipeline that
-/// iterates such a frame must ask this.
-pub(crate) fn trap_extra(
+/// Which trap shapes a frame needs compiled in: the highest tier among its trap and the inside's own
+/// ([`fractadyne_core::coloring::TrapSpec::tier`]) while it accumulates the trap, else the base.
+/// ⛔A pipeline built without a shape's tier measures it as the point: every pipeline that iterates
+/// such a frame must ask this.
+pub(crate) fn trap_tier(
     stats: fractadyne_core::coloring::StatSet,
     trap_type: u32,
     trap_in: Option<(fractadyne_core::coloring::TrapType, fractadyne_core::coloring::TrapPlace)>,
-) -> bool {
+) -> TrapTier {
     use fractadyne_core::coloring::{Stat, TrapType};
-    let gated = |t: TrapType| t.spec().gated;
-    stats.has(Stat::Trap)
-        && (TrapType::from_gpu_id(trap_type).is_some_and(gated) || trap_in.is_some_and(|(t, _)| gated(t)))
+    if !stats.has(Stat::Trap) {
+        return TrapTier::Base;
+    }
+    let tier = TrapType::from_gpu_id(trap_type).map_or(TrapTier::Base, |t| t.spec().tier);
+    tier.max(trap_in.map_or(TrapTier::Base, |(t, _)| t.spec().tier))
 }
 
 /// [`fullscreen_pipeline`] with its own vertex stage (`vs_split_tiles`: a split refresh's tiles).
@@ -2734,7 +2773,7 @@ pub(crate) fn raster_pipeline(
     formats: &[wgpu::TextureFormat],
     label: &str,
 ) -> wgpu::RenderPipeline {
-    raster_pipeline_c(device, shader, layout, vs_entry, fs_entry, formats, label, iter_constants(false, false))
+    raster_pipeline_c(device, shader, layout, vs_entry, fs_entry, formats, label, iter_constants(false, TrapTier::Base))
 }
 
 /// [`raster_pipeline`] with its fragment stage specialized by `constants`.
@@ -3209,7 +3248,7 @@ impl Renderer {
         // On OpenGL, two pipelines per iterate entry point, one per half of the module (`iter_split`).
         let split = iter_split::SplitModules::new(device, renderer_wgsl(), "fractadyne.shader");
         let iter_src = std::sync::Arc::new(IterSrc { shader: shader.clone(), split, layout: iter_layout.clone() });
-        let (iter_pipeline, iter_split_pipeline) = iter_src.build(device, false);
+        let (iter_pipeline, iter_split_pipeline) = iter_src.build(device, TrapTier::Base);
         let color_pipeline = fullscreen_pipeline(
             device, &shader, &color_layout, "fs_color", &[target_format],
             "fractadyne.color_pipeline",
@@ -3308,7 +3347,7 @@ impl Renderer {
 
         Self {
             iter_src,
-            iter_extra: std::sync::Arc::new(std::sync::OnceLock::new()),
+            iter_tiers: Default::default(),
             iter_pipeline,
             iter_split_pipeline,
             color_pipeline,
@@ -4161,7 +4200,7 @@ impl MandelbrotParams {
             stripe_tail: stripe && self.stripe_tail,
             stripe_tail_len: if stripe { self.stripe_tail_len } else { 0 },
             trap_type: if orbit_stats.has(Stat::Trap) { self.trap_type } else { 0 },
-            trap_place: if orbit_stats.has(Stat::Trap) { self.trap_place.bits() } else { [0; 5] },
+            trap_place: if orbit_stats.has(Stat::Trap) { self.trap_place.bits() } else { [0; 6] },
             trap_in: self.trap_in.filter(|_| orbit_stats.has(Stat::Trap)).map(|(s, p)| (s.gpu_id(), p.bits())),
             sa_skip: self.sa_skip,
             bla_on: self.bla_on,
@@ -4373,9 +4412,9 @@ impl MandelbrotParams {
     pub fn iter_stats(&self) -> fractadyne_core::coloring::StatSet {
         iter_stats(self.orbit_stats, self.color_method)
     }
-    /// Whether this frame's iterate pipeline needs the trap shapes of F4 part 3 ([`trap_extra`]).
-    pub fn trap_extra(&self) -> bool {
-        trap_extra(self.iter_stats(), self.trap_type, self.trap_in)
+    /// Which trap shapes this frame's iterate pipeline needs compiled in ([`trap_tier`]).
+    pub fn trap_tier(&self) -> TrapTier {
+        trap_tier(self.iter_stats(), self.trap_type, self.trap_in)
     }
 }
 
@@ -4431,16 +4470,16 @@ impl CallbackTrait for MandelbrotParams {
         let lsystem_r = &mut r.lsystem;
         let iter_bgl = &r.iter_bgl;
         let color_bgl = &r.color_bgl;
-        // A frame that draws a trap shape of F4 part 3 takes the pipelines with it compiled in.
-        let trap_extra = self.trap_extra();
+        // A frame that draws a trap shape above the base takes the pipelines of its tier.
+        let tier = self.trap_tier();
         let (iter_pipeline, iter_split_pipeline) = match (self.custom.as_ref(), r.custom.as_ref()) {
-            (Some(_), Some(p)) => p.iter_pair(device, trap_extra),
+            (Some(_), Some(p)) => p.iter_pair(device, tier),
             // The half for this frame's mode, when split; the uniforms below carry the same `mode`.
             _ => {
-                let (a, b) = if trap_extra {
+                let (a, b) = if tier != TrapTier::Base {
                     // Built before this callback by the app (`prepare_trap_shapes_now`), so this build
                     // is the fallback for a caller that did not ask.
-                    let x = r.iter_extra.get_or_init(|| build_trap_shapes(device, &r.iter_src, "the paint callback"));
+                    let x = r.iter_tiers[tier_slot(tier)].get_or_init(|| build_trap_shapes(device, &r.iter_src, "the paint callback", tier));
                     (&x.0, &x.1)
                 } else {
                     (&r.iter_pipeline, &r.iter_split_pipeline)
@@ -4971,8 +5010,8 @@ impl CallbackTrait for MandelbrotParams {
                 map: StripMap::default(),
                 fold,
                 trap: trap_uniform(self.trap_place),
-                trap_in: trap_in_uniform(self.trap_in, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
-                trap_in_row: trap_in_uniform(self.trap_in, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
+                trap_in: trap_in_uniform(self.trap_place, self.trap_in, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
+                trap_in_row: trap_in_uniform(self.trap_place, self.trap_in, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
             };
             // A split pass is a single full-frame pass by definition (`MandelbrotParams::split`).
             let split_on = self.split[0] > 1 && self.chunk_range.is_none() && self.tile.is_none();
