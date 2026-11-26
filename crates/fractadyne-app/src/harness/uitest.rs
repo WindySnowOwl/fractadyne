@@ -710,6 +710,14 @@ struct StepResult {
     inside_trap_cost: Option<crate::ui::method_list::SwitchCost>,
     /// View 0's passes so far by reason (`Perf::gpu_ran_why`), at capture.
     ran_why: [u64; 7],
+    /// View 0's iterations at capture (`Perf::last_eff_iter`): with automatic iterations the
+    /// budget keeps moving after the first pictures, and each move is a pass (KEY) of its own.
+    /// Every step's (`eff_iter` is the live steps' alone).
+    iter_at_capture: u32,
+    /// View 0's palette map at capture: the live window it is fitted to (`live_norm_window`, `None`
+    /// for the classic map) and the map's cycle, offset and curve, so two steps whose pictures
+    /// differ in color alone can be told apart from a stale frame (minimap-pan-verify, 2026-11-23).
+    palette_map: (Option<(f32, f32)>, f32, f32, u32),
 }
 
 /// A 16x16 luma thumbnail of the left ~45% of the frame, vertically inset past the toolbar and
@@ -776,6 +784,10 @@ pub(crate) struct UiTest {
     results: Vec<StepResult>,
     // Timing gates for the current step (wall-clock, so deep live builds get enough time).
     step_start: Instant,
+    /// Mouse-wheel events and button presses egui saw since the step started: input the walk did
+    /// not send (it drives the pointer through `UiPointer`, never the wheel), such as a person's
+    /// hand on the test window, tells a moved view from a wrong landing.
+    input_seen: [u32; 2],
     settle_until: Instant,
     hard_until: Instant,
     gpu_name: Option<String>,
@@ -886,6 +898,7 @@ impl UiTest {
             phase: Phase::Setup,
             results: Vec::new(),
             step_start: Instant::now(),
+            input_seen: [0, 0],
             settle_until: Instant::now(),
             hard_until: Instant::now(),
             gpu_name: None,
@@ -1593,6 +1606,7 @@ impl FractadyneApp {
                     StepKind::Window(_) => (1_800, 5_000),
                 };
                 ut.step_start = Instant::now();
+                ut.input_seen = [0, 0];
                 ut.settle_until = ut.step_start + std::time::Duration::from_millis(settle_ms);
                 ut.hard_until = ut.step_start + std::time::Duration::from_millis(hard_ms);
                 ut.sb_min = f32::INFINITY;
@@ -1761,6 +1775,15 @@ impl FractadyneApp {
                 if busy {
                     ut.quiet_since = now;
                 }
+                ctx.input(|i| {
+                    for e in &i.events {
+                        match e {
+                            egui::Event::MouseWheel { .. } => ut.input_seen[0] += 1,
+                            egui::Event::PointerButton { pressed: true, .. } => ut.input_seen[1] += 1,
+                            _ => {}
+                        }
+                    }
+                });
                 let settling =
                     busy || now.duration_since(ut.quiet_since) < std::time::Duration::from_millis(350);
                 let ready = now >= ut.settle_until
@@ -2430,7 +2453,19 @@ impl FractadyneApp {
                 let off = (0..w * h).filter(|i| core(*i) && (0..3).any(|k| (px[i * 4 + k] as i32 - want[k]).abs() > 2)).count();
                 let (d_out, _) = diff(px, &solid_px, &is_out);
                 let ran = caused("inside-solid");
-                let detail = format!("{n_core} pixels of the inside's core ({n_in} inside), {off} not {want:?}; the outside changed by {d_out:.2}; passes caused {ran:?}");
+                // Which passes, by reason, and the iterations at both captures: a pass here that the
+                // solid step's change still owed (its automatic iterations still moving, say) is not
+                // the color's (PLUTO's two cards counted one, 2026-11-25..26; the 3080 none).
+                let why = step("inside-solid").map(|r| {
+                    let names = ["forced", "key", "tile", "chunk", "probe", "split", "empty"];
+                    let by: Vec<String> = names
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, n)| (ran_why[i] > r.ran_why[i]).then(|| format!("{n} {}", ran_why[i] - r.ran_why[i])))
+                        .collect();
+                    format!("{}; iterations {} at inside-solid, {} here", if by.is_empty() { "none".into() } else { by.join(", ") }, r.iter_at_capture, self.perf.last_eff_iter)
+                });
+                let detail = format!("{n_core} pixels of the inside's core ({n_in} inside), {off} not {want:?}; the outside changed by {d_out:.2}; passes caused {ran:?} ({})", why.unwrap_or_default());
                 let ok = n_core * 25 >= w * h && off == 0 && d_out <= 0.5 && ran == Some(0);
                 checks.push(if ok { pass("inside-color", detail) } else { fail("inside-color", detail) });
             }
@@ -3356,7 +3391,15 @@ impl FractadyneApp {
                 self.set_show_mode(crate::ShowMode::Set);
                 self.set_fractal(crate::FractalKind::Mandelbrot);
                 self.reset_view();
-                self.render_cfg.auto_iter = true;
+                // Fixed iterations for the inside steps, not automatic ones: on PLUTO's two cards the
+                // automatic budget was still moving across these steps (the RX 6800 XT 8192 at
+                // inside-solid, 2000 at inside-color; the RTX 3070 5120, then 8192), each move a pass
+                // of its own, which inside-color's recolor check (no pass) counted against the color
+                // on every walk (2026-11-26). 2000 is what the automatic budget is here on the RTX
+                // 3080 in a full walk (the earlier steps' count is its floor at this depth), so its
+                // pictures are unchanged.
+                self.render_cfg.auto_iter = false;
+                self.render_cfg.max_iter = 2_000;
                 self.coloring.color_method = crate::ColorMethod::Smooth;
                 self.coloring.use_binary = false;
                 self.coloring.use_duotone = false;
@@ -4355,6 +4398,11 @@ impl FractadyneApp {
         let mid_fp = band_fingerprint(&image.pixels, w as usize, h as usize, (w as usize * 45) / 100, (w as usize * 75) / 100);
         let tiled = self.tile_state_present(0);
         let ran_why = self.perf.gpu_ran_why[0];
+        let iter_at_capture = self.perf.last_eff_iter;
+        let palette_map = {
+            let m = self.export_map(false);
+            (self.live_norm_window(0), m.cycle, m.offset, m.mode)
+        };
         let switch_costs: Vec<_> = crate::ColorMethod::ALL.iter().map(|m| (*m, self.switch_cost(*m))).collect();
         let inside_step = matches!(
             step.kind,
@@ -4950,7 +4998,10 @@ impl FractadyneApp {
                     name: "misiurewicz-jump-lands".into(),
                     verdict: Verdict::Fail,
                     detail: format!(
-                        "expected the antenna tip (−2, 0) at 1e6× — got ({cx:.9}, {cy:.9}) at                          {l2:.2} oct (want {want_l2:.2})"
+                        "expected the antenna tip (−2, 0) at 1e6× — got ({cx:.9}, {cy:.9}) at                          {l2:.2} oct (want {want_l2:.2}); the jump landed {}; during the step {} wheel events and {} presses",
+                        self.misi.landed.as_ref().map_or("never".to_string(), |(n, d)| format!("on {n} at {d:.2} oct")),
+                        ut.input_seen[0],
+                        ut.input_seen[1]
                     ),
                 });
             }
@@ -4994,7 +5045,10 @@ impl FractadyneApp {
                             verdict: Verdict::Fail,
                             detail: format!(
                                 "panning from the minimap left a stale frame: meanD {d:.1} against \
-                                 an honest re-render of the SAME view (stddev {luma_stddev:.1})"
+                                 an honest re-render of the SAME view (stddev {luma_stddev:.1}); the \
+                                 palette map (window, cycle, offset, curve) {:?} at the pan, {:?} here",
+                                a.palette_map,
+                                (self.live_norm_window(0), self.export_map(false).cycle, self.export_map(false).offset, self.export_map(false).mode)
                             ),
                         });
                     }
@@ -5669,6 +5723,8 @@ impl FractadyneApp {
             inside_view,
             inside_trap_cost,
             ran_why,
+            iter_at_capture,
+            palette_map,
         }
     }
 
@@ -5778,6 +5834,8 @@ impl FractadyneApp {
             inside_view: None,
             inside_trap_cost: None,
             ran_why: [0; 7],
+            iter_at_capture: 0,
+            palette_map: (None, 0.0, 0.0, 0),
         }
     }
 
@@ -5935,6 +5993,8 @@ fn timeout_result(step: &Step) -> StepResult {
         inside_view: None,
         inside_trap_cost: None,
         ran_why: [0; 7],
+        iter_at_capture: 0,
+        palette_map: (None, 0.0, 0.0, 0),
     }
 }
 
