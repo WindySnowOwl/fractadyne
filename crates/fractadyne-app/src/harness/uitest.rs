@@ -1582,6 +1582,10 @@ impl FractadyneApp {
                     }
                     // The turning phase: long enough for several finished pictures, each its grid.
                     StepKind::Screen(Screen::TrapPhaseAnimating) => (8_000u64, 12_000u64),
+                    // The method sheet calculates its cells after the view has held still: 15 since
+                    // the sinc and the square wave, 2.6 s on the RX 6800 XT, which the 3 s cap cut
+                    // short at 9-11 (PLUTO dev.11/dev.12, 2026-11-26). It captures once they are done.
+                    StepKind::Screen(Screen::MethodSheet) => (250u64, 10_000u64),
                     StepKind::Screen(_) => (250u64, 3_000u64),
                     // Live: a generous hard cap so even a slow box's progressive reference build can
                     // finish (ref-settled gate) before the cap forces a capture.
