@@ -2020,8 +2020,9 @@ pub fn warm_trap_shapes(render_state: &egui_wgpu::RenderState) {
 }
 
 /// Build the live renderer's pipelines for the trap outline (coloring plan F4, part 4) on a worker,
-/// once, so the frame that first draws a view's outline finds them ready: the app calls this whenever
-/// a view has an outline, and after the first call it only reads a flag. Not at start-up for every
+/// once, so the frame that first draws a view's outline finds them ready: the app calls this as the
+/// shape Outline is picked (its SVG file dialog opens meanwhile) and whenever a view has an outline;
+/// after the first call it only reads a flag. Not at start-up for every
 /// view, as [`warm_trap_shapes`] builds the other tiers: few views have an outline, and the build is
 /// seconds cold. Not on OpenGL, for the reason there.
 pub fn warm_trap_outline(render_state: &egui_wgpu::RenderState) {

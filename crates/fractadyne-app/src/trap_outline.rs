@@ -463,6 +463,13 @@ impl crate::FractadyneApp {
     /// After a shape menu: the outline picked with none loaded asks for one; refused or cancelled,
     /// the shape goes back to `before`.
     pub(crate) fn trap_outline_picked(&mut self, ctx: &eframe::egui::Context, picked: TrapType, before: TrapType) -> TrapType {
+        // Its pipelines build on a worker meanwhile, seconds cold: the file dialog below, or the
+        // frames before the drawing's first (picked then and drawn at once, the UI thread built them).
+        if picked == TrapType::Outline && before != TrapType::Outline {
+            if let Some(rs) = self.render_state.as_ref() {
+                fractadyne_gpu::warm_trap_outline(rs);
+            }
+        }
         if picked == TrapType::Outline && before != TrapType::Outline && self.coloring.trap_outline.is_none() && !self.load_trap_outline(ctx) {
             return before;
         }
