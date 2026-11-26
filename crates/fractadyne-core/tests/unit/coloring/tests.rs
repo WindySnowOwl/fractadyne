@@ -508,6 +508,61 @@ fn the_new_shapes_measure_their_outlines() {
     }
 }
 
+/// The sine wave's harmonics overlaid (user 2026-11-25): one is the wave alone, bit for bit as it
+/// was; more draw the curves of two, three, ... times its frequency over it at its height, the trap
+/// the nearest of them; its own count, kept only by the sine wave, clamped, in the key, and the waves'
+/// tier above one.
+#[test]
+fn the_sine_wave_overlays_its_harmonics() {
+    let sine = |n: u32| TrapPlace { sine_harmonics: n, ..TrapPlace::DEFAULT }.for_shape(TrapType::Sine);
+    // One: the wave alone, exactly, with and without a phase.
+    assert!(sine(1).is_default());
+    for (x, y) in [(0.3, 0.1), (-1.2, -0.2), (0.0, 0.25)] {
+        assert_eq!(sine(1).dist(TrapType::Sine, x, y).to_bits(), TrapType::Sine.unit_dist(x, y).to_bits());
+        let a = TrapPlace { phase: 50.0, ..sine(1) }.dist(TrapType::Sine, x, y);
+        let b = TrapPlace { phase: 50.0, ..TrapPlace::DEFAULT }.for_shape(TrapType::Sine).dist(TrapType::Sine, x, y);
+        assert_eq!(a.to_bits(), b.to_bits());
+    }
+    // Four: every point on any of the four curves is on the trap, and a point is as near as the
+    // nearest curve.
+    let four = sine(4);
+    for k in 1..=4u32 {
+        for x in [-0.9, -0.2, 0.1, 0.55] {
+            let y = SINE_AMP * (f64::from(k) * SINE_FREQ * x).sin();
+            let d = four.dist(TrapType::Sine, x, y);
+            assert!(d < 1e-12, "harmonic {k} at {x}: {d}");
+        }
+    }
+    let each = |x: f64, y: f64| {
+        (1..=4u32)
+            .map(|k| {
+                let u = SINE_FREQ * x;
+                let (s, c) = (f64::from(k) * u).sin_cos();
+                (y - SINE_AMP * s).abs() / (1.0 + (SINE_AMP * SINE_FREQ * f64::from(k) * c).powi(2)).sqrt()
+            })
+            .fold(f64::INFINITY, f64::min)
+    };
+    for (x, y) in [(0.3, 0.1), (-1.2, -0.2), (0.7, 0.29)] {
+        assert!((four.dist(TrapType::Sine, x, y) - each(x, y)).abs() < 1e-12);
+    }
+    // The phase moves the whole pattern along itself, as it moves the wave.
+    let shift = 30.0f64.to_radians() / SINE_FREQ;
+    let shifted = TrapPlace { phase: 30.0, ..four };
+    assert!((shifted.dist(TrapType::Sine, 0.2, 0.15) - four.dist(TrapType::Sine, 0.2 + shift, 0.15)).abs() < 1e-12);
+    // Kept only by the sine wave, clamped, in the key; the waves' tier above one.
+    assert_eq!((sine(0).sine_harmonics, sine(999).sine_harmonics), (HARMONICS_MIN, HARMONICS_MAX));
+    for t in TrapType::ALL.into_iter().filter(|&t| t != TrapType::Sine) {
+        assert!(!t.spec().overlaid, "{t:?}");
+        assert_eq!(TrapPlace { sine_harmonics: 6, ..TrapPlace::DEFAULT }.for_shape(t).sine_harmonics, 1, "{t:?}");
+        assert_eq!(t.tier_for(TrapPlace { sine_harmonics: 6, ..TrapPlace::DEFAULT }.for_shape(t)), t.spec().tier);
+    }
+    assert_ne!(sine(2).bits(), sine(3).bits());
+    assert_eq!((TrapType::Sine.tier_for(sine(1)), TrapType::Sine.tier_for(sine(2))), (TrapTier::Extra, TrapTier::Waves));
+    // The count each shape draws with.
+    let both = TrapPlace { harmonics: 7, sine_harmonics: 3, ..TrapPlace::DEFAULT };
+    assert_eq!((both.count(TrapType::Sine), both.count(TrapType::SquareWave)), (3, 7));
+}
+
 /// The square wave is summed from its harmonics (user 2026-11-25): one is a sine wave of height
 /// A·4/π; more come nearer the square wave of height A, its plateau at a quarter period and its
 /// steep side at the origin; the count is kept only by the square wave, clamped, and is in the key.

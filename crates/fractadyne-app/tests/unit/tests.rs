@@ -363,9 +363,9 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "iter_div",
     "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "interior_fit", "trap",
     // Written only with a trap moved, turned or sized (F4).
-    "trap_x", "trap_y", "trap_rotation", "trap_size", "trap_phase", "trap_harmonics",
+    "trap_x", "trap_y", "trap_rotation", "trap_size", "trap_phase", "trap_harmonics", "trap_sine_harmonics",
     "interior_trap", "interior_trap_x", "interior_trap_y", "interior_trap_rotation", "interior_trap_size", "interior_trap_phase",
-    "interior_trap_harmonics",
+    "interior_trap_harmonics", "interior_trap_sine_harmonics",
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
     // Written only with the relief light on, and its slope from the distance (C5).
     "light_steep", "light_steep_px", "light_highlight", "light_shininess", "light_highlight_color",
@@ -1579,6 +1579,10 @@ fn the_iteration_hash_keys_what_is_accumulated() {
     let wave = |n: u32| crate::TrapPlace { harmonics: n, ..crate::TrapPlace::DEFAULT };
     assert_ne!(placed(trap, crate::Trap::new(TrapType::SquareWave, wave(3))), placed(trap, crate::Trap::new(TrapType::SquareWave, wave(12))));
     assert_eq!(placed(trap, crate::Trap::new(TrapType::Sinc, wave(3))), placed(trap, crate::Trap::new(TrapType::Sinc, wave(12))));
+    // ...and the sine wave's overlaid ones, for it alone.
+    let sine = |n: u32| crate::TrapPlace { sine_harmonics: n, ..crate::TrapPlace::DEFAULT };
+    assert_ne!(placed(trap, crate::Trap::new(TrapType::Sine, sine(1))), placed(trap, crate::Trap::new(TrapType::Sine, sine(4))));
+    assert_eq!(placed(trap, crate::Trap::new(TrapType::SquareWave, sine(1))), placed(trap, crate::Trap::new(TrapType::SquareWave, sine(4))));
 }
 
 /// The trap phase animation's pacing (user 2026-11-25, "it seems to be blocky"): a step only once the

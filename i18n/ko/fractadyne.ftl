@@ -2789,6 +2789,8 @@ panel-trap-phase-animate-hover = 속도 슬라이더의 빠르기로 위상을 �
 # The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
 panel-trap-harmonics = 고조파
 panel-trap-harmonics-hover = 사각파의 홀수 고조파를 몇 개 더할지 정합니다. 1은 사인파이며, 많을수록 모서리가 더 날카롭고 옆면이 더 가팔라집니다. 하나 늘 때마다 모든 궤도의 모든 단계에서 계산이 조금 늘어납니다. --render에서는 --trap-harmonics로도 쓸 수 있습니다.
+# The sine wave trap's overlaid harmonics (user 2026-11-25): the Harmonics row under the sine wave.
+panel-trap-sine-harmonics-hover = 사인파의 고조파를 몇 개 같은 높이로 겹쳐 그릴지 정합니다. 1은 파형만, 2는 두 배 주파수의 파형을 더하고, 3은 세 배 주파수의 파형을 더하는 식입니다. 하나 늘 때마다 모든 궤도의 모든 단계에서 계산이 조금 늘어납니다. --render에서는 --trap-sine-harmonics로도 쓸 수 있습니다.
 panel-inside = 내부
 panel-inside-hover = 집합 내부를 무엇으로 칠할지.
 panel-inside-color-hover = 집합 내부의 색.

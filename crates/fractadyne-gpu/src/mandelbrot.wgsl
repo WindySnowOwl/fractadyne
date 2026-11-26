@@ -1068,8 +1068,8 @@ struct IterU {
     trap_in_phase: f32,
     trap_in_enabled: u32,
     trap_in_type: u32,
-    // The square wave's harmonics (lib.rs `trap_in_uniform`), the trap's and the inside's own: what
-    // were the row's padding words.
+    // Each trap's count (lib.rs `trap_in_uniform`), the trap's and the inside's own: the square
+    // wave's harmonics, the sine wave's overlaid ones. What were the row's padding words.
     trap_harm: u32,
     trap_in_harm: u32,
 };
@@ -1588,6 +1588,9 @@ fn trap_extra_dist(w: vec2<f32>, ty: u32, phase: f32, harm: u32) -> f32 {
         let h = clamp(dot(p, ba) / dot(ba, ba), 0.0, 1.0);
         return length(p - ba * h);
     }
+    // The sine wave with its harmonics overlaid (user 2026-11-25): in the waves' pipelines only, so
+    // the Extra pipelines keep the plain wave below exactly as they had it.
+    if (TRAP_WAVES && ty == TRAP_SINE && harm > 1u) { return trap_sine_overlaid(w, phase, harm); }
     if (ty == TRAP_SINE) {
         // Shifted along itself by the phase (user 2026-11-25; core `TrapType::unit_dist_at`).
         let k = TRAP_SINE_FREQ * w.x + phase;
@@ -1624,6 +1627,25 @@ fn trap_sinc(w: vec2<f32>) -> f32 {
         df = (v * cos(v) - sin(v)) / v2;
     }
     return trap_curve_dist(w, f, TRAP_SINC_FREQ * df);
+}
+// The sine wave and its next harmonics at the same height, the nearest of the curves
+// TRAP_SINE_AMP * sin(k u), k = 1 to `harm`, u = TRAP_SINE_FREQ * x + phase (core `sine_overlaid`, the
+// same forms): each harmonic's angle the last one's turned by u.
+fn trap_sine_overlaid(w: vec2<f32>, phase: f32, harm: u32) -> f32 {
+    let u = TRAP_SINE_FREQ * w.x + phase;
+    let s1 = sin(u);
+    let c1 = cos(u);
+    var s = s1;
+    var c = c1;
+    var best: f32 = 3.0e38;
+    let n = min(harm, TRAP_HARMONICS_MAX);
+    for (var k = 1u; k <= n; k = k + 1u) {
+        best = min(best, trap_curve_dist(w, TRAP_SINE_AMP * s, TRAP_SINE_AMP * TRAP_SINE_FREQ * f32(k) * c));
+        let next = s * c1 + c * s1;
+        c = c * c1 - s * s1;
+        s = next;
+    }
+    return best;
 }
 // The square wave: its Fourier series TRAP_SINE_AMP * (4/pi) * sum of sin((2k-1) u) / (2k-1) over the
 // first `harm` odd harmonics, u = TRAP_SINE_FREQ * x + phase (core `square_wave`, the same sum), each

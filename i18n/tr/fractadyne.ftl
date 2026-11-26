@@ -2861,6 +2861,8 @@ panel-trap-phase-animate-hover = Fazı zaman içinde Hız kaydırıcısının h�
 # The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
 panel-trap-harmonics = Harmonikler
 panel-trap-harmonics-hover = Kare dalganın kaç tek harmoniğinin toplanacağı: 1 bir sinüs dalgasıdır, daha fazlası köşelerini keskinleştirir ve kenarlarını dikleştirir. Her biri, her yörüngenin her adımında biraz daha hesap demektir. --render için --trap-harmonics de vardır.
+# The sine wave trap's overlaid harmonics (user 2026-11-25): the Harmonics row under the sine wave.
+panel-trap-sine-harmonics-hover = Sinüs dalgasının kaç harmoniğinin, her biri onun yüksekliğinde, üzerine çizileceği: 1 yalnızca dalgadır, 2 iki katı frekanslı dalgayı ekler, 3 üç katını ve böyle devam eder. Her biri, her yörüngenin her adımında biraz daha hesap demektir. --render için --trap-sine-harmonics de vardır.
 panel-inside = İç kısım
 panel-inside-hover = Kümenin içini neyin renklendirdiği.
 panel-inside-color-hover = Kümenin içinin rengi.

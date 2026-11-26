@@ -353,7 +353,7 @@ impl ExportRequest {
 
     /// Which trap shapes this request's iterate pipeline needs compiled in ([`crate::trap_tier`]).
     pub fn trap_tier(&self) -> fractadyne_core::coloring::TrapTier {
-        crate::trap_tier(self.iter_stats(), self.trap_type, self.trap_in)
+        crate::trap_tier(self.iter_stats(), self.trap_type, self.trap_place, self.trap_in)
     }
 
     /// The reference storage buffer: the orbit, its BLA tree from index `orbit.len()`, then the
@@ -2054,8 +2054,8 @@ impl<'a> TileRenderer<'a> {
             map: req.map,
             fold: self.fold,
             trap: crate::trap_uniform(req.trap_place),
-            trap_in: crate::trap_in_uniform(req.trap_place, req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
-            trap_in_row: crate::trap_in_uniform(req.trap_place, req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
+            trap_in: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
+            trap_in_row: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
         };
         queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3145,8 +3145,8 @@ fn render_iter_tiled_impl(
                 map: req.map,
                 fold,
                 trap: if accum { crate::trap_uniform(req.trap_place) } else { crate::TrapU::default() },
-                trap_in: crate::trap_in_uniform(req.trap_place, req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
-                trap_in_row: crate::trap_in_uniform(req.trap_place, req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
+                trap_in: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
+                trap_in_row: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 

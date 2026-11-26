@@ -2870,6 +2870,8 @@ panel-trap-phase-animate-hover = Recorre la fase con el tiempo, al ritmo del con
 # The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
 panel-trap-harmonics = Armónicos
 panel-trap-harmonics-hover = Cuántos armónicos impares de la onda cuadrada se suman: 1 es una onda sinusoidal, y más hacen sus esquinas más nítidas y sus flancos más empinados. Cada uno es un poco más de cálculo en cada paso de cada órbita. También --trap-harmonics para --render.
+# The sine wave trap's overlaid harmonics (user 2026-11-25): the Harmonics row under the sine wave.
+panel-trap-sine-harmonics-hover = Cuántos armónicos de la onda sinusoidal se dibujan sobre ella, cada uno a su altura: 1 es la onda sola, 2 añade la onda del doble de su frecuencia, 3 la del triple, y así sucesivamente. Cada uno es un poco más de cálculo en cada paso de cada órbita. También --trap-sine-harmonics para --render.
 panel-inside = Interior
 panel-inside-hover = Qué colorea el interior del conjunto.
 panel-inside-color-hover = El color del interior del conjunto.

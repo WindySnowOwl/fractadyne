@@ -2870,6 +2870,8 @@ panel-trap-phase-animate-hover = Lässt die Phase im Lauf der Zeit durchlaufen, 
 # The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
 panel-trap-harmonics = Harmonische
 panel-trap-harmonics-hover = Wie viele der ungeraden Harmonischen der Rechteckwelle addiert werden: 1 ist eine Sinuswelle, mehr machen ihre Ecken schärfer und ihre Flanken steiler. Jede kostet in jedem Schritt jedes Orbits etwas mehr Rechenarbeit. Auch --trap-harmonics für --render.
+# The sine wave trap's overlaid harmonics (user 2026-11-25): the Harmonics row under the sine wave.
+panel-trap-sine-harmonics-hover = Wie viele Harmonische der Sinuswelle über ihr gezeichnet werden, jede in ihrer Höhe: 1 ist die Welle allein, 2 fügt die Welle der doppelten Frequenz hinzu, 3 die der dreifachen und so weiter. Jede kostet in jedem Schritt jedes Orbits etwas mehr Rechenarbeit. Auch --trap-sine-harmonics für --render.
 panel-inside = Innen
 panel-inside-hover = Was das Innere der Menge färbt.
 panel-inside-color-hover = Die Farbe des Inneren der Menge.

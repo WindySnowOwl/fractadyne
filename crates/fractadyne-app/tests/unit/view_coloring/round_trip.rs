@@ -31,9 +31,9 @@ fn scrambled() -> ViewColoring {
         stripe_tail: true,
         stripe_tail_len: 900,
         trap: TrapType::Circle,
-        trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6, phase: 0.0, harmonics: 20 },
+        trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6, phase: 0.0, harmonics: 20, sine_harmonics: 9 },
         interior_trap: Some(TrapType::Cross),
-        interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5, phase: 0.0, harmonics: 7 },
+        interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5, phase: 0.0, harmonics: 7, sine_harmonics: 11 },
         light: true,
         light_angle: -1.25,
         light_height: 3.5,
@@ -95,7 +95,7 @@ fn variants() -> Vec<ViewColoring> {
         v.push(ViewColoring { method: ColorMethod::OrbitTrap, trap: t, ..d.clone() });
         // Placed (F4): moved, turned and sized, each shape writing what it uses (a wave its phase, the
         // square wave its harmonics).
-        let place = crate::TrapPlace { center: [-0.75, 1.5], rotation: -40.0, size: 2.5, phase: 60.0, harmonics: 12 }.for_shape(t);
+        let place = crate::TrapPlace { center: [-0.75, 1.5], rotation: -40.0, size: 2.5, phase: 60.0, harmonics: 12, sine_harmonics: 5 }.for_shape(t);
         v.push(ViewColoring { method: ColorMethod::OrbitTrap, trap: t, trap_place: place, ..d.clone() });
     }
     // The trap method's inside with a trap of its own: a cross moved and turned, a circle sized.
@@ -106,6 +106,9 @@ fn variants() -> Vec<ViewColoring> {
     // The inside's own sine wave, shifted (its phase key).
     let phased = crate::TrapPlace { phase: -45.0, ..crate::TrapPlace::DEFAULT };
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_trap: Some(TrapType::Sine), interior_trap_place: phased, ..d.clone() });
+    // The inside's own sine wave with three harmonics overlaid (its sine harmonics key).
+    let overlaid = crate::TrapPlace { sine_harmonics: 3, ..crate::TrapPlace::DEFAULT };
+    v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_trap: Some(TrapType::Sine), interior_trap_place: overlaid, ..d.clone() });
     // The inside's own square wave, of three harmonics (its harmonics key).
     let three = crate::TrapPlace { harmonics: 3, ..crate::TrapPlace::DEFAULT };
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_trap: Some(TrapType::SquareWave), interior_trap_place: three, ..d.clone() });

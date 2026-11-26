@@ -3075,6 +3075,8 @@ panel-trap-phase-animate-hover = Cycle the phase over time, at the Speed slider'
 # The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
 panel-trap-harmonics = Harmonics
 panel-trap-harmonics-hover = How many of the square wave's odd harmonics are added up: 1 is a sine wave, and more make its corners sharper and its sides steeper. Each one is a little more calculation in every step of every orbit. Also --trap-harmonics for --render.
+# The sine wave trap's overlaid harmonics (user 2026-11-25): the Harmonics row under the sine wave.
+panel-trap-sine-harmonics-hover = How many of the sine wave's harmonics are drawn over it, each at its height: 1 is the wave alone, 2 adds the wave of twice its frequency, 3 the wave of three times, and so on. Each one is a little more calculation in every step of every orbit. Also --trap-sine-harmonics for --render.
 # With the Orbit trap method and the inside colored by the trap: the inside's own trap, or the method's.
 panel-inside-trap = Inside trap
 panel-inside-trap-same = Same as the method

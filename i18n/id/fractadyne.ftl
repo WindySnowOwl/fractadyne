@@ -2789,6 +2789,8 @@ panel-trap-phase-animate-hover = Memutar fase seiring waktu, dengan laju pengges
 # The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
 panel-trap-harmonics = Harmonik
 panel-trap-harmonics-hover = Berapa banyak harmonik ganjil gelombang persegi yang dijumlahkan: 1 adalah gelombang sinus, dan lebih banyak membuat sudutnya lebih tajam dan sisinya lebih curam. Masing-masing menambah sedikit perhitungan di setiap langkah setiap orbit. Juga --trap-harmonics untuk --render.
+# The sine wave trap's overlaid harmonics (user 2026-11-25): the Harmonics row under the sine wave.
+panel-trap-sine-harmonics-hover = Berapa banyak harmonik gelombang sinus yang digambar di atasnya, masing-masing setinggi gelombang itu: 1 adalah gelombang itu saja, 2 menambahkan gelombang dengan frekuensi dua kali lipat, 3 tiga kali lipat, dan seterusnya. Masing-masing menambah sedikit perhitungan di setiap langkah setiap orbit. Juga --trap-sine-harmonics untuk --render.
 panel-inside = Bagian dalam
 panel-inside-hover = Apa yang mewarnai bagian dalam himpunan.
 panel-inside-color-hover = Warna bagian dalam himpunan.

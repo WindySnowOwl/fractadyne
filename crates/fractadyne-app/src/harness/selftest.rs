@@ -7472,6 +7472,8 @@ impl FractadyneApp {
                 (M::OrbitTrap, T::Sinc, 1.0, at, "orbit-trap-sinc"),
                 (M::OrbitTrap, T::SquareWave, 1.0, at, "orbit-trap-square-wave"),
                 (M::OrbitTrap, T::SquareWave, 1.0, P { harmonics: 12, phase: 40.0, ..at }, "orbit-trap-square-wave-12-phased"),
+                // The sine wave with four harmonics overlaid (the waves' pipelines), shifted.
+                (M::OrbitTrap, T::Sine, 1.0, P { sine_harmonics: 4, phase: 30.0, ..at }, "orbit-trap-sine-4-overlaid"),
                 (M::TriangleIneq, T::Point, 1.0, at, "triangle-ineq"),
                 (M::Stripe, T::Point, 5.0, at, "stripe"),
             ] {
@@ -7997,6 +7999,9 @@ impl FractadyneApp {
                 // judge (47 colors, the nudge 0.2%; 2026-11-25). The default count is the same here.
                 (T::SquareWave, P { phase: 90.0, ..d }, "square wave at phase 90"),
                 (T::SquareWave, P { harmonics: 12, phase: 40.0, ..d }, "square wave of 12 harmonics at phase 40"),
+                // The sine wave with its harmonics overlaid (user 2026-11-25): the count through the
+                // uniform, the waves' pipelines and the aggregates.
+                (T::Sine, P { sine_harmonics: 4, phase: 30.0, ..d }, "sine wave with 4 harmonics overlaid at phase 30"),
             ] {
                 self.coloring.trap_type = shape;
                 self.coloring.trap_place = place;
@@ -11776,6 +11781,8 @@ zoom = \"1e94\"
                 interior_trap_phase: -45.0,
                 trap_harmonics: 9,
                 interior_trap_harmonics: 3,
+                trap_sine_harmonics: 4,
+                interior_trap_sine_harmonics: 2,
                 custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
                 custom_palette_flat: true,
                 custom_segments: vec![fractadyne_state::PaletteSegment {

@@ -252,6 +252,13 @@ pub struct ColoringSpec {
     pub trap_harmonics: u32,
     #[serde(default = "default_trap_harmonics")]
     pub interior_trap_harmonics: u32,
+    /// How many of the sine wave trap's harmonics are drawn over it, the method's and the inside's own
+    /// (`fractadyne_core::coloring::TrapPlace::sine_harmonics`, 1 to 32); 1, the wave alone, and
+    /// absent from every session from before it.
+    #[serde(default = "default_sine_harmonics")]
+    pub trap_sine_harmonics: u32,
+    #[serde(default = "default_sine_harmonics")]
+    pub interior_trap_sine_harmonics: u32,
     /// Custom gradient stops `[pos, r, g, b]` (DISPLAY-space RGB) from the gradient editor.
     #[serde(default)]
     pub custom_palette: Vec<[f32; 4]>,
@@ -921,6 +928,10 @@ fn default_trap_harmonics() -> u32 {
     DEFAULT_TRAP_HARMONICS
 }
 
+fn default_sine_harmonics() -> u32 {
+    1
+}
+
 impl Default for ColoringSpec {
     fn default() -> Self {
         Self {
@@ -975,6 +986,8 @@ impl Default for ColoringSpec {
             interior_trap_phase: 0.0,
             trap_harmonics: DEFAULT_TRAP_HARMONICS,
             interior_trap_harmonics: DEFAULT_TRAP_HARMONICS,
+            trap_sine_harmonics: 1,
+            interior_trap_sine_harmonics: 1,
             custom_palette: Vec::new(),
             custom_palette_flat: false,
             custom_segments: Vec::new(),
