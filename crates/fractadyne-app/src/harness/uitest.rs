@@ -3391,7 +3391,15 @@ impl FractadyneApp {
                 self.set_show_mode(crate::ShowMode::Set);
                 self.set_fractal(crate::FractalKind::Mandelbrot);
                 self.reset_view();
-                self.render_cfg.auto_iter = true;
+                // Fixed iterations for the inside steps, not automatic ones: on PLUTO's two cards the
+                // automatic budget was still moving across these steps (the RX 6800 XT 8192 at
+                // inside-solid, 2000 at inside-color; the RTX 3070 5120, then 8192), each move a pass
+                // of its own, which inside-color's recolor check (no pass) counted against the color
+                // on every walk (2026-11-26). 2000 is what the automatic budget is here on the RTX
+                // 3080 in a full walk (the earlier steps' count is its floor at this depth), so its
+                // pictures are unchanged.
+                self.render_cfg.auto_iter = false;
+                self.render_cfg.max_iter = 2_000;
                 self.coloring.color_method = crate::ColorMethod::Smooth;
                 self.coloring.use_binary = false;
                 self.coloring.use_duotone = false;
