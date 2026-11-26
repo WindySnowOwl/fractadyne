@@ -57,6 +57,8 @@ pub(crate) struct HarnessModes {
     /// the layout actually did rather than against the panel's nominal width.
     pub(crate) uitest_central_w: Option<f32>,
     pub(crate) uitest_panel_w: Option<f32>,
+    /// The supersampling the walk's `trap-phase-animating` screen replaced, put back by the next.
+    pub(crate) uitest_held_aa: Option<u32>,
     /// The shader key the `formula-apply-async` step applied, so its record can check that the
     /// view switched to exactly that formula.
     pub(crate) uitest_async_key: Option<u64>,

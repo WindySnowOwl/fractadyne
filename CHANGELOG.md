@@ -50,6 +50,12 @@ detail is in the git history.
   one. A view file keeps the count (`trap_harmonics`, and `interior_trap_harmonics` for the inside's
   own trap), and on the command line they are `--trap sinc`, `--trap square-wave` and
   `--trap-harmonics N`.
+- **A turning trap phase stays sharp.** With Animate the phase on, the view was drawn blocky: every
+  frame changed the trap, so it was always a fresh, quick picture made smaller to keep up, never the
+  finished one. Now the phase turns a step each time the picture of the last step is finished, at
+  the Speed slider's rate where the view keeps up and slower where it cannot, and the view shows only
+  finished pictures, one sample a pixel while it turns. Turn the animation off and it supersamples
+  as before.
 - **Render the wave trap's phase turning.** A tour's keyframes can state the trap's phase
   (`trap_phase`, and `interior_trap_phase` for the inside's own trap), in degrees and never wrapped:
   it turns along the glide to the next keyframe, so 0 at one and 360 at the next is one full wave.

@@ -1307,7 +1307,9 @@ impl FractadyneApp {
                 }
                 let interacting = now - self.pointer.settle_t[0] < SETTLE_DELAY;
                 // Progressive settle AA (see `nav_and_draw`): refine 1×→2×→4×→… over settled frames.
-                let aa_target = if interacting || self.tour_playing() {
+                let aa_target = if interacting || self.tour_playing() || self.trap_phase_animating() {
+                    // (A turning trap phase likewise: each step waits for its picture to finish,
+                    // `trap_phase_step`, and 4x4 samples a pixel made that 16 times as long.)
                     // A scripted tour holds for a few seconds and then moves again, so the settle
                     // ramp — which exists to sharpen a view an idle USER has stopped on — buys
                     // almost nothing here and costs quadratically: ss=8 is 64 samples per pixel.
