@@ -245,6 +245,13 @@ pub struct ColoringSpec {
     pub trap_phase: f32,
     #[serde(default)]
     pub interior_trap_phase: f32,
+    /// How many odd harmonics the square wave trap sums, the method's and the inside's own
+    /// (`fractadyne_core::coloring::TrapPlace::harmonics`, 1 to 32); 5, and absent from every session
+    /// from before it.
+    #[serde(default = "default_trap_harmonics")]
+    pub trap_harmonics: u32,
+    #[serde(default = "default_trap_harmonics")]
+    pub interior_trap_harmonics: u32,
     /// Custom gradient stops `[pos, r, g, b]` (DISPLAY-space RGB) from the gradient editor.
     #[serde(default)]
     pub custom_palette: Vec<[f32; 4]>,
@@ -906,6 +913,14 @@ fn default_trap_size() -> f32 {
     1.0
 }
 
+/// `fractadyne_core::coloring::HARMONICS_DEFAULT` (this crate does not depend on core; the app's
+/// tests hold the two equal).
+pub const DEFAULT_TRAP_HARMONICS: u32 = 5;
+
+fn default_trap_harmonics() -> u32 {
+    DEFAULT_TRAP_HARMONICS
+}
+
 impl Default for ColoringSpec {
     fn default() -> Self {
         Self {
@@ -958,6 +973,8 @@ impl Default for ColoringSpec {
             interior_trap_size: default_trap_size(),
             trap_phase: 0.0,
             interior_trap_phase: 0.0,
+            trap_harmonics: DEFAULT_TRAP_HARMONICS,
+            interior_trap_harmonics: DEFAULT_TRAP_HARMONICS,
             custom_palette: Vec::new(),
             custom_palette_flat: false,
             custom_segments: Vec::new(),

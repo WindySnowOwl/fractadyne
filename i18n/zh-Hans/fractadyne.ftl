@@ -2781,11 +2781,15 @@ panel-tail-length = 尾部长度
 panel-tail-length-unit = 次
 panel-tail-length-hover = 以迭代次数计的窗口长度。短窗口（8–32）在任何深度下都能产生经典的粗犷色带；更长的窗口会再次趋向于平均成一种纯色，因为长混沌轨道的条纹项会被平均掉。
 panel-trap-shape = 陷阱形状
-# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+# A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
+# the Speed slider.
 panel-trap-phase = 相位
-panel-trap-phase-hover = 沿正弦波自身平移：每 360° 一个完整波长。每个相位绘出各自的条带图案。
+panel-trap-phase-hover = 沿波形自身平移：每 360° 一个完整波长。每个相位绘出各自的条带图案。
 panel-trap-phase-animate = 动画相位
 panel-trap-phase-animate-hover = 按速度滑块的速率随时间循环相位。每一帧都会重新计算视图，因此深层视图动画较慢。
+# The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
+panel-trap-harmonics = 谐波
+panel-trap-harmonics-hover = 方波叠加多少个奇次谐波：1 为正弦波，越多则拐角越锐利、侧边越陡。每多一个，每条轨道的每一步都要多算一点。对于 --render，也可以使用 --trap-harmonics。
 panel-inside = 内部
 panel-inside-hover = 集合内部的着色方式。
 panel-inside-color-hover = 集合内部的颜色。

@@ -2852,11 +2852,15 @@ panel-tail-length = Kuyruk uzunluğu
 panel-tail-length-unit = yin.
 panel-tail-length-hover = Yineleme cinsinden pencere uzunluğu. Kısa pencereler (8–32) her derinlikte klasik kalın bantları verir; daha uzun olanlar yeniden düz bir renge doğru ortalanır, çünkü uzun, kaotik bir yörüngenin şerit terimi ortalamada birbirini götürür.
 panel-trap-shape = Tuzak şekli
-# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+# A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
+# the Speed slider.
 panel-trap-phase = Faz
-panel-trap-phase-hover = Sinüs dalgasını kendi boyunca kaydırır: her 360°'de bir tam dalga. Her faz kendi bant desenini çizer.
+panel-trap-phase-hover = Dalgayı kendi boyunca kaydırır: her 360°'de bir tam dalga. Her faz kendi bant desenini çizer.
 panel-trap-phase-animate = Fazı canlandır
 panel-trap-phase-animate-hover = Fazı zaman içinde Hız kaydırıcısının hızında döndürür. Her kare görünümü yeniden hesaplar, bu yüzden derin bir görünüm yavaş canlanır.
+# The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
+panel-trap-harmonics = Harmonikler
+panel-trap-harmonics-hover = Kare dalganın kaç tek harmoniğinin toplanacağı: 1 bir sinüs dalgasıdır, daha fazlası köşelerini keskinleştirir ve kenarlarını dikleştirir. Her biri, her yörüngenin her adımında biraz daha hesap demektir. --render için --trap-harmonics de vardır.
 panel-inside = İç kısım
 panel-inside-hover = Kümenin içini neyin renklendirdiği.
 panel-inside-color-hover = Kümenin içinin rengi.

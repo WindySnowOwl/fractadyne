@@ -2952,11 +2952,15 @@ panel-tail-length = Długość ogona
 panel-tail-length-unit = it.
 panel-tail-length-hover = Długość okna w iteracjach. Krótkie okna (8–32) dają klasyczne wyraźne pasma na każdej głębokości; dłuższe znów uśredniają się do płaskiego koloru, bo człon pasków długiej chaotycznej orbity się uśrednia.
 panel-trap-shape = Kształt pułapki
-# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+# A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
+# the Speed slider.
 panel-trap-phase = Faza
-panel-trap-phase-hover = Przesuwa falę sinusoidalną wzdłuż niej samej: pełna fala co 360°. Każda faza rysuje własny wzór pasm.
+panel-trap-phase-hover = Przesuwa falę wzdłuż niej samej: pełna fala co 360°. Każda faza rysuje własny wzór pasm.
 panel-trap-phase-animate = Animuj fazę
 panel-trap-phase-animate-hover = Przesuwa fazę w czasie, w tempie suwaka Szybkość. Każda klatka oblicza widok od nowa, więc głęboki widok animuje się powoli.
+# The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
+panel-trap-harmonics = Harmoniczne
+panel-trap-harmonics-hover = Ile nieparzystych harmonicznych fali prostokątnej jest sumowanych: 1 to fala sinusoidalna, więcej daje ostrzejsze narożniki i bardziej strome zbocza. Każda to trochę więcej obliczeń w każdym kroku każdej orbity. Także --trap-harmonics dla --render.
 panel-inside = Wnętrze
 panel-inside-hover = Czym kolorowane jest wnętrze zbioru.
 panel-inside-color-hover = Kolor wnętrza zbioru.

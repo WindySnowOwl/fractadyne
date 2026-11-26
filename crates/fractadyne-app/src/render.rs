@@ -10775,14 +10775,15 @@ impl FractadyneApp {
             });
             self.live_offer(&params, interacting, real, &center_bf, log2mag, aim, panel_res);
         }
-        // A frame that draws a trap shape of F4 part 3 needs the iterate pipelines with them compiled
-        // in: have them ready here, timed, rather than built in the paint callback, whose stall guards
-        // read a cold compile's seconds as a GPU pass (a shot on the RTX 3080, 2026-11-24: 8.4 s, the
-        // dead-man and the budget-blind tripwire). A custom formula's own pair is built with it there.
-        if params.trap_extra() && fractal != FractalKind::Custom {
+        // A frame that draws a trap shape above the base needs the iterate pipelines of its tier: have
+        // them ready here, timed, rather than built in the paint callback, whose stall guards read a
+        // cold compile's seconds as a GPU pass (a shot on the RTX 3080, 2026-11-24: 8.4 s, the dead-man
+        // and the budget-blind tripwire). A custom formula's own pair is built with it there.
+        let tier = params.trap_tier();
+        if tier != fractadyne_gpu::TrapTier::Base && fractal != FractalKind::Custom {
             if let Some(rs) = self.render_state.as_ref() {
                 let t = std::time::Instant::now();
-                if fractadyne_gpu::prepare_trap_shapes_now(rs) {
+                if fractadyne_gpu::prepare_trap_shapes_now(rs, tier) {
                     let ms = t.elapsed().as_secs_f64() * 1000.0;
                     self.perf.ui_compile_ms += ms;
                     crate::diag::log_line(

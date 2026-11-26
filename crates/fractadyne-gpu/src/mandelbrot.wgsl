@@ -1068,8 +1068,10 @@ struct IterU {
     trap_in_phase: f32,
     trap_in_enabled: u32,
     trap_in_type: u32,
-    trap_in_pad1: u32,
-    trap_in_pad2: u32,
+    // The square wave's harmonics (lib.rs `trap_in_uniform`), the trap's and the inside's own: what
+    // were the row's padding words.
+    trap_harm: u32,
+    trap_in_harm: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -1535,7 +1537,11 @@ fn aux_init(z0: vec2<f32>) -> Aux {
 // chain below folds to the one before them, so those frames run the code they ran. Off, such a shape
 // would measure as the point: every pipeline that can draw one must be built with it on.
 override TRAP_EXTRA: bool = false;
-fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, size: f32, inv: f32, phase: f32) -> f32 {
+// The sinc and the square wave (user 2026-11-25), compiled in only with TRAP_EXTRA and only for a frame
+// that draws one (core `TrapTier::Waves`): kept out of the TRAP_EXTRA pipelines so the six shapes there
+// keep their speed (code added there for the F4.4 outline cost them 7-10% on the RX 6800 XT).
+override TRAP_WAVES: bool = false;
+fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, size: f32, inv: f32, phase: f32, harm: u32) -> f32 {
     var w = zf;
     if (on != 0u) {
         let d = zf - c;
@@ -1544,7 +1550,7 @@ fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, siz
     var s: f32;
     if (ty == TRAP_CROSS) { s = min(abs(w.x), abs(w.y)); }
     else if (ty == TRAP_CIRCLE) { s = abs(length(w) - 1.0); }
-    else if (TRAP_EXTRA) { s = trap_extra_dist(w, ty, phase); }
+    else if (TRAP_EXTRA) { s = trap_extra_dist(w, ty, phase, harm); }
     else { s = length(w); }
     if (on != 0u) { s = s * size; }
     return s;
@@ -1555,7 +1561,7 @@ fn trap_dist_of(zf: vec2<f32>, ty: u32, on: u32, c: vec2<f32>, t: vec2<f32>, siz
 // generated (`TRAP_STAR_INNER`, `TRAP_SINE_*`, `TRAP_S_RADIUS`). Exact distances with no angle taken
 // (reflections and dot products), so a frame that draws one carries few extra registers: the
 // angle-based forms cost 3% (measured 2026-11-24). Core's `TrapType::unit_dist` has the same forms.
-fn trap_extra_dist(w: vec2<f32>, ty: u32, phase: f32) -> f32 {
+fn trap_extra_dist(w: vec2<f32>, ty: u32, phase: f32, harm: u32) -> f32 {
     if (ty == TRAP_LINE) { return abs(w.y); }
     if (ty == TRAP_SQUARE) {
         // Inscribed in the unit circle, sides along the axes: half-side 1/sqrt 2.
@@ -1592,7 +1598,56 @@ fn trap_extra_dist(w: vec2<f32>, ty: u32, phase: f32) -> f32 {
         // The bottom bowl is the top one turned half a turn about the origin.
         return min(trap_s_bowl(w), trap_s_bowl(-w));
     }
+    if (TRAP_WAVES) {
+        if (ty == TRAP_SINC) { return trap_sinc(w); }
+        if (ty == TRAP_SQUARE_WAVE) { return trap_square_wave(w, phase, harm); }
+    }
     return length(w);
+}
+// How far w is from the curve whose height and slope at w.x are f and df, to first order (core
+// `curve_dist`).
+fn trap_curve_dist(w: vec2<f32>, f: f32, df: f32) -> f32 {
+    return abs(w.y - f) / sqrt(1.0 + df * df);
+}
+// The sinc y = sin(v)/v, v = TRAP_SINC_FREQ * x (core `sinc`, the same forms): near the center its
+// series, where the quotient's slope loses its digits to cancellation.
+fn trap_sinc(w: vec2<f32>) -> f32 {
+    let v = TRAP_SINC_FREQ * w.x;
+    let v2 = v * v;
+    var f: f32;
+    var df: f32;
+    if (abs(v) < 0.5) {
+        f = 1.0 - v2 / 6.0 * (1.0 - v2 / 20.0 * (1.0 - v2 / 42.0 * (1.0 - v2 / 72.0)));
+        df = -v / 3.0 * (1.0 - v2 / 10.0 * (1.0 - v2 / 28.0 * (1.0 - v2 / 54.0 * (1.0 - v2 / 88.0))));
+    } else {
+        f = sin(v) / v;
+        df = (v * cos(v) - sin(v)) / v2;
+    }
+    return trap_curve_dist(w, f, TRAP_SINC_FREQ * df);
+}
+// The square wave: its Fourier series TRAP_SINE_AMP * (4/pi) * sum of sin((2k-1) u) / (2k-1) over the
+// first `harm` odd harmonics, u = TRAP_SINE_FREQ * x + phase (core `square_wave`, the same sum), each
+// harmonic's angle the last one's turned by 2u, so one sine and cosine serve them all.
+fn trap_square_wave(w: vec2<f32>, phase: f32, harm: u32) -> f32 {
+    let u = TRAP_SINE_FREQ * w.x + phase;
+    let s1 = sin(u);
+    let c1 = cos(u);
+    let s2 = 2.0 * s1 * c1;
+    let c2 = c1 * c1 - s1 * s1;
+    var s = s1;
+    var c = c1;
+    var y: f32 = 0.0;
+    var dy: f32 = 0.0;
+    let n = min(harm, TRAP_HARMONICS_MAX);
+    for (var k = 0u; k < n; k = k + 1u) {
+        y = y + s / f32(2u * k + 1u);
+        dy = dy + c;
+        let next = s * c2 + c * s2;
+        c = c * c2 - s * s2;
+        s = next;
+    }
+    let h = TRAP_SINE_AMP * 1.2732395;
+    return trap_curve_dist(w, h * y, h * TRAP_SINE_FREQ * dy);
 }
 // The S curve's top bowl: the arc of radius TRAP_S_RADIUS about (0, TRAP_S_RADIUS) from angle 0
 // counterclockwise to 270 degrees, measured in its own frame (its bisector, 135 degrees, turned up;
@@ -1612,11 +1667,11 @@ fn trap_s_bowl(w: vec2<f32>) -> f32 {
     return abs(length(p) - r);
 }
 fn trap_dist(zf: vec2<f32>) -> f32 {
-    return trap_dist_of(zf, iu.trap_type, iu.trap_on, iu.trap_c, iu.trap_turn, iu.trap_size, iu.trap_inv, iu.trap_phase);
+    return trap_dist_of(zf, iu.trap_type, iu.trap_on, iu.trap_c, iu.trap_turn, iu.trap_size, iu.trap_inv, iu.trap_phase, iu.trap_harm);
 }
 // The inside's own trap's distance (`trap_in_*`), measured as `trap_dist` measures the trap's.
 fn trap_in_dist(zf: vec2<f32>) -> f32 {
-    return trap_dist_of(zf, iu.trap_in_type, iu.trap_in_on, iu.trap_in_c, iu.trap_in_turn, iu.trap_in_size, iu.trap_in_inv, iu.trap_in_phase);
+    return trap_dist_of(zf, iu.trap_in_type, iu.trap_in_on, iu.trap_in_c, iu.trap_in_turn, iu.trap_in_size, iu.trap_in_inv, iu.trap_in_phase, iu.trap_in_harm);
 }
 fn aux_step(a: ptr<function, Aux>, zf: vec2<f32>, cmag: f32, power_f: f32) {
     let st = iu.orbit_stats;

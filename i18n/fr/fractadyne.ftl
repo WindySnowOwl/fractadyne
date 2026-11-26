@@ -2861,11 +2861,15 @@ panel-tail-length = Longueur de queue
 panel-tail-length-unit = it
 panel-tail-length-hover = Longueur de la fenêtre en itérations. Les fenêtres courtes (8–32) donnent les bandes marquées classiques à toute profondeur ; les plus longues tendent de nouveau vers une couleur uniforme, car le terme de rayures d’une longue orbite chaotique se moyenne.
 panel-trap-shape = Forme du piège
-# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+# A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
+# the Speed slider.
 panel-trap-phase = Phase
-panel-trap-phase-hover = Décale l’onde sinusoïdale le long d’elle-même : une onde complète tous les 360°. Chaque phase dessine son propre motif de bandes.
+panel-trap-phase-hover = Décale l’onde le long d’elle-même : une onde complète tous les 360°. Chaque phase dessine son propre motif de bandes.
 panel-trap-phase-animate = Animer la phase
 panel-trap-phase-animate-hover = Fait défiler la phase au fil du temps, au rythme du curseur Vitesse. Chaque image recalcule la vue : une vue profonde s’anime lentement.
+# The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
+panel-trap-harmonics = Harmoniques
+panel-trap-harmonics-hover = Combien d’harmoniques impaires de l’onde carrée sont additionnées : 1 donne une onde sinusoïdale, davantage rendent ses coins plus nets et ses flancs plus raides. Chacune ajoute un peu de calcul à chaque pas de chaque orbite. Aussi --trap-harmonics pour --render.
 panel-inside = Intérieur
 panel-inside-hover = Ce qui colore l’intérieur de l’ensemble.
 panel-inside-color-hover = La couleur de l’intérieur de l’ensemble.

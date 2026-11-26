@@ -2860,11 +2860,15 @@ panel-tail-length = Compr. da cauda
 panel-tail-length-unit = it
 panel-tail-length-hover = Comprimento da janela em iterações. Janelas curtas (8–32) dão as faixas fortes clássicas em qualquer profundidade; as mais longas voltam a tender a uma cor chapada, já que o termo de listras de uma órbita caótica longa se anula na média.
 panel-trap-shape = Forma da armadilha
-# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+# A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
+# the Speed slider.
 panel-trap-phase = Fase
-panel-trap-phase-hover = Desloca a onda senoidal ao longo de si mesma: uma onda completa a cada 360°. Cada fase desenha seu próprio padrão de faixas.
+panel-trap-phase-hover = Desloca a onda ao longo de si mesma: uma onda completa a cada 360°. Cada fase desenha seu próprio padrão de faixas.
 panel-trap-phase-animate = Animar a fase
 panel-trap-phase-animate-hover = Percorre a fase ao longo do tempo, no ritmo do controle Velocidade. Cada quadro recalcula a vista, então uma vista profunda anima devagar.
+# The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
+panel-trap-harmonics = Harmônicos
+panel-trap-harmonics-hover = Quantos harmônicos ímpares da onda quadrada são somados: 1 é uma onda senoidal, e mais deixam seus cantos mais nítidos e seus lados mais íngremes. Cada um é um pouco mais de cálculo em cada passo de cada órbita. Também --trap-harmonics para --render.
 panel-inside = Interior
 panel-inside-hover = O que colore o interior do conjunto.
 panel-inside-color-hover = A cor do interior do conjunto.

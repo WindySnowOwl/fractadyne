@@ -3066,11 +3066,15 @@ panel-trap-rotation = Trap rotation
 panel-trap-rotation-hover = Turn the shape counterclockwise, in degrees. Also --trap-rotation for --render.
 panel-trap-size = Trap size
 panel-trap-size-hover = The shape's size: the circle's radius, the polygons' and the star's outer corners' distance from the center, 1 as the shape comes. Also --trap-size for --render.
-# The sine wave trap's phase (user 2026-11-25) and its animation, which uses the Speed slider.
+# A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
+# the Speed slider.
 panel-trap-phase = Phase
-panel-trap-phase-hover = Shift the sine wave along itself: a full wave every 360°. Each phase draws its own pattern of bands.
+panel-trap-phase-hover = Shift the wave along itself: a full wave every 360°. Each phase draws its own pattern of bands.
 panel-trap-phase-animate = Animate the phase
 panel-trap-phase-animate-hover = Cycle the phase over time, at the Speed slider's rate. Each frame calculates the view again, so a deep view animates slowly.
+# The square wave trap's harmonics (user 2026-11-25): how many of its odd harmonics are summed, 1 to 32.
+panel-trap-harmonics = Harmonics
+panel-trap-harmonics-hover = How many of the square wave's odd harmonics are added up: 1 is a sine wave, and more make its corners sharper and its sides steeper. Each one is a little more calculation in every step of every orbit. Also --trap-harmonics for --render.
 # With the Orbit trap method and the inside colored by the trap: the inside's own trap, or the method's.
 panel-inside-trap = Inside trap
 panel-inside-trap-same = Same as the method
@@ -4105,6 +4109,8 @@ trap-hexagon = Hexagon
 trap-star = Star
 trap-sine = Sine wave
 trap-s-curve = S curve
+trap-sinc = Sinc
+trap-square-wave = Square wave
 # Palette animation: none.
 palette-anim-off = Off
 palette-anim-forward = Forward

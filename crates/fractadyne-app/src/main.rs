@@ -3338,6 +3338,8 @@ impl ColoringLabel for TrapType {
             TrapType::Star => tr!(trap_star),
             TrapType::Sine => tr!(trap_sine),
             TrapType::SCurve => tr!(trap_s_curve),
+            TrapType::Sinc => tr!(trap_sinc),
+            TrapType::SquareWave => tr!(trap_square_wave),
         }
     }
 }
@@ -3377,8 +3379,10 @@ pub(crate) mod slider_range {
     /// `--trap-rotation`, `--trap-size`; coloring plan F4). The size's slider is logarithmic.
     pub(crate) const TRAP_CENTER: RangeInclusive<f32> = -4.0..=4.0;
     pub(crate) const TRAP_ROTATION: RangeInclusive<f32> = -180.0..=180.0;
-    /// The sine wave trap's phase, degrees: a full wave.
+    /// The waves' phase, degrees: a full wave.
     pub(crate) const TRAP_PHASE: RangeInclusive<f32> = -180.0..=180.0;
+    /// The square wave's harmonics (`--trap-harmonics`).
+    pub(crate) const TRAP_HARMONICS: RangeInclusive<u32> = fractadyne_core::coloring::HARMONICS_MIN..=fractadyne_core::coloring::HARMONICS_MAX;
     pub(crate) const TRAP_SIZE: RangeInclusive<f32> = 0.01..=10.0;
     /// The palette's brightness, contrast and saturation (`--palette-brightness`, ...;
     /// `fractadyne_color::adjust`).
@@ -3401,21 +3405,29 @@ pub(crate) fn equalize_of(v: f32) -> f32 {
 /// The trap's placement a spec carries (coloring plan F4), clamped into the panel's ranges; an
 /// unreadable number takes its default.
 pub(crate) fn trap_place_of(s: &fractadyne_state::ColoringSpec) -> TrapPlace {
-    trap_place_from(s.trap_x, s.trap_y, s.trap_rotation, s.trap_size, s.trap_phase)
+    trap_place_from(s.trap_x, s.trap_y, s.trap_rotation, s.trap_size, s.trap_phase, s.trap_harmonics)
 }
 
 /// The inside's own trap's placement a spec carries, as [`trap_place_of`].
 pub(crate) fn interior_trap_place_of(s: &fractadyne_state::ColoringSpec) -> TrapPlace {
-    trap_place_from(s.interior_trap_x, s.interior_trap_y, s.interior_trap_rotation, s.interior_trap_size, s.interior_trap_phase)
+    trap_place_from(
+        s.interior_trap_x,
+        s.interior_trap_y,
+        s.interior_trap_rotation,
+        s.interior_trap_size,
+        s.interior_trap_phase,
+        s.interior_trap_harmonics,
+    )
 }
 
-fn trap_place_from(x: f32, y: f32, rotation: f32, size: f32, phase: f32) -> TrapPlace {
+fn trap_place_from(x: f32, y: f32, rotation: f32, size: f32, phase: f32, harmonics: u32) -> TrapPlace {
     let clamp = |v: f32, r: std::ops::RangeInclusive<f32>, d: f32| if v.is_finite() { v.clamp(*r.start(), *r.end()) } else { d };
     TrapPlace {
         center: [clamp(x, slider_range::TRAP_CENTER, 0.0), clamp(y, slider_range::TRAP_CENTER, 0.0)],
         rotation: clamp(rotation, slider_range::TRAP_ROTATION, 0.0),
         size: clamp(size, slider_range::TRAP_SIZE, 1.0),
         phase: if phase.is_finite() { fractadyne_core::coloring::wrap_degrees(phase) } else { 0.0 },
+        harmonics: harmonics.clamp(*slider_range::TRAP_HARMONICS.start(), *slider_range::TRAP_HARMONICS.end()),
     }
 }
 
@@ -9640,13 +9652,18 @@ impl FractadyneApp {
         if let Some(d) = val("--trap-phase").map(|s| arg_parse::<f32>("--trap-phase", s, "a number of degrees")) {
             self.coloring.trap_place.phase = fractadyne_core::coloring::wrap_degrees(d);
         }
+        if let Some(n) = val("--trap-harmonics").map(|s| arg_parse::<u32>("--trap-harmonics", s, "a whole number, 1 to 32")) {
+            let r = slider_range::TRAP_HARMONICS;
+            self.coloring.trap_place.harmonics = n.clamp(*r.start(), *r.end());
+        }
         // The inside's own trap (the trap method's inside colored by a trap of its own).
         if let Some(t) = val("--interior-trap") {
             match (t.as_str(), TrapType::parse_key(t)) {
                 ("same", _) => self.coloring.interior_trap = None,
                 (_, Some(k)) => self.coloring.interior_trap = Some(k),
                 _ => {
-                    eprintln!("fractadyne: --interior-trap: unknown orbit trap \"{t}\"; use point, cross, circle or same.");
+                    let keys: Vec<&str> = TrapType::ALL.iter().map(|t| t.key()).collect();
+                    eprintln!("fractadyne: --interior-trap: unknown orbit trap \"{t}\"; use {} or same.", keys.join(", "));
                     crate::exit(2)
                 }
             }
@@ -9674,6 +9691,10 @@ impl FractadyneApp {
         }
         if let Some(d) = val("--interior-trap-phase").map(|s| arg_parse::<f32>("--interior-trap-phase", s, "a number of degrees")) {
             self.coloring.interior_trap_place.phase = fractadyne_core::coloring::wrap_degrees(d);
+        }
+        if let Some(n) = val("--interior-trap-harmonics").map(|s| arg_parse::<u32>("--interior-trap-harmonics", s, "a whole number, 1 to 32")) {
+            let r = slider_range::TRAP_HARMONICS;
+            self.coloring.interior_trap_place.harmonics = n.clamp(*r.start(), *r.end());
         }
         // The inside (coloring plan B5, C1): what colors it, the trap's palette, a solid color.
         if let Some(m) = val("--interior") {
@@ -10028,12 +10049,14 @@ impl FractadyneApp {
             trap_rotation: self.coloring.trap_place.rotation,
             trap_size: self.coloring.trap_place.size,
             trap_phase: self.coloring.trap_place.phase,
+            trap_harmonics: self.coloring.trap_place.harmonics,
             interior_trap: self.coloring.interior_trap.map_or(String::new(), |t| t.key().to_string()),
             interior_trap_x: self.coloring.interior_trap_place.center[0],
             interior_trap_y: self.coloring.interior_trap_place.center[1],
             interior_trap_rotation: self.coloring.interior_trap_place.rotation,
             interior_trap_size: self.coloring.interior_trap_place.size,
             interior_trap_phase: self.coloring.interior_trap_place.phase,
+            interior_trap_harmonics: self.coloring.interior_trap_place.harmonics,
             custom_palette: self.coloring.custom_palette.clone(),
             custom_palette_flat: self.coloring.custom_palette_flat,
             custom_segments: self.coloring.custom_segments.clone(),
@@ -13847,21 +13870,21 @@ impl FractadyneApp {
     }
 
     /// An animation other than the palette's runs at its Speed: the relief light's turn, the distance
-    /// glow's bands, the sine wave trap's phase. The Speed slider is open for them too.
+    /// glow's bands, a wave trap's phase. The Speed slider is open for them too.
     pub(crate) fn anim_speed_in_use(&self) -> bool {
         (self.effects.light && self.effects.light_anim)
             || (self.effects.de && self.effects.de_anim)
-            || (self.coloring.trap_phase_anim && self.sine_trap_drawn())
+            || (self.coloring.trap_phase_anim && self.phased_trap_drawn())
     }
 
-    /// Whether the picture shows a sine wave trap: the coloring reads the trap (the Orbit trap method,
-    /// or an inside colored by the trap) and its shape, or the inside's own, is the sine wave. What
-    /// its phase animation needs to be worth a frame.
-    fn sine_trap_drawn(&self) -> bool {
+    /// Whether the picture shows a trap with a phase (the sine wave, the square wave): the coloring
+    /// reads the trap (the Orbit trap method, or an inside colored by the trap) and its shape, or the
+    /// inside's own, has one. What the phase animation needs to be worth a frame.
+    fn phased_trap_drawn(&self) -> bool {
         let c = &self.coloring;
         let reads = c.color_method == ColorMethod::OrbitTrap || c.interior_of(c.color_method) == InteriorMode::Trap;
         let t = c.trap();
-        reads && (t.shape == TrapType::Sine || t.inside.is_some_and(|(s, _)| s == TrapType::Sine))
+        reads && (t.shape.spec().phased || t.inside.is_some_and(|(s, _)| s.spec().phased))
     }
 
     /// Advance the palette animation for this frame (offset shift, or random morph).
@@ -13880,15 +13903,15 @@ impl FractadyneApp {
                 .rem_euclid(std::f32::consts::TAU);
             self.schedule_repaint(ctx);
         }
-        // Cycle the sine wave trap's phase (user 2026-11-25): a trap setting, so each frame iterates
-        // again, the method's trap and the inside's own alike.
-        if self.coloring.trap_phase_anim && self.anim.palette_anim_speed > 0.0 && self.sine_trap_drawn() {
+        // Cycle a wave trap's phase (user 2026-11-25): a trap setting, so each frame iterates again,
+        // the method's trap and the inside's own alike.
+        if self.coloring.trap_phase_anim && self.anim.palette_anim_speed > 0.0 && self.phased_trap_drawn() {
             let step = 360.0 * self.anim.palette_anim_speed * dt;
             for (shape, place) in [
                 (Some(self.coloring.trap_type), &mut self.coloring.trap_place),
                 (self.coloring.interior_trap, &mut self.coloring.interior_trap_place),
             ] {
-                if shape == Some(TrapType::Sine) {
+                if shape.is_some_and(|s| s.spec().phased) {
                     place.phase = fractadyne_core::coloring::wrap_degrees(place.phase + step);
                 }
             }
@@ -16787,7 +16810,7 @@ impl FractadyneApp {
             || (self.anim.show_orbits && self.anim.orbit_anim)
             || (self.effects.de && self.effects.de_anim && speed)
             || (self.effects.light && self.effects.light_anim && speed)
-            || (self.coloring.trap_phase_anim && speed && self.sine_trap_drawn())
+            || (self.coloring.trap_phase_anim && speed && self.phased_trap_drawn())
             || self.playback.is_some()
             || self.autopilot.active
             || self.tour_render.child.is_some()

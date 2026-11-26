@@ -269,6 +269,9 @@ fn iter_uniform_matches_the_shader() {
     let row = std::mem::offset_of!(super::IterUniforms, trap_in_row);
     assert_eq!(wgsl_field_offset(&fields, "trap_in_enabled"), row);
     assert_eq!(wgsl_field_offset(&fields, "trap_in_type"), row + 4);
+    // The square wave's harmonics, the trap's and the inside's, in the row's last two words.
+    assert_eq!(wgsl_field_offset(&fields, "trap_harm"), row + 8);
+    assert_eq!(wgsl_field_offset(&fields, "trap_in_harm"), row + 12);
 }
 
 /// The renderer module survives the pipeline-constant step wgpu runs when it builds a pipeline with
@@ -285,42 +288,59 @@ fn the_renderer_module_survives_its_pipeline_constants() {
         .unwrap_or_else(|e| panic!("{e:?}"));
     for on in [0.0, 1.0] {
         let constants: naga::back::PipelineConstants =
-            ["EFT_ADD_RESIDUALS", "PRODUCT_BARRIER", "RN_BLA", "TRAP_EXTRA"].iter().map(|k| (k.to_string(), on)).collect();
+            ["EFT_ADD_RESIDUALS", "PRODUCT_BARRIER", "RN_BLA", "TRAP_EXTRA", "TRAP_WAVES"].iter().map(|k| (k.to_string(), on)).collect();
         if let Err(e) = naga::back::pipeline_constants::process_overrides(&module, &info, &constants) {
             panic!("the overrides at {on}: {e:?}");
         }
     }
 }
 
-/// A frame needs the trap shapes of F4 part 3 compiled in exactly when it accumulates the trap and
-/// its trap or the inside's own is one of them; the constants then carry `TRAP_EXTRA`.
+/// A frame needs a tier's trap shapes compiled in exactly when it accumulates the trap and its trap
+/// or the inside's own is of that tier, the higher of the two; the constants then carry
+/// `TRAP_EXTRA`, and for the waves `TRAP_WAVES` with it.
 #[test]
 fn a_frame_needs_the_gated_shapes_exactly_when_it_draws_one() {
+    use super::TrapTier::{Base, Extra, Waves};
     use fractadyne_core::coloring::{Stat, StatSet, TrapPlace, TrapType};
     let trap = StatSet::of(Stat::Trap);
     for t in TrapType::ALL {
-        assert_eq!(super::trap_extra(trap, t.gpu_id(), None), t.spec().gated, "{t:?}");
-        assert!(!super::trap_extra(StatSet::of(Stat::Stripe), t.gpu_id(), None), "{t:?}: the trap is not accumulated");
-        assert!(super::trap_extra(trap, TrapType::Point.gpu_id(), Some((t, TrapPlace::DEFAULT))) == t.spec().gated, "the inside's {t:?}");
+        assert_eq!(super::trap_tier(trap, t.gpu_id(), None), t.spec().tier, "{t:?}");
+        assert_eq!(super::trap_tier(StatSet::of(Stat::Stripe), t.gpu_id(), None), Base, "{t:?}: the trap is not accumulated");
+        assert_eq!(super::trap_tier(trap, TrapType::Point.gpu_id(), Some((t, TrapPlace::DEFAULT))), t.spec().tier, "the inside's {t:?}");
+        // The higher of the two: a wave inside lifts a star's frame, and the other way round.
+        let wave = Some((TrapType::Sinc, TrapPlace::DEFAULT));
+        assert_eq!(super::trap_tier(trap, t.gpu_id(), wave), Waves, "{t:?} with a sinc inside");
+        assert_eq!(super::trap_tier(trap, TrapType::SquareWave.gpu_id(), Some((t, TrapPlace::DEFAULT))), Waves, "a square wave with {t:?} inside");
     }
-    let gated: Vec<_> = TrapType::ALL.iter().filter(|t| t.spec().gated).map(|t| t.key()).collect();
-    assert_eq!(gated, ["line", "square", "hexagon", "star", "sine", "s-curve"]);
-    assert!(super::iter_constants(false, false).is_empty(), "every other pipeline as before");
-    assert_eq!(super::iter_constants(false, true).get("TRAP_EXTRA"), Some(&1.0));
-    assert_eq!(super::iter_constants(true, true).len(), 2);
-    assert_eq!(super::iter_constants(true, false).get("RN_BLA"), Some(&1.0));
+    let of = |tier| TrapType::ALL.iter().filter(|t| t.spec().tier == tier).map(|t| t.key()).collect::<Vec<_>>();
+    assert_eq!(of(Extra), ["line", "square", "hexagon", "star", "sine", "s-curve"]);
+    assert_eq!(of(Waves), ["sinc", "square-wave"]);
+    assert!(super::iter_constants(false, Base).is_empty(), "every other pipeline as before");
+    assert_eq!(super::iter_constants(false, Extra).get("TRAP_EXTRA"), Some(&1.0));
+    assert_eq!(super::iter_constants(false, Extra).get("TRAP_WAVES"), None, "the six shapes' pipelines as before");
+    let waves = super::iter_constants(false, Waves);
+    assert_eq!((waves.get("TRAP_EXTRA"), waves.get("TRAP_WAVES"), waves.len()), (Some(&1.0), Some(&1.0), 2));
+    assert_eq!(super::iter_constants(true, Extra).len(), 2);
+    assert_eq!(super::iter_constants(true, Waves).len(), 3);
+    assert_eq!(super::iter_constants(true, Base).get("RN_BLA"), Some(&1.0));
 }
 
-/// The inside's own trap reaches the shader only while the trap is accumulated, with its shape.
+/// The inside's own trap reaches the shader only while the trap is accumulated, with its shape; the
+/// row's last two words carry the square wave's harmonics, the trap's and the inside's.
 #[test]
 fn the_inside_trap_uniform_is_off_unless_accumulated() {
-    use fractadyne_core::coloring::{TrapPlace, TrapType};
-    let inside = Some((TrapType::Circle, TrapPlace { center: [0.1, 0.4], rotation: 0.0, size: 0.3, phase: 0.0 }));
-    assert_eq!(super::trap_in_uniform(None, true), (super::TrapU::default(), [0; 4]));
-    assert_eq!(super::trap_in_uniform(inside, false), (super::TrapU::default(), [0; 4]));
-    let (u, row) = super::trap_in_uniform(inside, true);
-    assert_eq!(row, [1, TrapType::Circle.gpu_id(), 0, 0]);
+    use fractadyne_core::coloring::{TrapPlace, TrapType, HARMONICS_DEFAULT};
+    let inside = Some((TrapType::Circle, TrapPlace { center: [0.1, 0.4], rotation: 0.0, size: 0.3, phase: 0.0, ..TrapPlace::DEFAULT }));
+    let plain = TrapPlace::DEFAULT;
+    assert_eq!(super::trap_in_uniform(plain, None, true), (super::TrapU::default(), [0, 0, HARMONICS_DEFAULT, 0]));
+    assert_eq!(super::trap_in_uniform(plain, inside, false), (super::TrapU::default(), [0; 4]));
+    let (u, row) = super::trap_in_uniform(plain, inside, true);
+    assert_eq!(row, [1, TrapType::Circle.gpu_id(), HARMONICS_DEFAULT, HARMONICS_DEFAULT]);
     assert_eq!((u.on, u.center, u.size), (1, [0.1, 0.4], 0.3));
+    // A square wave's own count, the trap's and the inside's.
+    let wave = |n: u32| TrapPlace { harmonics: n, ..TrapPlace::DEFAULT }.for_shape(TrapType::SquareWave);
+    let (_, row) = super::trap_in_uniform(wave(12), Some((TrapType::SquareWave, wave(3))), true);
+    assert_eq!(row, [1, TrapType::SquareWave.gpu_id(), 12, 3]);
 }
 
 /// The trap uniform at the default placement is all zeros (`trap_on` 0: no transform in the
@@ -329,7 +349,7 @@ fn the_inside_trap_uniform_is_off_unless_accumulated() {
 fn the_trap_uniform_is_off_at_the_default() {
     use fractadyne_core::coloring::TrapPlace;
     assert_eq!(super::trap_uniform(TrapPlace::DEFAULT), super::TrapU::default());
-    let u = super::trap_uniform(TrapPlace { center: [0.25, -0.5], rotation: 90.0, size: 0.5, phase: 0.0 });
+    let u = super::trap_uniform(TrapPlace { center: [0.25, -0.5], rotation: 90.0, size: 0.5, phase: 0.0, ..TrapPlace::DEFAULT });
     assert_eq!(u.on, 1);
     assert_eq!(u.center, [0.25, -0.5]);
     assert!(u.turn[0].abs() < 1e-7 && (u.turn[1] - 1.0).abs() < 1e-7, "{:?}", u.turn);

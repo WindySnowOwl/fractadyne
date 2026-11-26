@@ -124,7 +124,17 @@ fn trap_place_rows(ui: &mut egui::Ui, shape: TrapType, place: &mut TrapPlace, ph
         }
         r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_size_hover), tr!(panel_double_click_reset)));
     }
-    // The sine wave's phase, and its animation at the palette's Speed (user 2026-11-25).
+    // The square wave's harmonics (user 2026-11-25).
+    if spec.harmonic {
+        let r = labelled(ui, &tr!(panel_trap_harmonics), |ui| {
+            ui.add(egui::Slider::new(&mut place.harmonics, crate::slider_range::TRAP_HARMONICS))
+        });
+        if slider_double_clicked(&r) {
+            place.harmonics = reset.harmonics;
+        }
+        r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_harmonics_hover), tr!(panel_double_click_reset)));
+    }
+    // A wave's phase, and its animation at the palette's Speed (user 2026-11-25).
     if spec.phased {
         let r = labelled(ui, &tr!(panel_trap_phase), |ui| {
             ui.add(egui::Slider::new(&mut place.phase, crate::slider_range::TRAP_PHASE).suffix("°").fixed_decimals(1))
