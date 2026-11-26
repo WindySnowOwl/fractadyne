@@ -4104,6 +4104,8 @@ impl FractadyneApp {
         // rather than per-frame.
         let mut norm_range: Option<crate::render::NormReading> = None;
         let mut norm_oversize_warned = false;
+        // The trap fit is said once, with the first frame's windows (`fit_trap_to_frame`).
+        let mut trap_fit_told = false;
         let want_normalize = pb.render.normalize;
         // (`TOUR_WORK_BUDGET`, the per-tile dispatch cap, is defined above the anchor handling.)
         // The reference lookahead is skipped when the next one would eat into the headroom
@@ -4436,6 +4438,25 @@ impl FractadyneApp {
                         req.max_iter = req.max_iter.max(200);
                         req.vignette = vg;
                         req.work_budget = Some(TOUR_WORK_BUDGET); // bound each tile's dispatch (TDR-safe)
+                        // The orbit trap's palettes fitted to this frame's own values, as the live
+                        // view fits them to the screen's ("Always fit range", the inside's fit).
+                        if self.trap_fit_wanted() {
+                            let fit = self.fit_trap_to_frame(device, queue, &mut req, &cancel);
+                            if !trap_fit_told {
+                                say(&format!(
+                                    "the orbit trap's palettes are fitted to each frame's own values, as the live view fits them (first frame: {})",
+                                    match fit {
+                                        Some(f) => format!("window {:?}, inside {:?}, {} values", f.window, f.inside, f.samples),
+                                        None => "not measured; the fixed rate".into(),
+                                    }
+                                ));
+                                trap_fit_told = true;
+                            }
+                            // Beside the live view's own trap and inside readings.
+                            if crate::diag::trace_on("accum") {
+                                crate::diag::trace("accum", format!("tour frame {fi}: trap fit {fit:?}"));
+                            }
+                        }
                         let r = fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel)
                             .map_err(|e| format!("frame {fi}: {e}"))?;
                         (r.pixels, r.width, r.height)

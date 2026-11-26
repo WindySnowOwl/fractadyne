@@ -2289,6 +2289,39 @@ impl FractadyneApp {
     }
 }
 
+/// The orbit trap's two histograms of the frame `req` draws (the whole frame's, then the
+/// inside's: `CTR_TRAP_HIST`, `CTR_TRAP_HIST_IN`), from a render of it at its own size without
+/// supersampling ([`FractadyneApp::fit_trap_to_frame`]'s pre-pass). ⚠Never inlined: the render's
+/// counters are inline in its result, some 23 KB, which would otherwise sit on the tour loop's
+/// stack for the whole frame (a self-test that rendered a tour inside the self-test's own deep
+/// stack overflowed the main thread's, 2026-11-26).
+#[inline(never)]
+fn trap_histograms(
+    device: &eframe::wgpu::Device,
+    queue: &eframe::wgpu::Queue,
+    req: &fractadyne_gpu::ExportRequest,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Option<(Vec<u32>, Vec<u32>)> {
+    use fractadyne_gpu::{CTR_TRAP_HIST, CTR_TRAP_HIST_IN, TRAP_HIST_BUCKETS};
+    let mut pre = Box::new(req.clone());
+    pre.width = req.width.max(16);
+    pre.height = req.height.max(16);
+    pre.ss = 1;
+    let progress = std::sync::atomic::AtomicU32::new(0);
+    let r = fractadyne_gpu::render_export(device, queue, &pre, &progress, cancel).ok()?;
+    let hist = |at: usize| -> Vec<u32> { r.counters[at..at + TRAP_HIST_BUCKETS].iter().map(|&n| n.min(u64::from(u32::MAX)) as u32).collect() };
+    Some((hist(CTR_TRAP_HIST), hist(CTR_TRAP_HIST_IN)))
+}
+
+/// What [`FractadyneApp::fit_trap_to_frame`] measured on a frame: the trap's palette window over
+/// the whole frame and over the inside, and how many values it took them from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TrapFrameFit {
+    pub window: Option<(f32, f32)>,
+    pub inside: Option<(f32, f32)>,
+    pub samples: u64,
+}
+
 /// A resolved palette-range mapping: the affine `cycle`/`offset` the shader applies, plus which
 /// transform to apply first (`mode` 0 = linear, 1 = log about `lo`, the other curves of C2), and the
 /// histogram equalization mixed in after it (`eq`, coloring plan C6). A map with an `eq` measures
@@ -2416,6 +2449,71 @@ impl FractadyneApp {
         } else {
             own(vi)
         }
+    }
+
+    /// Whether an offline frame fits the orbit trap's palettes to its own values, as the live view
+    /// fits them to the screen's ([`Self::fit_trap_to_frame`]): the trap method with "Always fit
+    /// range", or the inside colored by the trap with its fit (C4).
+    pub(crate) fn trap_fit_wanted(&self) -> bool {
+        let method = self.coloring.color_method;
+        (method == crate::ColorMethod::OrbitTrap && self.coloring.normalize_fit)
+            || (self.coloring.interior_fit
+                && self.interior_shading_for(method) == fractadyne_core::coloring::InteriorShading::Trap)
+    }
+
+    /// Fit `req`'s orbit trap palettes to the frame it draws, as the live view fits them to the
+    /// screen (user, 2026-11-26: a tour of a view with "Always fit range" and the inside's fit came
+    /// out pale, its palettes at the fixed rate, where the screen spread them over the values in
+    /// view). The frame is drawn once more at its own size without supersampling, for the trap's
+    /// values on the shader's 4x4 grid (`CTR_TRAP_HIST`, and `CTR_TRAP_HIST_IN` for the inside):
+    /// the windows the live view would read from them (`trap_window` at its quantiles, and
+    /// Equalize colors' distribution) go where the live view keeps its own, for the time it takes
+    /// to rebuild the request's colors through the same code an export uses (`export_map`,
+    /// `interior_shade_for`), and are put back. ⭐A frame's colors are its own: no smoothing
+    /// across frames, so a frame depends on its view and coloring alone, and a turning phase gives
+    /// back the first frame after a whole turn (one turn rendered loops seamlessly). ⚠Its own size,
+    /// not half: the window's top is the 99.5th percentile, out in the few closest approaches, and
+    /// half the size read it 3.6% of the window low against the live view's (18.98 for 19.49, the
+    /// user's scene at 975x735, 2026-11-26), its own size 1.2% (19.31), from as many values as the
+    /// screen's; and a denser count steadies a tour's windows from frame to frame. The pre-pass
+    /// costs about a quarter of a frame supersampled 2x2. `None` when it could not be drawn or
+    /// measured; the request is then left at the fixed rate. Single views only (a dual frame and
+    /// the normalized path color as before).
+    pub(crate) fn fit_trap_to_frame(
+        &mut self,
+        device: &eframe::wgpu::Device,
+        queue: &eframe::wgpu::Queue,
+        req: &mut fractadyne_gpu::ExportRequest,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Option<TrapFrameFit> {
+        let (all, inside) = trap_histograms(device, queue, req, cancel)?;
+        let fit = TrapFrameFit {
+            window: fractadyne_gpu::trap_window(&all, fractadyne_gpu::TRAP_WINDOW_QUANTILES),
+            inside: fractadyne_gpu::trap_window(&inside, fractadyne_gpu::INSIDE_WINDOW_QUANTILES),
+            samples: all.iter().map(|&n| u64::from(n)).sum(),
+        };
+        let eq = fractadyne_gpu::trap_quantiles(&all).map(Box::new);
+        let vi = (self.dual && req.julia != 0) as usize;
+        let saved = (
+            self.perf.trap_pal[vi],
+            self.perf.trap_shown[vi],
+            self.perf.trap_eq_shown[vi].take(),
+            self.perf.inside_pal[vi],
+            self.perf.inside_shown[vi],
+        );
+        (self.perf.trap_pal[vi], self.perf.trap_shown[vi], self.perf.trap_eq_shown[vi]) = (fit.window, fit.window, eq);
+        (self.perf.inside_pal[vi], self.perf.inside_shown[vi]) = (fit.inside, fit.inside);
+        let m = self.export_map(req.julia != 0);
+        (req.cycle, req.offset, req.norm_mode, req.norm_lo, req.equalize) = (m.cycle, m.offset, m.mode, m.lo, m.eq);
+        req.interior = self.interior_shade_for(self.coloring.color_method, vi);
+        (
+            self.perf.trap_pal[vi],
+            self.perf.trap_shown[vi],
+            self.perf.trap_eq_shown[vi],
+            self.perf.inside_pal[vi],
+            self.perf.inside_shown[vi],
+        ) = saved;
+        Some(fit)
     }
 
     /// The escape window the live color map is built from ([`Self::live_norm_cycle_offset`]), or
