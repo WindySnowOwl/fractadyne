@@ -144,6 +144,150 @@ fn a_clock_that_reads_low_cannot_make_a_long_pass() {
     }
 }
 
+/// A finding stands against a re-measure within [`CONFIRM_FASTER`], as the slower of the two; a
+/// re-measure that reads faster than that sends the mode back to be measured from the start.
+#[test]
+fn a_measurement_stands_unless_its_repeat_reads_much_faster() {
+    let px = PX as f64;
+    let first = Finding::Measured { iters: 586, ms: 14.3, wall_ms: 15.0, ms_per_step: 14.3 / (px * 586.0) };
+    let c = first.ms_per_step();
+    assert_eq!(confirm(first, c), Confirm::Stands(first));
+    assert_eq!(confirm(first, c / 1.1), Confirm::Stands(first), "jitter, faster");
+    match confirm(first, c * 1.1) {
+        Confirm::Stands(Finding::Measured { iters, ms_per_step, .. }) => {
+            assert_eq!(iters, 586);
+            assert_eq!(ms_per_step, c * 1.1, "the slower reading stands");
+        }
+        other => panic!("{other:?}"),
+    }
+    // The RTX 3070's cold direct reading against its warm one (PLUTO, dev.23).
+    assert_eq!(confirm(first, 1.07e-8), Confirm::Again);
+    assert_eq!(confirm(first, c / (CONFIRM_FASTER * 1.01)), Confirm::Again);
+    // A re-measure that cannot be used, and a fast bound, leave the finding as it was.
+    for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert_eq!(confirm(first, bad), Confirm::Stands(first), "{bad}");
+    }
+    let fast = Finding::Fast { iters: 256, ms: 0.72, ms_per_step: 1.08e-8 };
+    assert_eq!(confirm(fast, 1e-6), Confirm::Stands(fast));
+}
+
+/// A card whose GPU clock is still coming up, as the probe sees it: every pass runs `idle_factor`
+/// times slower until the probe has kept it busy (by the wall) for `up_after_ms`, then at its
+/// working clock. One `call` is one `render_iter_probe`: a warm-up and [`REPS`] timed passes, each
+/// with `latency_ms` of submission. `longest_ms` is the longest pass the GPU ran.
+struct Warming {
+    wall_ms: f64,
+    up_after_ms: f64,
+    idle_factor: f64,
+    latency_ms: f64,
+    longest_ms: f64,
+    calls: u32,
+}
+
+impl Warming {
+    fn new(up_after_ms: f64, idle_factor: f64) -> Self {
+        Warming { wall_ms: 0.0, up_after_ms, idle_factor, latency_ms: 12.0, longest_ms: 0.0, calls: 0 }
+    }
+    fn call(&mut self, ms_per_step: f64, iters: u32) -> Vec<[f64; 2]> {
+        self.calls += 1;
+        let mut reps = Vec::new();
+        for i in 0..=REPS {
+            let f = if self.wall_ms < self.up_after_ms { self.idle_factor } else { 1.0 };
+            let gpu = 0.2 + ms_per_step * f * PX as f64 * f64::from(iters);
+            self.longest_ms = self.longest_ms.max(gpu);
+            self.wall_ms += gpu + self.latency_ms;
+            if i > 0 {
+                reps.push([gpu, gpu + self.latency_ms]);
+            }
+        }
+        reps
+    }
+    /// The slowest timed rep's GPU time and wall, as the probe takes them.
+    fn slowest(reps: &[[f64; 2]]) -> (f64, f64) {
+        let gpu = reps.iter().map(|&t| gpu_ms(t)).fold(f64::NAN, f64::max);
+        let wall = reps.iter().map(|&[_, w]| w).fold(f64::NAN, f64::max);
+        (gpu, wall)
+    }
+    /// The ramp (`speed_probe::ramp`) over this card for a mode costing `cost` a step.
+    fn ramp(&mut self, cost: f64, fast: f64) -> Finding {
+        let mut iters = ITERS_START;
+        loop {
+            let (gpu, wall) = Self::slowest(&self.call(cost, iters));
+            match step(PX, iters, gpu, wall, fast).expect("a modeled time is usable") {
+                Step::Done(f) => return f,
+                Step::Next(n) => iters = n,
+            }
+        }
+    }
+    /// Both laps over the three modes (`costs`, `fasts`, in [`MODES`] order): the findings that
+    /// stand, and how many times each mode was measured again.
+    fn probe(&mut self, costs: [f64; 3], fasts: [f64; 3]) -> [(Finding, u32); 3] {
+        let lap1: Vec<Finding> = (0..3).map(|k| self.ramp(costs[k], fasts[k])).collect();
+        let mut out = Vec::new();
+        for k in 0..3 {
+            let remeasure = |gpu: &mut Self, f: Finding| {
+                let iters = match f {
+                    Finding::Measured { iters, .. } | Finding::Fast { iters, .. } => iters,
+                };
+                let (ms, _) = Self::slowest(&gpu.call(costs[k], iters));
+                Ok(ms / (PX as f64 * f64::from(iters)))
+            };
+            out.push(confirmed(lap1[k], self, remeasure, |gpu| Ok(gpu.ramp(costs[k], fasts[k]))));
+        }
+        out.try_into().expect("three modes")
+    }
+}
+
+/// PLUTO's RTX 3070 after a cold start (dev.23): direct and df32 under the default ceiling's costs,
+/// floatexp at 1.163e-7; its clock ~8.6x slow until ~0.45 s into the probe, with ~12 ms of submission
+/// latency. The first lap reads the slow clock (as dev.23 did: direct 9.3e-8, df32 2.8e-7), and the
+/// second lap finds what a warm start finds: direct and df32 faster than anything they could
+/// change, floatexp measured at its cost. Re-measures are passes the first lap already ran, at a
+/// clock that has only come up: none is longer than its longest.
+#[test]
+fn a_clock_still_coming_up_is_measured_again() {
+    let costs = [1.0e-8, 4.0e-8, 1.163e-7];
+    let fasts = [1.92e-8, 9.9e-8, 1e-7];
+    let mut warm = Warming::new(0.0, 1.0);
+    let at_work = warm.probe(costs, fasts);
+    let mut cold = Warming::new(450.0, 8.6);
+    let lap1: Vec<Finding> = (0..3).map(|k| cold.ramp(costs[k], fasts[k])).collect();
+    assert!(lap1[0].ms_per_step() > 5.0 * costs[0], "the model's first lap reads the slow clock: {lap1:?}");
+    let longest_lap1 = cold.longest_ms;
+    let mut cold = Warming::new(450.0, 8.6);
+    let found = cold.probe(costs, fasts);
+    for k in 0..3 {
+        match (found[k].0, at_work[k].0) {
+            (Finding::Fast { .. }, Finding::Fast { .. }) => {}
+            (Finding::Measured { ms_per_step: c, .. }, Finding::Measured { ms_per_step: w, .. }) => {
+                assert!(c >= costs[k] && c <= w * 1.02, "mode {k}: {c:e} cold against {w:e} warm");
+            }
+            other => panic!("mode {k}: {other:?}"),
+        }
+    }
+    assert!(found[0].1 >= 1 && found[1].1 >= 1, "direct and df32 measured again: {found:?}");
+    assert!(cold.longest_ms <= longest_lap1, "a {:.1} ms pass after a first lap of at most {longest_lap1:.1}", cold.longest_ms);
+}
+
+/// A card at its working clock from the start: the second lap changes no finding, and costs one
+/// pass set for each mode the first measured (none for a fast bound).
+#[test]
+fn a_steady_card_is_confirmed_in_one_pass_set_a_measured_mode() {
+    let fasts = [1.92e-8, 9.9e-8, 1e-7];
+    for costs in [[1.0e-8, 4.0e-8, 1.163e-7], [5e-8, 3e-7, 6e-7], [1.2e-6, 1.1e-5, 1.15e-5]] {
+        let mut gpu = Warming::new(0.0, 1.0);
+        let lap1: Vec<Finding> = (0..3).map(|k| gpu.ramp(costs[k], fasts[k])).collect();
+        let lap1_calls = gpu.calls;
+        let mut gpu = Warming::new(0.0, 1.0);
+        let found = gpu.probe(costs, fasts);
+        let measured = lap1.iter().filter(|f| matches!(f, Finding::Measured { .. })).count() as u32;
+        assert_eq!(gpu.calls, lap1_calls + measured, "{costs:?}");
+        for k in 0..3 {
+            assert_eq!(found[k], (lap1[k], 0), "{costs:?} mode {k}");
+        }
+    }
+}
+
 /// A fast card is done in a few small passes, latency or not: the RTX 3080's direct cost
 /// (4.92e-9 ms/step) against the default ceiling's 1.92e-8. With PLUTO's ~12 ms of submission
 /// latency this read as 9.7e-8 when the wall counted (dev.8).

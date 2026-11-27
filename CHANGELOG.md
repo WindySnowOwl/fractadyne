@@ -352,6 +352,14 @@ detail is in the git history.
   supersampling of the finished views, so they were drawn again, coarse, then again at each step
   back up, allocating new buffers each time. It now judges only a view whose own work could have
   made the frame slow.
+- **The first start after an update no longer times the graphics card at its idle speed.** On a
+  graphics card Fractadyne has no measurements for, the first start of a new version times the
+  card, and the speed it finds limits how much work one pass may give it. That start compiles the
+  shaders first, about 10 s with nothing for the card to do, and the card was timed before it was
+  back up to speed: an RTX 3070 read 5 to 9 times slower than it is. The lower limit held for that
+  session and, saved, for the next one too, so detailed views took longer to finish, and one could
+  stop refining for half a minute or more. Each speed the first round finds is now timed again once
+  that round has brought the card up to speed, which adds a fraction of a second to that start.
 - **Supersampling held to what the graphics card's memory can take.** The live views' supersampled
   buffers now take at most a third of the card's memory, shared by the two panes of the dual view.
   A dual view at 4x on a 5048-pixel-wide window held 4.5 GB of them on a 10 GB card, as much again
