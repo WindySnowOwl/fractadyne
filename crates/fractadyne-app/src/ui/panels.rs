@@ -70,6 +70,17 @@ impl crate::FractadyneApp {
                 self.coloring.band_texture_amount = fractadyne_core::coloring::BAND_TEXTURE_AMOUNT_DEFAULT;
             }
             r.on_hover_text(format!("{}\n\n{}", tr!(panel_band_texture_amount_hover), tr!(panel_double_click_reset)));
+            // E2: only near the set.
+            let r = labelled(ui, &tr!(panel_band_texture_near), |ui| {
+                ui.add(
+                    egui::Slider::new(&mut self.coloring.band_texture_near, crate::slider_range::BAND_TEXTURE_NEAR)
+                        .suffix(" px"),
+                )
+            });
+            if slider_double_clicked(&r) {
+                self.coloring.band_texture_near = 0.0;
+            }
+            r.on_hover_text(format!("{}\n\n{}", tr!(panel_band_texture_near_hover), tr!(panel_double_click_reset)));
         }
     }
 

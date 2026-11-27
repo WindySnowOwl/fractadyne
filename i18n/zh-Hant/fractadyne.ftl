@@ -2788,6 +2788,8 @@ panel-band-texture-hover = 用每條軌道的一個統計量沿其紋理移動�
 panel-band-texture-none = 無
 panel-band-texture-amount = 強度
 panel-band-texture-amount-hover = 紋理移動色帶的幅度，以統計量每單位對應的調色盤週期數計。0 時色帶保持平滑。
+panel-band-texture-near = 僅在集合附近
+panel-band-texture-near-hover = 只在集合附近顯示紋理，並在大約這麼多像素內淡入平滑色帶，使紋理像是從細絲中長出；0 表示處處顯示。需要到集合的距離：公式沒有距離時，色帶保持平滑。
 panel-trap-shape = 陷阱形狀
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

@@ -268,7 +268,7 @@ pub struct ExportRequest {
     pub wrap: u32,
     pub steps: f32,
     /// The band texture — see `MandelbrotParams::band_texture`.
-    pub band_texture: (fractadyne_core::coloring::BandTexture, f32),
+    pub band_texture: crate::BandTexturing,
     /// Edge shading (coloring plan C3).
     pub edge: crate::EdgeShade,
     /// Equipotential lines (coloring plan C10).
@@ -2056,6 +2056,8 @@ impl<'a> TileRenderer<'a> {
             eq: eqw.row,
             eq_knots: eqw.knots,
             fade_eq_knots: eqw.fade_knots,
+            band_tex_near: crate::band_texture_words(req.color_method, req.band_texture).3,
+            _pad_bt: [0.0; 3],
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4513,6 +4515,8 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         eq: eqw.row,
         eq_knots: eqw.knots,
         fade_eq_knots: eqw.fade_knots,
+        band_tex_near: crate::band_texture_words(req.color_method, req.band_texture).3,
+        _pad_bt: [0.0; 3],
     }
 }
 

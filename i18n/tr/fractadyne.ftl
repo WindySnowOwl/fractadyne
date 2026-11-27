@@ -2860,6 +2860,8 @@ panel-band-texture-hover = Her yörüngenin bir istatistiği bant kenarlarını 
 panel-band-texture-none = Yok
 panel-band-texture-amount = Güç
 panel-band-texture-amount-hover = Dokunun bantları ne kadar kaydırdığı, istatistiğin birimi başına palet döngüsü olarak. 0 bantları düz bırakır.
+panel-band-texture-near = Kümeye yakın
+panel-band-texture-near-hover = Dokuyu yalnızca kümenin yakınında gösterir ve yaklaşık bu kadar pikselde düz bantlara karıştırır, böylece filamentlerden büyür; 0 her yerde gösterir. Kümeye uzaklık gerekir: bir formülde yoksa bantlar düz kalır.
 panel-trap-shape = Tuzak şekli
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

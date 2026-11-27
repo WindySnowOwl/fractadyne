@@ -2789,6 +2789,8 @@ panel-band-texture-hover = 各軌道の統計量で帯の境界をそのテク�
 panel-band-texture-none = なし
 panel-band-texture-amount = 強さ
 panel-band-texture-amount-hover = テクスチャが帯をずらす量（統計量1あたりのパレット周期数）。0 で帯はそのままです。
+panel-band-texture-near = 集合の近くのみ
+panel-band-texture-near-hover = テクスチャを集合の近くだけに表示し、およそこのピクセル数で無地の帯に溶け込ませるので、フィラメントから生えたように見えます。0 ではどこにでも表示します。集合までの距離が必要で、距離を持たない式では帯は無地のままです。
 panel-trap-shape = トラップの形
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

@@ -2869,6 +2869,8 @@ panel-band-texture-hover = Eine Statistik jedes Orbits verschiebt die Bandkanten
 panel-band-texture-none = Keine
 panel-band-texture-amount = Stärke
 panel-band-texture-amount-hover = Wie weit die Textur die Bänder verschiebt, in Palettenzyklen je Einheit der Statistik. 0 lässt die Bänder glatt.
+panel-band-texture-near = Nahe der Menge
+panel-band-texture-near-hover = Zeigt die Textur nur nahe der Menge und lässt sie über etwa so viele Pixel in glatte Bänder übergehen, sodass sie aus den Filamenten wächst; 0 zeigt sie überall. Sie braucht den Abstand zur Menge: Wo eine Formel keinen hat, bleiben die Bänder glatt.
 panel-trap-shape = Fallenform
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

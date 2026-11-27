@@ -151,6 +151,7 @@ fn kitchen_sink() -> fractadyne_state::ColoringSpec {
         // The band texture (E1), in every Smooth drawing.
         band_texture: "stripe".into(),
         band_texture_amount: 3.0,
+        band_texture_near: 6.0,
         custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
         custom_palette_flat: true,
         custom_segments: vec![fractadyne_state::PaletteSegment {
@@ -249,6 +250,7 @@ fn scrambled_for(d: &fractadyne_state::ColoringSpec) -> fractadyne_state::Colori
         trap_tail_len: 1000,
         band_texture: "triangle".into(),
         band_texture_amount: 0.5,
+        band_texture_near: 0.0,
         custom_palette: vec![[0.0, 0.2, 0.9, 0.2], [1.0, 0.9, 0.9, 0.1]],
         custom_palette_flat: false,
         custom_segments: vec![fractadyne_state::PaletteSegment {

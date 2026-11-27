@@ -3067,6 +3067,8 @@ panel-band-texture-hover = Let a statistic of each orbit move the band edges alo
 panel-band-texture-none = None
 panel-band-texture-amount = Strength
 panel-band-texture-amount-hover = How far the texture moves the bands, in palette cycles per unit of the statistic. 0 leaves the bands plain.
+panel-band-texture-near = Near the set
+panel-band-texture-near-hover = Show the texture only near the set, fading into plain bands over about this many pixels, so it grows out of the filaments; 0 shows it everywhere. It needs the distance to the set: where a formula has none, the bands stay plain.
 panel-trap-shape = Trap shape
 # Where the orbit trap sits (coloring plan F4): its two coordinates in the plane the orbits move in.
 panel-trap-center-x = Trap center x

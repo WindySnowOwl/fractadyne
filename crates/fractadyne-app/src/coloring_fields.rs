@@ -147,7 +147,7 @@ pub(crate) fn inside_color_used(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 66] = [
+pub(crate) const FIELDS: [Field; 67] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -175,6 +175,19 @@ pub(crate) const FIELDS: [Field; 66] = [
             |s, v| s.band_texture_amount = v,
             *slider_range::BAND_TEXTURE_AMOUNT.start(),
             *slider_range::BAND_TEXTURE_AMOUNT.end(),
+        ),
+        parents: &["method", "band_texture"],
+        shows: |s| method(s) == ColorMethod::Smooth && band_texture(s) != BandTexture::None,
+    },
+    Field {
+        key: "band_texture_near",
+        name: "band texture near the set",
+        doc: "The band texture only near the set: the distance in output pixels over which it fades into plain bands, 0 to 64 (0 or left out: everywhere; with `band_texture`).",
+        access: Access::Real(
+            |s| s.band_texture_near,
+            |s, v| s.band_texture_near = v,
+            *slider_range::BAND_TEXTURE_NEAR.start(),
+            *slider_range::BAND_TEXTURE_NEAR.end(),
         ),
         parents: &["method", "band_texture"],
         shows: |s| method(s) == ColorMethod::Smooth && band_texture(s) != BandTexture::None,

@@ -2869,6 +2869,8 @@ panel-band-texture-hover = Une statistique de chaque orbite déplace les bords d
 panel-band-texture-none = Aucune
 panel-band-texture-amount = Intensité
 panel-band-texture-amount-hover = De combien la texture déplace les bandes, en cycles de palette par unité de la statistique. 0 laisse les bandes lisses.
+panel-band-texture-near = Près de l’ensemble
+panel-band-texture-near-hover = N’affiche la texture que près de l’ensemble, en la fondant dans des bandes lisses sur environ ce nombre de pixels, si bien qu’elle pousse depuis les filaments ; 0 l’affiche partout. Elle a besoin de la distance à l’ensemble : là où une formule n’en a pas, les bandes restent lisses.
 panel-trap-shape = Forme du piège
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

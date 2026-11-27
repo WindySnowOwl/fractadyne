@@ -177,16 +177,27 @@ pub(crate) fn outline_row(base: usize, outline: Option<&OutlineGpu>, read: bool)
     }
 }
 
-/// The color uniform's band texture words (coloring plan E1): `(lane, strength, center)`, the lane 0
-/// (none) but for the Smooth method with a texture at a strength above 0, whose statistic the frame
-/// then accumulates. At strength 0 the color pass is plain Smooth's (its distance-sized palette
-/// footprint included).
-pub(crate) fn band_texture_words(method: u32, tex: (fractadyne_core::coloring::BandTexture, f32)) -> (u32, f32, f32) {
-    let (t, amount) = tex;
+/// The Smooth method's band texture as a frame draws it (coloring plan E1, E2): the statistic, its
+/// strength in palette cycles per unit of it, and how near the set it shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BandTexturing {
+    pub texture: fractadyne_core::coloring::BandTexture,
+    pub amount: f32,
+    /// E2: the texture weighted by exp(-d / near_px), d the pixel's distance to the set in output
+    /// pixels, so it grows out of the filaments and fades into plain bands; 0: everywhere.
+    pub near_px: f32,
+}
+
+/// The color uniform's band texture words (coloring plan E1, E2): `(lane, strength, center, near)`,
+/// the lane 0 (none) but for the Smooth method with a texture at a strength above 0, whose statistic
+/// the frame then accumulates. At strength 0 the color pass is plain Smooth's (its distance-sized
+/// palette footprint included).
+pub(crate) fn band_texture_words(method: u32, tex: BandTexturing) -> (u32, f32, f32, f32) {
+    let BandTexturing { texture: t, amount, near_px } = tex;
     if method != fractadyne_core::coloring::ColorMethod::Smooth.gpu_id() || t == fractadyne_core::coloring::BandTexture::None || !(amount > 0.0) {
-        return (0, 0.0, 0.0);
+        return (0, 0.0, 0.0, 0.0);
     }
-    (t.gpu_id(), amount, t.center())
+    (t.gpu_id(), amount, t.center(), if near_px > 0.0 { near_px } else { 0.0 })
 }
 
 /// Where the orbit trap sits, turned and sized (the shader's `trap_c` .. `trap_on`; coloring plan
@@ -620,6 +631,10 @@ pub(crate) struct ColorUniforms {
     pub(crate) eq: [f32; 4],
     pub(crate) eq_knots: [[f32; 4]; EQ_ROWS],
     pub(crate) fade_eq_knots: [[f32; 4]; EQ_ROWS],
+    /// The band texture only near the set (coloring plan E2, [`BandTexturing::near_px`]): its
+    /// distance in output pixels, 0 everywhere; a new 16-byte row. `ColorU.band_tex_near` mirrors it.
+    pub(crate) band_tex_near: f32,
+    pub(crate) _pad_bt: [f32; 3],
 }
 
 /// [`ColorUniforms::tap_stride`] for a palette-browser thumbnail colored from a texture built at
@@ -4132,7 +4147,7 @@ pub struct MandelbrotParams {
     pub steps: f32,
     /// The Smooth method's band texture and its strength (coloring plan E1): the statistic must be
     /// among the frame's (`orbit_stats`), and is read only under Smooth.
-    pub band_texture: (fractadyne_core::coloring::BandTexture, f32),
+    pub band_texture: BandTexturing,
     /// Edge shading (coloring plan C3); off by default.
     pub edge: EdgeShade,
     /// Equipotential lines (coloring plan C10); off by default.
@@ -5000,6 +5015,8 @@ impl CallbackTrait for MandelbrotParams {
             eq: eqw.row,
             eq_knots: eqw.knots,
             fade_eq_knots: eqw.fade_knots,
+            band_tex_near: band_texture_words(self.color_method, self.band_texture).3,
+            _pad_bt: [0.0; 3],
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);

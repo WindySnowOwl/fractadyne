@@ -367,7 +367,7 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     // The palette map's curve, its wrap and its steps (coloring plan C2); Equalize colors (C6).
     "transfer", "wrap", "steps", "equalize",
     // The Smooth method's band texture (coloring plan E1).
-    "band_texture", "band_texture_amount",
+    "band_texture", "band_texture_amount", "band_texture_near",
     // Edge shading (coloring plan C3).
     "edge", "edge_inside", "edge_width", "edge_strength", "edge_curve", "edge_color",
     // Equipotential lines (coloring plan C10).
@@ -492,6 +492,7 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("wrap", ValueKind::Wrap),
     ("band_texture", ValueKind::BandTexture),
     ("band_texture_amount", ValueKind::Float),
+    ("band_texture_near", ValueKind::Float),
     ("steps", ValueKind::Uint),
     ("equalize", ValueKind::Float),
     ("edge", ValueKind::Flag),

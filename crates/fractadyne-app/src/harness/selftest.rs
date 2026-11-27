@@ -7987,6 +7987,8 @@ impl FractadyneApp {
                 (self.coloring.band_texture, self.coloring.band_texture_amount, self.coloring.stripe_freq, self.coloring.use_custom_palette),
                 (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
             );
+            let saved_near = self.coloring.band_texture_near;
+            self.coloring.band_texture_near = 0.0;
             self.fractal = FractalKind::Mandelbrot;
             self.julia_mode = false;
             self.coloring.color_method = crate::ColorMethod::Smooth;
@@ -8051,6 +8053,22 @@ impl FractadyneApp {
                     pass: same == Some(true),
                 });
             }
+            // E2: only near the set, the texture moves less of the picture than everywhere, and still
+            // some: near the filaments it is there, far from them the bands are plain.
+            let everywhere = shot(self, &vp, B::Stripe, 2.0, true);
+            self.coloring.band_texture_near = 8.0;
+            let near = shot(self, &vp, B::Stripe, 2.0, true);
+            self.coloring.band_texture_near = 0.0;
+            let d = |x: &Option<Vec<f32>>| plain.as_ref().zip(x.as_ref()).map(|(a, b)| frame::distance(&bytes(a), &bytes(b)));
+            let (d_all, d_near) = (d(&everywhere), d(&near));
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "consistency",
+                name: "the stripe band texture near the set moves less of the picture than everywhere".into(),
+                params: "the same view, strength 2; near: 8 px".into(),
+                result: format!("the mean difference from plain Smooth: everywhere {d_all:.2?}, near the set {d_near:.2?}"),
+                threshold: "near the set at least 0.5 and at most 3/4 of everywhere",
+                pass: matches!((d_all, d_near), (Some(a), Some(n)) if n >= 0.5 && n <= 0.75 * a),
+            });
             // Through BLA at 1e30x (the aux-bla view): the stripe texture's frame against every
             // iteration's.
             let mut deep = Viewport::new(N as f64, N as f64);
@@ -8080,6 +8098,7 @@ impl FractadyneApp {
                 (self.coloring.band_texture, self.coloring.band_texture_amount, self.coloring.stripe_freq, self.coloring.use_custom_palette),
                 (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
             ) = saved;
+            self.coloring.band_texture_near = saved_near;
         }
 
         // ---- the trap's tail draws a deep view again (coloring plan F4, part 5) ----
@@ -11735,6 +11754,7 @@ zoom = \"1e94\"
                 trap_tail_len: 900,
                 band_texture: fractadyne_core::coloring::BandTexture::Triangle,
                 band_texture_amount: 5.0,
+                band_texture_near: 40.0,
                 light: true,
                 light_angle: -1.25,
                 light_height: 3.5,
@@ -12019,6 +12039,7 @@ zoom = \"1e94\"
                 // The Smooth method's band texture (E1).
                 band_texture: "triangle".into(),
                 band_texture_amount: 3.0,
+                band_texture_near: 12.0,
                 custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
                 custom_palette_flat: true,
                 custom_segments: vec![fractadyne_state::PaletteSegment {

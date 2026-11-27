@@ -2788,6 +2788,8 @@ panel-band-texture-hover = Statistik setiap orbit menggeser tepi pita mengikuti 
 panel-band-texture-none = Tidak ada
 panel-band-texture-amount = Kekuatan
 panel-band-texture-amount-hover = Seberapa jauh tekstur menggeser pita, dalam siklus palet per satuan statistik. 0 membiarkan pita polos.
+panel-band-texture-near = Dekat himpunan
+panel-band-texture-near-hover = Tampilkan tekstur hanya di dekat himpunan, memudar menjadi pita polos dalam sekitar sekian piksel, sehingga tumbuh dari filamen; 0 menampilkannya di mana-mana. Ini memerlukan jarak ke himpunan: jika rumus tidak memilikinya, pita tetap polos.
 panel-trap-shape = Bentuk perangkap
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

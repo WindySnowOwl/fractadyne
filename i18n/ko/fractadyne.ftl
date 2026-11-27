@@ -2788,6 +2788,8 @@ panel-band-texture-hover = 각 궤도의 통계값이 띠의 경계를 그 텍�
 panel-band-texture-none = 없음
 panel-band-texture-amount = 세기
 panel-band-texture-amount-hover = 텍스처가 띠를 옮기는 정도(통계값 1당 팔레트 주기 수). 0이면 띠가 그대로입니다.
+panel-band-texture-near = 집합 근처만
+panel-band-texture-near-hover = 텍스처를 집합 근처에만 보이고 대략 이 픽셀 수에 걸쳐 무늬 없는 띠로 녹아들게 하여, 필라멘트에서 자라난 것처럼 보이게 합니다. 0이면 어디에나 보입니다. 집합까지의 거리가 필요하며, 거리가 없는 식에서는 띠가 그대로 유지됩니다.
 panel-trap-shape = 트랩 모양
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

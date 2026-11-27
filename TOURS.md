@@ -58,6 +58,7 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `method` | string: smooth \| stripe \| triangle \| trap \| distance \| fringe \| decomposition | "smooth" | The coloring method: smooth, stripe, triangle, trap, distance, fringe or decomposition. |
 | `band_texture` | string: none \| stripe \| triangle | (left out) | The Smooth method's band texture: a statistic of each orbit moves the band edges along its texture, "stripe" (the stripe average, at the stripe density: fur or flame) or "triangle" (the triangle inequality average: longer strands); "none" or left out: plain bands (method "smooth"). |
 | `band_texture_amount` | float, 0 to 8 | 2 | How far the band texture moves the bands: palette cycles per unit of the statistic, 0 to 8 (with `band_texture`). |
+| `band_texture_near` | float, 0 to 64 | 0 | The band texture only near the set: the distance in output pixels over which it fades into plain bands, 0 to 64 (0 or left out: everywhere; with `band_texture`). |
 | `stripe_freq` | float, 1 to 24 | 6 | Stripe average: the stripes' density (method "stripe"). |
 | `stripe_tail` | bool | false | Stripe average over the last `stripe_tail_len` iterations only, which keeps its contrast at depth (method "stripe"). |
 | `stripe_tail_len` | int, 4 to 1048576 | 16 | The tail's length in iterations (with `stripe_tail`). |

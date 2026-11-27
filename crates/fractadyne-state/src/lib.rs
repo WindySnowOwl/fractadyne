@@ -122,6 +122,10 @@ pub struct ColoringSpec {
     pub band_texture: String,
     #[serde(default = "default_band_texture_amount")]
     pub band_texture_amount: f32,
+    /// The band texture only near the set (coloring plan E2): its distance in output pixels over
+    /// which it fades into plain bands; 0, and absent from every session from before it: everywhere.
+    #[serde(default)]
+    pub band_texture_near: f32,
     /// Blend in OKLab (coloring plan C7): a palette's RGB segments blended in OKLab, a perceptual
     /// space, rather than between their display (sRGB-encoded) values. Off by default.
     #[serde(default)]
@@ -1051,6 +1055,7 @@ impl Default for ColoringSpec {
             equalize: 0.0,
             band_texture: String::new(),
             band_texture_amount: DEFAULT_BAND_TEXTURE_AMOUNT,
+            band_texture_near: 0.0,
             palette_oklab: false,
             coloring_hook: String::new(),
             coloring_hook_params: Vec::new(),

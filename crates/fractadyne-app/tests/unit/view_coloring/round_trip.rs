@@ -38,6 +38,7 @@ fn scrambled() -> ViewColoring {
         trap_tail_len: 900,
         band_texture: fractadyne_core::coloring::BandTexture::Triangle,
         band_texture_amount: 5.0,
+        band_texture_near: 40.0,
         light: true,
         light_angle: -1.25,
         light_height: 3.5,
@@ -121,6 +122,8 @@ fn variants() -> Vec<ViewColoring> {
     v.push(ViewColoring { band_texture: fractadyne_core::coloring::BandTexture::Stripe, ..d.clone() });
     v.push(ViewColoring { band_texture: fractadyne_core::coloring::BandTexture::Stripe, stripe_freq: 11.0, ..d.clone() });
     v.push(ViewColoring { band_texture: fractadyne_core::coloring::BandTexture::Triangle, band_texture_amount: 0.75, ..d.clone() });
+    // ...only near the set (E2).
+    v.push(ViewColoring { band_texture: fractadyne_core::coloring::BandTexture::Stripe, band_texture_near: 6.0, ..d.clone() });
     // The trap's tail (F4 part 5): on at its default length, then at another; and on with only the
     // inside colored by the trap (Smooth outside).
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, trap_tail: true, ..d.clone() });

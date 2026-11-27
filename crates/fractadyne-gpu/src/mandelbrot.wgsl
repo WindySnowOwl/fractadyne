@@ -4278,6 +4278,12 @@ struct ColorU {
     eq: vec4<f32>,
     eq_knots: array<vec4<f32>, 64>,
     fade_eq_knots: array<vec4<f32>, 64>,
+    // The band texture only near the set (coloring plan E2): its distance in output pixels, 0
+    // everywhere. Mirrors `ColorUniforms.band_tex_near`.
+    band_tex_near: f32,
+    _pad_bt0: f32,
+    _pad_bt1: f32,
+    _pad_bt2: f32,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -4432,6 +4438,12 @@ fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, l
     if (cu.band_tex != 0u && cu.color_method == METHOD_SMOOTH) {
         let s = select(a.r, a.g, cu.band_tex == 2u);
         tex = cu.band_tex_amount * (s - cu.band_tex_center);
+        // E2: only near the set, the weight exp(-d / near) of the distance d in output pixels, so the
+        // texture grows out of the filaments and fades into plain bands; with no distance (a formula
+        // without one), plain bands.
+        if (cu.band_tex_near > 0.0) {
+            tex = tex * select(0.0, exp(-exp2(m.a - de_px_shift) / cu.band_tex_near), m.a < 1.0e20);
+        }
     }
     // An equalized map (C6) first, apart: the plain map's expression below is the one the hook's
     // `palette_map` writes too, and the two must stay the same bits (B10's Smooth-hook check).

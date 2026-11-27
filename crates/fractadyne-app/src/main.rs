@@ -3405,6 +3405,8 @@ pub(crate) mod slider_range {
     pub(crate) const TRAP_TAIL_PANEL: RangeInclusive<u32> = 4..=16_384;
     /// The band texture's strength (coloring plan E1), palette cycles per unit of its statistic.
     pub(crate) const BAND_TEXTURE_AMOUNT: RangeInclusive<f32> = 0.0..=fractadyne_core::coloring::BAND_TEXTURE_AMOUNT_MAX;
+    /// The band texture only near the set (E2): output pixels, 0 everywhere.
+    pub(crate) const BAND_TEXTURE_NEAR: RangeInclusive<f32> = 0.0..=64.0;
     /// Equalize colors' share of histogram coloring (`--equalize`, coloring plan C6).
     pub(crate) const EQUALIZE: RangeInclusive<f32> = 0.0..=1.0;
 }
@@ -7002,6 +7004,9 @@ struct ColoringConfig {
     /// frame then accumulates it ([`ColoringConfig::orbit_stats_with`]). Persisted.
     band_texture: fractadyne_core::coloring::BandTexture,
     band_texture_amount: f32,
+    /// The band texture only near the set (coloring plan E2): the distance in output pixels over
+    /// which it fades into plain bands, 0 everywhere. Persisted.
+    band_texture_near: f32,
     /// Equalize colors (coloring plan C6): the share of histogram coloring, 0 to 1, mixed into the
     /// fitted map wherever the Smooth palette is normalized ([`FractadyneApp::norm_map_for`]): each
     /// color then takes about the same area of the picture. 0 is the fitted map alone. Persisted.
@@ -7028,6 +7033,15 @@ impl ColoringConfig {
         };
         t.with_outline(self.trap_outline.as_ref().map_or(0, |o| o.key()))
             .with_tail(if self.trap_tail { self.trap_tail_len } else { 0 })
+    }
+
+    /// The Smooth method's band texture as the GPU draws it (E1, E2).
+    fn band_texturing(&self) -> fractadyne_gpu::BandTexturing {
+        fractadyne_gpu::BandTexturing {
+            texture: self.band_texture,
+            amount: self.band_texture_amount,
+            near_px: self.band_texture_near,
+        }
     }
 
     /// The view's outline, when `trap` (the method's or the inside's) measures from it.
@@ -7306,6 +7320,13 @@ fn band_texture_amount_of(a: f32) -> f32 {
     if a.is_finite() { a.clamp(*r.start(), *r.end()) } else { fractadyne_core::coloring::BAND_TEXTURE_AMOUNT_DEFAULT }
 }
 
+/// The band texture's distance from the set as read (E2): in its range, and 0 (everywhere) for a
+/// value that is not a number.
+fn band_texture_near_of(d: f32) -> f32 {
+    let r = slider_range::BAND_TEXTURE_NEAR;
+    if d.is_finite() { d.clamp(*r.start(), *r.end()) } else { 0.0 }
+}
+
 fn coloring_from_session(s: &fractadyne_state::SessionState, args: &[String]) -> ColoringConfig {
     let c = &s.coloring;
     // The view's outline from its saved text (one that is not one is set aside, logged).
@@ -7400,6 +7421,7 @@ fn coloring_from_session(s: &fractadyne_state::SessionState, args: &[String]) ->
         wrap: fractadyne_core::coloring::Wrap::parse_key(&c.wrap).unwrap_or_default(),
         band_texture: fractadyne_core::coloring::BandTexture::parse_key(&c.band_texture).unwrap_or_default(),
         band_texture_amount: band_texture_amount_of(c.band_texture_amount),
+        band_texture_near: band_texture_near_of(c.band_texture_near),
         steps: c.steps.min(fractadyne_core::coloring::MAX_STEPS),
         equalize: equalize_of(c.equalize),
         orbit_stats_override: None,
@@ -9918,6 +9940,9 @@ impl FractadyneApp {
         if let Some(a) = val("--band-texture-amount").map(|s| arg_parse::<f32>("--band-texture-amount", s, "a number")) {
             self.coloring.band_texture_amount = band_texture_amount_of(a);
         }
+        if let Some(d) = val("--band-texture-near").map(|s| arg_parse::<f32>("--band-texture-near", s, "a number of pixels")) {
+            self.coloring.band_texture_near = band_texture_near_of(d);
+        }
         if let Some(w) = val("--wrap") {
             match fractadyne_core::coloring::Wrap::parse_key(w) {
                 Some(x) => self.coloring.wrap = x,
@@ -10166,6 +10191,7 @@ impl FractadyneApp {
                 t => t.key().to_string(),
             },
             band_texture_amount: self.coloring.band_texture_amount,
+            band_texture_near: self.coloring.band_texture_near,
             steps: self.coloring.steps,
             normalize_live: self.coloring.normalize_live,
             normalize_fit: self.coloring.normalize_fit,
@@ -10267,6 +10293,7 @@ impl FractadyneApp {
         c.wrap = fractadyne_core::coloring::Wrap::parse_key(&s.wrap).unwrap_or_default();
         c.band_texture = fractadyne_core::coloring::BandTexture::parse_key(&s.band_texture).unwrap_or_default();
         c.band_texture_amount = band_texture_amount_of(s.band_texture_amount);
+        c.band_texture_near = band_texture_near_of(s.band_texture_near);
         c.steps = s.steps.min(fractadyne_core::coloring::MAX_STEPS);
         c.equalize = equalize_of(s.equalize);
         c.normalize_live = s.normalize_live;
@@ -18419,6 +18446,7 @@ impl FractadyneApp {
         c.wrap.hash(&mut h);
         c.band_texture.hash(&mut h);
         c.band_texture_amount.to_bits().hash(&mut h);
+        c.band_texture_near.to_bits().hash(&mut h);
         c.steps.hash(&mut h);
         let e = &self.effects;
         e.light.hash(&mut h);

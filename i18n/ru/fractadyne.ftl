@@ -2926,6 +2926,8 @@ panel-band-texture-hover = Статистика каждой орбиты сдв
 panel-band-texture-none = Нет
 panel-band-texture-amount = Сила
 panel-band-texture-amount-hover = Насколько текстура сдвигает полосы, в циклах палитры на единицу статистики. При 0 полосы гладкие.
+panel-band-texture-near = Близко к множеству
+panel-band-texture-near-hover = Показывает текстуру только вблизи множества, переходя в гладкие полосы примерно за столько пикселей, так что она растёт из филаментов; 0 показывает её везде. Нужно расстояние до множества: где у формулы его нет, полосы остаются гладкими.
 panel-trap-shape = Форма ловушки
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

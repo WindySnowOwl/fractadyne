@@ -164,6 +164,7 @@ fn the_palette_fade_fields_line_up() {
         ("eq", std::mem::offset_of!(ColorUniforms, eq)),
         ("eq_knots", std::mem::offset_of!(ColorUniforms, eq_knots)),
         ("fade_eq_knots", std::mem::offset_of!(ColorUniforms, fade_eq_knots)),
+        ("band_tex_near", std::mem::offset_of!(ColorUniforms, band_tex_near)),
     ] {
         assert_eq!(wgsl_field_offset(&fields, wgsl), rust, "`{wgsl}` is at another offset in ColorU than in ColorUniforms");
     }

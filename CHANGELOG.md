@@ -80,9 +80,12 @@ detail is in the git history.
   their colors and order, and every edge feathers along the field lines, into fur or flame with
   the stripe average, into longer strands with the triangle inequality. Strength sets how far it
   moves them, and the stripe's density and tail apply as they do for the stripe method. The view
-  then calculates the statistic too, which is slower at depth. A view file keeps it
-  (`band_texture`, `band_texture_amount`), a tour's keyframes can state it, and on the command
-  line it is `--band-texture stripe` or `triangle` with `--band-texture-amount X`.
+  then calculates the statistic too, which is slower at depth. Near the set keeps the texture
+  close to the set, fading into plain bands over about that many pixels, so the fur grows out of
+  the filaments. A view file keeps it (`band_texture`, `band_texture_amount`,
+  `band_texture_near`), a tour's keyframes can state it, and on the command line it is
+  `--band-texture stripe` or `triangle`, with `--band-texture-amount X` and
+  `--band-texture-near PX`.
 - **The orbit trap's tail: a trap that draws at any depth.** Under Trap shape, Tail only (deep
   zoom) counts each orbit's late approaches to the trap more than its early ones: a hit counts as
   twice as far for every Tail length of iterations before the orbit's end. At extreme depth every

@@ -2960,6 +2960,8 @@ panel-band-texture-hover = Statystyka każdej orbity przesuwa krawędzie pasm zg
 panel-band-texture-none = Brak
 panel-band-texture-amount = Siła
 panel-band-texture-amount-hover = Jak daleko tekstura przesuwa pasma, w cyklach palety na jednostkę statystyki. 0 zostawia pasma gładkie.
+panel-band-texture-near = Blisko zbioru
+panel-band-texture-near-hover = Pokazuje teksturę tylko blisko zbioru i przechodzi w gładkie pasma na mniej więcej tylu pikselach, więc wyrasta z włókien; 0 pokazuje ją wszędzie. Potrzebuje odległości od zbioru: tam, gdzie formuła jej nie ma, pasma zostają gładkie.
 panel-trap-shape = Kształt pułapki
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.
