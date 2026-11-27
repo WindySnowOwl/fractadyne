@@ -2871,6 +2871,23 @@ panel-band-texture-amount = Intensidad
 panel-band-texture-amount-hover = Cuánto desplaza la textura las bandas, en ciclos de paleta por unidad de la estadística. 0 deja las bandas lisas.
 panel-band-texture-near = Cerca del conjunto
 panel-band-texture-near-hover = Muestra la textura solo cerca del conjunto y la funde con bandas lisas en unos tantos píxeles, de modo que crece desde los filamentos; 0 la muestra en todas partes. Necesita la distancia al conjunto: donde una fórmula no la tiene, las bandas quedan lisas.
+panel-stat-layer = Capa
+panel-stat-layer-hover = Superpone a los colores un gris hecho con una estadística de cada órbita: sus claros y oscuros iluminan y sombrean las bandas a lo largo de las líneas de campo, en hebras finas y peinadas con el promedio de franjas y en hebras más largas con la desigualdad triangular. La vista calcula entonces también la estadística, más lenta en profundidad. También --stat-layer NOMBRE para --render.
+panel-stat-layer-blend = Fusión
+panel-stat-layer-blend-hover = Cómo se funde la capa con los colores. Luz fuerte los ilumina y los sombrea y deja como estaba el gris medio; Luz suave es más suave; Superponer deja que manden los claros y oscuros de los propios colores; Multiplicar solo oscurece; Trama solo aclara.
+panel-stat-layer-blend-hard-light = Luz fuerte
+panel-stat-layer-blend-soft-light = Luz suave
+panel-stat-layer-blend-overlay = Superponer
+panel-stat-layer-blend-multiply = Multiplicar
+panel-stat-layer-blend-screen = Trama
+panel-stat-layer-contrast = Contraste
+panel-stat-layer-contrast-hover = Cuánto se reparten los valores de la estadística entre el negro y el blanco de la capa. 0 deja la capa en un gris uniforme.
+panel-stat-layer-opacity = Opacidad
+panel-stat-layer-opacity-hover = Cuánto se ve de la capa fundida. 0 deja los colores como estaban.
+panel-stat-bump = Relieve
+panel-stat-bump-hover = Lee una estadística de cada órbita como una altura e ilumina su pendiente con el ángulo de la luz de relieve: hebras grabadas a lo largo de las líneas de campo, más finas con el promedio de franjas, más largas con la desigualdad triangular. Con la luz de relieve encendida se suma a la superficie del relieve, un repujado satinado y peinado; apagada, se ilumina sola. La vista calcula entonces también la estadística, más lenta en profundidad. También --stat-bump NOMBRE para --render.
+panel-stat-bump-height = Altura
+panel-stat-bump-height-hover = Qué tan alta se alza la estadística, en píxeles por unidad de su gris: más alta graba las hebras más hondo. 0 deja la superficie plana.
 panel-trap-shape = Forma de trampa
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

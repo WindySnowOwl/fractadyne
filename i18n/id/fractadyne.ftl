@@ -2790,6 +2790,23 @@ panel-band-texture-amount = Kekuatan
 panel-band-texture-amount-hover = Seberapa jauh tekstur menggeser pita, dalam siklus palet per satuan statistik. 0 membiarkan pita polos.
 panel-band-texture-near = Dekat himpunan
 panel-band-texture-near-hover = Tampilkan tekstur hanya di dekat himpunan, memudar menjadi pita polos dalam sekitar sekian piksel, sehingga tumbuh dari filamen; 0 menampilkannya di mana-mana. Ini memerlukan jarak ke himpunan: jika rumus tidak memilikinya, pita tetap polos.
+panel-stat-layer = Lapisan
+panel-stat-layer-hover = Menaruh warna abu-abu dari statistik setiap orbit di atas warna: bagian terang dan gelapnya menerangi dan membayangi pita sepanjang garis medan, menjadi untaian halus tersisir dengan rata-rata garis, menjadi untaian lebih panjang dengan ketaksamaan segitiga. Tampilan lalu ikut menghitung statistiknya, lebih lambat di kedalaman. Juga --stat-layer NAMA untuk --render.
+panel-stat-layer-blend = Paduan
+panel-stat-layer-blend-hover = Cara lapisan berpadu dengan warna. Hard light menerangi dan membayanginya serta membiarkan abu-abu tengah apa adanya; Soft light lebih lembut; Overlay membiarkan terang dan gelap warna itu sendiri yang memimpin; Multiply hanya menggelapkan; Screen hanya menerangkan.
+panel-stat-layer-blend-hard-light = Hard light
+panel-stat-layer-blend-soft-light = Soft light
+panel-stat-layer-blend-overlay = Overlay
+panel-stat-layer-blend-multiply = Multiply
+panel-stat-layer-blend-screen = Screen
+panel-stat-layer-contrast = Kontras
+panel-stat-layer-contrast-hover = Seberapa jauh nilai statistik menyebar di antara hitam dan putih lapisan. 0 membuat lapisan abu-abu rata.
+panel-stat-layer-opacity = Opasitas
+panel-stat-layer-opacity-hover = Seberapa banyak lapisan yang dipadukan terlihat. 0 membiarkan warna seperti semula.
+panel-stat-bump = Timbul
+panel-stat-bump-hover = Membaca statistik setiap orbit sebagai ketinggian dan menerangi kemiringannya dengan sudut cahaya relief: untaian terukir sepanjang garis medan, lebih halus dengan rata-rata garis, lebih panjang dengan ketaksamaan segitiga. Dengan cahaya relief menyala, ia ditambahkan ke permukaan relief, emboss satin tersisir; saat mati, ia diterangi sendiri. Tampilan lalu ikut menghitung statistiknya, lebih lambat di kedalaman. Juga --stat-bump NAMA untuk --render.
+panel-stat-bump-height = Tinggi
+panel-stat-bump-height-hover = Seberapa tinggi statistik berdiri, dalam piksel per satuan abu-abunya: lebih tinggi mengukir untaian lebih dalam. 0 membiarkan permukaan datar.
 panel-trap-shape = Bentuk perangkap
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

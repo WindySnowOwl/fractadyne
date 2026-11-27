@@ -4281,9 +4281,23 @@ struct ColorU {
     // The band texture only near the set (coloring plan E2): its distance in output pixels, 0
     // everywhere. Mirrors `ColorUniforms.band_tex_near`.
     band_tex_near: f32,
-    _pad_bt0: f32,
-    _pad_bt1: f32,
-    _pad_bt2: f32,
+    // The statistic layer (coloring plan E3): its lane (0 none, 1 the stripe average `aux.r`, 2 the
+    // triangle inequality's `aux.g`), blend mode (`BlendMode::gpu_id`) and contrast, then its
+    // opacity and the statistic's center. Mirrors `ColorUniforms.layer_*`.
+    layer_stat: u32,
+    layer_blend: u32,
+    layer_contrast: f32,
+    layer_opacity: f32,
+    layer_center: f32,
+    _pad_ly0: f32,
+    _pad_ly1: f32,
+    // The statistic bump (coloring plan E4): its lane (0 none, 1 the stripe average, 2 the triangle
+    // inequality's), its height in output pixels per unit of the gray, the statistic's center.
+    // Mirrors `ColorUniforms.bump_*`.
+    bump_stat: u32,
+    bump_height: f32,
+    bump_center: f32,
+    _pad_bp: f32,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -4707,7 +4721,89 @@ const AA_MIN_TAP: f32 = 0.499;
 fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
     let coord = coord_of(m, a);
     if (coord >= INTERIOR_COORD) { return interior_shade(a); }
-    return fringed(palette_shaded(coord, 0.0), m);
+    return layered(fringed(palette_shaded(coord, 0.0), m), a);
+}
+
+// ---- The statistic layer (coloring plan E3) ----
+// An escaped texel's color under the Smooth method with a gray from an orbit statistic merged over
+// it: the gray `0.5 + layer_contrast · (s − layer_center)` clamped (`fractadyne_core::coloring::
+// layer_gray`), the merge by `layer_blend` (`BlendMode::apply`) on the display-encoded color, as
+// Ultra Fractal's layers and image editors merge, then mixed back by the opacity. Off (lane 0), or
+// under any other method (a method sheet's cell), the color as it was. Each texel is layered before
+// a pixel's texels are averaged, so the layer's fine texture is anti-aliased as the rest is.
+fn layered(c: vec3<f32>, a: vec4<f32>) -> vec3<f32> {
+    if (cu.layer_stat == 0u || cu.color_method != METHOD_SMOOTH) { return c; }
+    let s = select(a.r, a.g, cu.layer_stat == 2u);
+    let g = clamp(0.5 + cu.layer_contrast * (s - cu.layer_center), 0.0, 1.0);
+    return mix(c, blended(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), g), cu.layer_opacity);
+}
+
+// ---- The statistic bump (coloring plan E4) ----
+// The statistic's gray (the layer's, at the default contrast 4) read as a height, `bump_height`
+// output pixels per unit: its slope from the next pixels' means, added to the relief light's
+// surface (or lit alone with the relief off). Each neighbor's MEAN over its samples: from one
+// sample a neighbor the shade was half noise (the study, 2026-11-26: 0.56 of its structure held
+// against a render shifted a third of a pixel, 0.89 from the means).
+
+// The mean gray over the escaped texels of the texture's pixel `p` (clamped to the texture), and
+// how many there were.
+fn bump_mean(p: vec2<i32>, ss: u32, maxc: vec2<i32>) -> vec2<f32> {
+    var acc = 0.0;
+    var n = 0.0;
+    let q0 = clamp(p, vec2<i32>(0, 0), maxc / i32(ss)) * i32(ss);
+    for (var j: i32 = 0; j < i32(ss); j = j + 1) {
+        for (var i: i32 = 0; i < i32(ss); i = i + 1) {
+            let q = clamp(q0 + vec2<i32>(i, j), vec2<i32>(0, 0), maxc);
+            if (textureLoad(iter_tex, q, 0).r >= 0.0) {
+                let a = textureLoad(aux_tex, q, 0);
+                let s = select(a.r, a.g, cu.bump_stat == 2u);
+                acc = acc + clamp(0.5 + 4.0 * (s - cu.bump_center), 0.0, 1.0);
+                n = n + 1.0;
+            }
+        }
+    }
+    return vec2<f32>(acc / max(n, 1.0), n);
+}
+
+// The bump's part of the surface at the texture's pixel `pix`: −height × the gray's gradient per
+// output pixel, in the stored normal's axes (the complex plane's, y up: the texture's rows run
+// down). 0 for an interior pixel; a neighbor with no escaped texel stands at the pixel's own height.
+fn bump_term(pix: vec2<i32>, ss: u32, maxc: vec2<i32>) -> vec2<f32> {
+    let c = bump_mean(pix, ss, maxc);
+    if (c.y == 0.0) { return vec2<f32>(0.0); }
+    let l = bump_mean(pix - vec2<i32>(1, 0), ss, maxc);
+    let r = bump_mean(pix + vec2<i32>(1, 0), ss, maxc);
+    let u = bump_mean(pix - vec2<i32>(0, 1), ss, maxc);
+    let d = bump_mean(pix + vec2<i32>(0, 1), ss, maxc);
+    let gx = (select(c.x, r.x, r.y > 0.0) - select(c.x, l.x, l.y > 0.0)) * 0.5;
+    let gy_down = (select(c.x, d.x, d.y > 0.0) - select(c.x, u.x, u.y > 0.0)) * 0.5;
+    return -cu.bump_height * vec2<f32>(gx, -gy_down);
+}
+
+// Hard light: multiply by 2s where s <= 0.5, else screen by 2s - 1, per channel.
+fn hard_lit(b: vec3<f32>, s: vec3<f32>) -> vec3<f32> {
+    let mul = b * 2.0 * s;
+    let s2 = 2.0 * s - 1.0;
+    let scr = b + s2 - b * s2;
+    return select(scr, mul, s <= vec3<f32>(0.5));
+}
+
+// The backdrop `b` merged with the gray `g` by `cu.layer_blend` (`BlendMode::gpu_id`): multiply,
+// screen, overlay, hard light, soft light (the W3C compositing formulas).
+fn blended(b: vec3<f32>, g: f32) -> vec3<f32> {
+    let s = vec3<f32>(g);
+    switch (cu.layer_blend) {
+        case 0u: { return b * s; }
+        case 1u: { return b + s - b * s; }
+        case 2u: { return hard_lit(s, b); }
+        case 4u: {
+            let d = select(sqrt(b), ((16.0 * b - 12.0) * b + 4.0) * b, b <= vec3<f32>(0.25));
+            let lo = b - (1.0 - 2.0 * s) * b * (1.0 - b);
+            let hi = b + (2.0 * s - 1.0) * (d - b);
+            return select(hi, lo, s <= vec3<f32>(0.5));
+        }
+        default: { return hard_lit(b, s); }
+    }
 }
 
 // ---- The fringe (coloring plan C9) ----
@@ -4820,7 +4916,7 @@ fn shade_aa(m: vec4<f32>, a: vec4<f32>, width: f32, width_fade: f32) -> vec3<f32
     if (cu.fade_weight > 0.0) {
         col = mix(col, palette_shaded(coord_fade(m, a), width_fade), cu.fade_weight);
     }
-    return fringed(col, m);
+    return layered(fringed(col, m), a);
 }
 
 // Average color of the frozen frame, from a coarse grid over the iteration texture. Used to
@@ -5100,6 +5196,13 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
         }
     }
     var col = acc / count;
+    // The statistic bump (E4): its part of the surface, 0 off (and then every expression below is
+    // the one it was, to the bit).
+    let bump_on = cu.bump_stat != 0u && cu.color_method == METHOD_SMOOTH;
+    var bump = vec2<f32>(0.0);
+    if (bump_on) {
+        bump = bump_term(pix, ss, maxc);
+    }
     // Distance-estimate relief lighting: light the surface whose normal is the
     // averaged slope. `light_height` raises the ambient floor (smaller = sharper).
     if (cu.light == 1u) {
@@ -5154,17 +5257,33 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
                     k = clamp(cu.relief_steep_px * exp2(de_px_shift - kacc / kw), 0.0, 1.0e6);
                 }
             }
-            let lam = clamp((k * diff + cu.light_height) / (k + cu.light_height), 0.0, 1.0);
+            var lam = clamp((k * diff + cu.light_height) / (k + cu.light_height), 0.0, 1.0);
+            // With a bump (E4) the surface's slope is the relief's plus the bump's, H = k·n + b: the
+            // same Lambert term, (H·l + h) / (|H| + h), its direction and steepness H's.
+            var nu_s = nu;
+            var k_s = k;
+            if (bump_on) {
+                let hs = k * nu + bump;
+                k_s = length(hs);
+                nu_s = select(nu, hs / k_s, k_s > 1.0e-12);
+                lam = clamp((dot(hs, ld) + cu.light_height) / (k_s + cu.light_height), 0.0, 1.0);
+            }
             let cf = clamp(conf, 0.0, 1.0);
             col = col * mix(1.0, lam, cf);
             // The highlight on that surface, as sure of itself as the shade (`cf`), and only where the
             // pixel has a distance: the set's inside, and a pixel with none, are flat and stay matte
             // (the 3x3 normal lights the inside's edge pixels too).
             if (cu.relief_highlight > 0.0 && kw > 0.0) {
-                let hl = relief_highlight(nu, k, ld) * cu.relief_highlight * cf;
+                let hl = relief_highlight(nu_s, k_s, ld) * cu.relief_highlight * cf;
                 col = min(col + hl * cu.relief_hl_col.xyz, vec3<f32>(1.0));
             }
         }
+    }
+    // A bump with the relief light off (E4): lit alone, by the relief's angle and height.
+    if (bump_on && cu.light != 1u) {
+        let ldb = vec2<f32>(cos(cu.light_angle), sin(cu.light_angle));
+        let kb = length(bump);
+        col = col * clamp((dot(bump, ldb) + cu.light_height) / (kb + cu.light_height), 0.0, 1.0);
     }
     // Distance-estimate glow: bright contour bands at log-distance intervals from the
     // boundary; they densify near the filaments (→ glow) and flow when `de_phase`

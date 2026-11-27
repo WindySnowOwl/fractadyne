@@ -397,6 +397,8 @@ fn plan_request(plan: Plan) -> (fractadyne_gpu::ExportRequest, u32) {
         hook_params: [0.0; 4],
         wrap: 0,
         band_texture: Default::default(),
+        stat_layer: Default::default(),
+        stat_bump: Default::default(),
         steps: 0.0,
         edge: fractadyne_gpu::EdgeShade::default(),
         grid: fractadyne_gpu::GridLines::default(),

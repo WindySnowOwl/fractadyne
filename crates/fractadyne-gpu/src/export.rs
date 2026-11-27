@@ -269,6 +269,10 @@ pub struct ExportRequest {
     pub steps: f32,
     /// The band texture — see `MandelbrotParams::band_texture`.
     pub band_texture: crate::BandTexturing,
+    /// The statistic layer — see `MandelbrotParams::stat_layer`.
+    pub stat_layer: crate::StatLayering,
+    /// The statistic bump — see `MandelbrotParams::stat_bump`.
+    pub stat_bump: crate::StatBump,
     /// Edge shading (coloring plan C3).
     pub edge: crate::EdgeShade,
     /// Equipotential lines (coloring plan C10).
@@ -1697,7 +1701,8 @@ struct ExportPlan {
     rn_bla: bool,
     state_size: [u32; 2],
     /// Output pixels each tile iterates past every side that has a neighboring tile (its apron):
-    /// 1 for a lit export, whose relief reads a 3x3 neighborhood, else 0 (`apron_plan`).
+    /// 1 for a lit export, whose relief reads a 3x3 neighborhood, or one with a statistic bump (E4),
+    /// which reads the next pixels' statistic; else 0 (`apron_plan`).
     apron: u32,
 }
 
@@ -1708,7 +1713,8 @@ fn plan_tile_samples(plan: &ExportPlan) -> u64 {
 
 /// The plan of a request's tiles; a lit export's tiles take an apron (`ExportPlan::apron`).
 fn export_plan(limits: &wgpu::Limits, req: &ExportRequest, allow_chunking: bool) -> ExportPlan {
-    export_plan_with(limits, req, allow_chunking, req.light == 1)
+    // A statistic bump (E4) reads the next pixels' statistic as the relief reads their normals.
+    export_plan_with(limits, req, allow_chunking, req.light == 1 || crate::stat_bump_words(req.color_method, req.stat_bump).0 != 0)
 }
 
 /// The tile, the occupancy grid and the chunk state's size with an apron of `apron` output pixels
@@ -2057,7 +2063,16 @@ impl<'a> TileRenderer<'a> {
             eq_knots: eqw.knots,
             fade_eq_knots: eqw.fade_knots,
             band_tex_near: crate::band_texture_words(req.color_method, req.band_texture).3,
-            _pad_bt: [0.0; 3],
+            layer_stat: crate::stat_layer_words(req.color_method, req.stat_layer).0,
+            layer_blend: crate::stat_layer_words(req.color_method, req.stat_layer).1,
+            layer_contrast: crate::stat_layer_words(req.color_method, req.stat_layer).2,
+            layer_opacity: crate::stat_layer_words(req.color_method, req.stat_layer).3,
+            layer_center: crate::stat_layer_words(req.color_method, req.stat_layer).4,
+            _pad_ly: [0.0; 2],
+            bump_stat: crate::stat_bump_words(req.color_method, req.stat_bump).0,
+            bump_height: crate::stat_bump_words(req.color_method, req.stat_bump).1,
+            bump_center: crate::stat_bump_words(req.color_method, req.stat_bump).2,
+            _pad_bp: 0.0,
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4516,7 +4531,16 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         eq_knots: eqw.knots,
         fade_eq_knots: eqw.fade_knots,
         band_tex_near: crate::band_texture_words(req.color_method, req.band_texture).3,
-        _pad_bt: [0.0; 3],
+        layer_stat: crate::stat_layer_words(req.color_method, req.stat_layer).0,
+        layer_blend: crate::stat_layer_words(req.color_method, req.stat_layer).1,
+        layer_contrast: crate::stat_layer_words(req.color_method, req.stat_layer).2,
+        layer_opacity: crate::stat_layer_words(req.color_method, req.stat_layer).3,
+        layer_center: crate::stat_layer_words(req.color_method, req.stat_layer).4,
+        _pad_ly: [0.0; 2],
+        bump_stat: crate::stat_bump_words(req.color_method, req.stat_bump).0,
+        bump_height: crate::stat_bump_words(req.color_method, req.stat_bump).1,
+        bump_center: crate::stat_bump_words(req.color_method, req.stat_bump).2,
+        _pad_bp: 0.0,
     }
 }
 

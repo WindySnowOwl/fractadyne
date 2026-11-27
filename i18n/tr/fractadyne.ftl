@@ -2862,6 +2862,23 @@ panel-band-texture-amount = Güç
 panel-band-texture-amount-hover = Dokunun bantları ne kadar kaydırdığı, istatistiğin birimi başına palet döngüsü olarak. 0 bantları düz bırakır.
 panel-band-texture-near = Kümeye yakın
 panel-band-texture-near-hover = Dokuyu yalnızca kümenin yakınında gösterir ve yaklaşık bu kadar pikselde düz bantlara karıştırır, böylece filamentlerden büyür; 0 her yerde gösterir. Kümeye uzaklık gerekir: bir formülde yoksa bantlar düz kalır.
+panel-stat-layer = Katman
+panel-stat-layer-hover = Her yörüngenin bir istatistiğinden yapılan griyi renklerin üzerine koyar: açık ve koyu yerleri bantları alan çizgileri boyunca aydınlatır ve gölgeler; şerit ortalamasıyla ince, taranmış lifler, üçgen eşitsizliğiyle daha uzun lifler olur. Görünüm o zaman istatistiği de hesaplar, derinde daha yavaştır. --render için de --stat-layer AD.
+panel-stat-layer-blend = Karışım modu
+panel-stat-layer-blend-hover = Katmanın renklerle nasıl karıştığı. Sert ışık onları aydınlatır ve gölgeler, grinin ortasını olduğu gibi bırakır; Yumuşak ışık daha hafiftir; Bindirme renklerin kendi açık ve koyu yerlerinin yönlendirmesine izin verir; Çoğalt yalnızca koyulaştırır; Ekran yalnızca açar.
+panel-stat-layer-blend-hard-light = Sert ışık
+panel-stat-layer-blend-soft-light = Yumuşak ışık
+panel-stat-layer-blend-overlay = Bindirme
+panel-stat-layer-blend-multiply = Çoğalt
+panel-stat-layer-blend-screen = Ekran
+panel-stat-layer-contrast = Kontrast
+panel-stat-layer-contrast-hover = İstatistiğin değerlerinin katmanın siyahıyla beyazı arasında ne kadar yayıldığı. 0 katmanı düz bir gri yapar.
+panel-stat-layer-opacity = Opaklık
+panel-stat-layer-opacity-hover = Karışan katmanın ne kadarının göründüğü. 0 renkleri olduğu gibi bırakır.
+panel-stat-bump = Kabartma
+panel-stat-bump-hover = Her yörüngenin bir istatistiğini yükseklik olarak okur ve eğimini kabartma ışığının açısıyla aydınlatır: alan çizgileri boyunca oyulmuş lifler, şerit ortalamasıyla daha ince, üçgen eşitsizliğiyle daha uzun. Kabartma ışığı açıkken kabartmanın yüzeyine eklenir, taranmış saten bir baskı; kapalıyken tek başına aydınlatılır. Görünüm o zaman istatistiği de hesaplar, derinde daha yavaştır. --render için de --stat-bump AD.
+panel-stat-bump-height = Yükseklik
+panel-stat-bump-height-hover = İstatistiğin ne kadar yüksek durduğu, grisinin birimi başına piksel olarak: daha yüksek lifleri daha derin oyar. 0 yüzeyi düz bırakır.
 panel-trap-shape = Tuzak şekli
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

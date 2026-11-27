@@ -83,6 +83,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe", "round-trip",
     "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize", "palette-oklab",
     "tour-equalize", "video-equalize", "trap-equalize", "lossy-formats", "tour-trap-fit", "trap-tail", "band-texture",
+    "stat-layer", "stat-bump",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -787,6 +788,15 @@ impl FractadyneApp {
         // ...and the inside measures the method's trap, unless a check gives it its own.
         self.coloring.interior_trap = None;
         self.coloring.interior_trap_place = crate::TrapPlace::DEFAULT;
+        // The trap's tail (F4 part 5) changes every trap check's colors, and a band texture (E1) or a
+        // statistic layer (E3) every Smooth check's (the goldens' among them): off unless a check
+        // asks. (Added with E3, 2026-11-26: neither was reset before, so a session with one on
+        // failed the goldens.)
+        self.coloring.trap_tail = false;
+        self.coloring.band_texture = fractadyne_core::coloring::BandTexture::None;
+        self.coloring.band_texture_near = 0.0;
+        self.coloring.stat_layer = fractadyne_core::coloring::BandTexture::None;
+        self.coloring.stat_bump = fractadyne_core::coloring::BandTexture::None;
         self.effects.de = false;
         self.effects.light = false;
         // D2.2: echo the effective config so any residual leak is visible in the report
@@ -8101,6 +8111,276 @@ impl FractadyneApp {
             self.coloring.band_texture_near = saved_near;
         }
 
+        // ---- the Smooth method's statistic layer (coloring plan E3) ----
+        // A gray from a statistic of each orbit merged over Smooth's colors. At the study's view: each
+        // statistic's layer, in hard light, changes the picture; at opacity 0 the frame is Smooth's to
+        // the bit with the same statistic accumulated (the color pass merges nothing); at contrast 0 the
+        // gray is its middle everywhere, where each blend is a formula of the backdrop alone (hard
+        // light, soft light and overlay leave it, multiply halves it, screen takes it halfway to white):
+        // every blend's frame against `BlendMode::apply` on that plain frame, channel by channel; and
+        // the five blends draw five different pictures.
+        if want("stat-layer") {
+            use fractadyne_core::coloring::{BandTexture as B, BlendMode as M};
+            let saved = (
+                (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.interior),
+                (self.coloring.stat_layer, self.coloring.stat_layer_blend, self.coloring.stat_layer_contrast, self.coloring.stat_layer_opacity),
+                (self.coloring.band_texture, self.coloring.stripe_freq, self.coloring.use_custom_palette),
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
+            );
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.interior = None;
+            self.coloring.band_texture = B::None;
+            self.coloring.use_custom_palette = false;
+            self.coloring.stripe_freq = 5.0;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 6_000;
+            self.render_cfg.series_approx = true;
+            self.render_cfg.use_bla = true;
+            let (w, h) = (320u32, 200u32);
+            const INSIDE_MARK: [f32; 4] = [0.123, 0.456, 0.789, 1.0];
+            let progress = std::sync::atomic::AtomicU32::new(0);
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 128).expect("the view's coordinate");
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.set_center_mag(at("-0.7435"), at("0.1315"), 800.0);
+            let shot = |app: &mut Self, vp: &Viewport, layer: B, blend: M, contrast: f32, opacity: f32| -> Option<Vec<f32>> {
+                app.coloring.stat_layer = layer;
+                app.coloring.stat_layer_blend = blend;
+                app.coloring.stat_layer_contrast = contrast;
+                app.coloring.stat_layer_opacity = opacity;
+                let mut r = app.current_export_request_for(vp, false);
+                r.width = vp.width_px as u32;
+                r.height = vp.height_px as u32;
+                r.ss = 1;
+                // The inside in a color no escaped pixel has, so the formula check below can leave it
+                // out: the layer colors only the escaped (the inside keeps its color in every blend).
+                r.interior_col = INSIDE_MARK;
+                match fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel) {
+                    Ok(x) => Some(x.pixels),
+                    Err(e) => {
+                        eprintln!("[selftest] GPU ERROR (render_export): {e}");
+                        None
+                    }
+                }
+            };
+            let bytes = |p: &[f32]| p.iter().map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect::<Vec<u8>>();
+            let dist = |a: &Option<Vec<f32>>, b: &Option<Vec<f32>>| a.as_ref().zip(b.as_ref()).map(|(a, b)| frame::distance(&bytes(a), &bytes(b)));
+            let plain = shot(self, &vp, B::None, M::HardLight, 4.0, 1.0);
+            for (layer, name) in [(B::Stripe, "stripe"), (B::Triangle, "triangle inequality")] {
+                let on = shot(self, &vp, layer, M::HardLight, 4.0, 1.0);
+                let none = shot(self, &vp, layer, M::HardLight, 4.0, 0.0);
+                // Plain Smooth with the layer's statistic accumulated beside the count.
+                self.coloring.orbit_stats_override = layer.stat().map(crate::StatSet::of);
+                let alike = shot(self, &vp, B::None, M::HardLight, 4.0, 1.0);
+                self.coloring.orbit_stats_override = None;
+                let moved = dist(&plain, &on);
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "consistency",
+                    name: format!("the {name} layer in hard light changes Smooth's picture"),
+                    params: "the seahorse valley, 0.008 wide, 320x200, contrast 4, opacity 1".into(),
+                    result: format!("the mean difference from plain Smooth: {moved:.2?} levels"),
+                    threshold: "at least 2 levels",
+                    pass: moved.is_some_and(|d| d >= 2.0),
+                });
+                let same = alike.as_ref().zip(none.as_ref()).map(|(a, b)| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits()));
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "consistency",
+                    name: format!("the {name} layer at opacity 0 is plain Smooth to the bit"),
+                    params: "the same view; plain Smooth with the same statistic accumulated beside the count".into(),
+                    result: format!("identical: {same:?}"),
+                    threshold: "every channel the same bits",
+                    pass: same == Some(true),
+                });
+            }
+            // At contrast 0, every blend against its formula on the plain frame with the stripe
+            // accumulated (the gray 0.5 everywhere).
+            self.coloring.orbit_stats_override = Some(crate::StatSet::of(fractadyne_core::coloring::Stat::Stripe));
+            let backdrop = shot(self, &vp, B::None, M::HardLight, 4.0, 1.0);
+            self.coloring.orbit_stats_override = None;
+            // (Below 0, so the first blend is named even when every one matches exactly.)
+            let mut worst = (-1.0f32, "");
+            let mut pictures: Vec<(M, Option<Vec<f32>>)> = Vec::new();
+            // The escaped pixels: every one but the inside's marked color.
+            let escaped: Vec<bool> = backdrop.as_ref().map_or_else(Vec::new, |b| {
+                b.chunks_exact(4).map(|p| (0..3).any(|c| (p[c] - INSIDE_MARK[c]).abs() > 1.0e-6)).collect()
+            });
+            let n_escaped = escaped.iter().filter(|e| **e).count();
+            for m in M::ALL {
+                let mid = shot(self, &vp, B::Stripe, m, 0.0, 1.0);
+                let d = match (&backdrop, &mid) {
+                    (Some(b), Some(g)) if b.len() == g.len() => b
+                        .chunks_exact(4)
+                        .zip(g.chunks_exact(4))
+                        .zip(&escaped)
+                        .filter(|(_, e)| **e)
+                        .flat_map(|((b, g), _)| (0..3).map(move |c| (m.apply(b[c].clamp(0.0, 1.0), 0.5) - g[c]).abs()))
+                        .fold(0.0f32, f32::max),
+                    _ => f32::INFINITY,
+                };
+                if !(d <= worst.0) {
+                    worst = (d, m.key());
+                }
+                pictures.push((m, shot(self, &vp, B::Stripe, m, 4.0, 1.0)));
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "consistency",
+                name: "every blend at the gray's middle is its formula".into(),
+                params: "the same view, the stripe layer at contrast 0 (gray 0.5), each blend against BlendMode::apply on plain Smooth's channels".into(),
+                result: format!("the largest difference {:.6} ({}), over {n_escaped} escaped pixels of {}", worst.0, worst.1, w * h),
+                threshold: "at most 0.0001 in every channel, over at least half the pixels",
+                pass: worst.0 <= 1.0e-4 && n_escaped * 2 >= (w * h) as usize,
+            });
+            let mut closest = (f64::INFINITY, String::new());
+            for i in 0..pictures.len() {
+                for j in i + 1..pictures.len() {
+                    if let Some(d) = dist(&pictures[i].1, &pictures[j].1) {
+                        if d < closest.0 {
+                            closest = (d, format!("{} and {}", pictures[i].0.key(), pictures[j].0.key()));
+                        }
+                    } else {
+                        closest = (0.0, "a render failed".into());
+                    }
+                }
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "consistency",
+                name: "the five blends draw five pictures".into(),
+                params: "the same view, the stripe layer at contrast 4, opacity 1".into(),
+                result: format!("the closest pair: {} at {:.2} levels", closest.1, closest.0),
+                threshold: "every pair at least 1 level apart",
+                pass: closest.0 >= 1.0,
+            });
+            (
+                (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.interior),
+                (self.coloring.stat_layer, self.coloring.stat_layer_blend, self.coloring.stat_layer_contrast, self.coloring.stat_layer_opacity),
+                (self.coloring.band_texture, self.coloring.stripe_freq, self.coloring.use_custom_palette),
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
+            ) = saved;
+        }
+
+        // ---- the Smooth method's statistic bump (coloring plan E4) ----
+        // A statistic read as a height, its slope lit by the relief light. At the study's view: each
+        // statistic's bump, lit alone (the relief light off), changes the picture; at height 0 the
+        // frame is Smooth's to the bit with the same statistic accumulated, with the relief light off
+        // and on (the relief's own path untouched); with the relief light the bump changes the relief;
+        // and an export with a bump is the same picture however it is tiled, lit and unlit (the bump
+        // reads the next pixels' statistic, which a tile's edge has from its apron).
+        if want("stat-bump") {
+            use fractadyne_core::coloring::BandTexture as B;
+            let saved = (
+                (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.interior),
+                (self.coloring.stat_bump, self.coloring.stat_bump_height, self.coloring.stat_layer, self.coloring.band_texture),
+                (self.coloring.stripe_freq, self.coloring.use_custom_palette, self.effects.light),
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
+            );
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.interior = None;
+            self.coloring.stat_layer = B::None;
+            self.coloring.band_texture = B::None;
+            self.coloring.use_custom_palette = false;
+            self.coloring.stripe_freq = 5.0;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 6_000;
+            self.render_cfg.series_approx = true;
+            self.render_cfg.use_bla = true;
+            let (w, h) = (320u32, 200u32);
+            let progress = std::sync::atomic::AtomicU32::new(0);
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 128).expect("the view's coordinate");
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.set_center_mag(at("-0.7435"), at("0.1315"), 800.0);
+            let shot = |app: &mut Self, vp: &Viewport, bump: B, height: f32, lit: bool, tile: Option<u32>| -> Option<Vec<f32>> {
+                app.coloring.stat_bump = bump;
+                app.coloring.stat_bump_height = height;
+                app.effects.light = lit;
+                let mut r = app.current_export_request_for(vp, false);
+                r.width = vp.width_px as u32;
+                r.height = vp.height_px as u32;
+                r.ss = 1;
+                r.tile_px_max = tile;
+                match fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel) {
+                    Ok(x) => Some(x.pixels),
+                    Err(e) => {
+                        eprintln!("[selftest] GPU ERROR (render_export): {e}");
+                        None
+                    }
+                }
+            };
+            let bytes = |p: &[f32]| p.iter().map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect::<Vec<u8>>();
+            let dist = |a: &Option<Vec<f32>>, b: &Option<Vec<f32>>| a.as_ref().zip(b.as_ref()).map(|(a, b)| frame::distance(&bytes(a), &bytes(b)));
+            let bits = |a: &Option<Vec<f32>>, b: &Option<Vec<f32>>| a.as_ref().zip(b.as_ref()).map(|(a, b)| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits()));
+            let plain = shot(self, &vp, B::None, 6.0, false, None);
+            for (bump, name) in [(B::Stripe, "stripe"), (B::Triangle, "triangle inequality")] {
+                let on = shot(self, &vp, bump, 6.0, false, None);
+                let moved = dist(&plain, &on);
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "consistency",
+                    name: format!("the {name} bump lit alone changes Smooth's picture"),
+                    params: "the seahorse valley, 0.008 wide, 320x200, height 6, the relief light off".into(),
+                    result: format!("the mean difference from plain Smooth: {moved:.2?} levels"),
+                    threshold: "at least 2 levels",
+                    pass: moved.is_some_and(|d| d >= 2.0),
+                });
+            }
+            // Height 0, the relief light off and on, against Smooth with the stripe accumulated.
+            let mut same = Vec::new();
+            for lit in [false, true] {
+                let zero = shot(self, &vp, B::Stripe, 0.0, lit, None);
+                self.coloring.orbit_stats_override = Some(crate::StatSet::of(fractadyne_core::coloring::Stat::Stripe));
+                let alike = shot(self, &vp, B::None, 6.0, lit, None);
+                self.coloring.orbit_stats_override = None;
+                same.push((lit, bits(&zero, &alike)));
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "consistency",
+                name: "the stripe bump at height 0 is plain Smooth to the bit, unlit and lit".into(),
+                params: "the same view; plain Smooth with the stripe accumulated beside the count".into(),
+                result: format!("identical (relief off, on): {same:?}"),
+                threshold: "every channel the same bits, both",
+                pass: same.iter().all(|(_, s)| *s == Some(true)),
+            });
+            let relief = shot(self, &vp, B::None, 6.0, true, None);
+            let bumped = shot(self, &vp, B::Stripe, 6.0, true, None);
+            let d = dist(&relief, &bumped);
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "consistency",
+                name: "the stripe bump changes the relief light's surface".into(),
+                params: "the same view, height 6, the relief light on at its settings".into(),
+                result: format!("the mean difference from the relief alone: {d:.2?} levels"),
+                threshold: "at least 1 level",
+                pass: d.is_some_and(|d| d >= 1.0),
+            });
+            let mut seams = Vec::new();
+            for lit in [false, true] {
+                let (a, b) = (shot(self, &vp, B::Stripe, 6.0, lit, Some(16)), shot(self, &vp, B::Stripe, 6.0, lit, Some(40)));
+                seams.push(match (&a, &b) {
+                    (Some(a), Some(b)) if a.len() == b.len() => {
+                        let n = a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(p, q)| p.iter().zip(q.iter()).any(|(x, y)| (x - y).abs() * 255.0 > 0.01)).count();
+                        (lit, Some(n))
+                    }
+                    _ => (lit, None),
+                });
+            }
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "an export with a bump is the same picture however it is tiled".into(),
+                params: format!("the same view, {w}x{h}, ss 1, the stripe bump at 6: tiles of at most 16 and of at most 40 px, the relief light off and on, pixel by pixel"),
+                result: format!("pixels more than 0.01 levels apart (relief off, on): {seams:?}"),
+                threshold: "none, both",
+                pass: seams.iter().all(|(_, n)| *n == Some(0)),
+            });
+            (
+                (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.interior),
+                (self.coloring.stat_bump, self.coloring.stat_bump_height, self.coloring.stat_layer, self.coloring.band_texture),
+                (self.coloring.stripe_freq, self.coloring.use_custom_palette, self.effects.light),
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
+            ) = saved;
+        }
+
         // ---- the trap's tail draws a deep view again (coloring plan F4, part 5) ----
         // The coloring matrix's known-flat trap cells: at the seahorse at 1e20x every pixel's orbit
         // follows the reference for all but its last iterations and comes nearest the trap in that
@@ -11755,6 +12035,12 @@ zoom = \"1e94\"
                 band_texture: fractadyne_core::coloring::BandTexture::Triangle,
                 band_texture_amount: 5.0,
                 band_texture_near: 40.0,
+                stat_layer: fractadyne_core::coloring::BandTexture::Stripe,
+                stat_layer_blend: fractadyne_core::coloring::BlendMode::Overlay,
+                stat_layer_contrast: 9.0,
+                stat_layer_opacity: 0.3,
+                stat_bump: fractadyne_core::coloring::BandTexture::Triangle,
+                stat_bump_height: 11.0,
                 light: true,
                 light_angle: -1.25,
                 light_height: 3.5,
@@ -12040,6 +12326,14 @@ zoom = \"1e94\"
                 band_texture: "triangle".into(),
                 band_texture_amount: 3.0,
                 band_texture_near: 12.0,
+                // Its statistic layer (E3).
+                stat_layer: "stripe".into(),
+                stat_layer_blend: "multiply".into(),
+                stat_layer_contrast: 2.5,
+                stat_layer_opacity: 0.8,
+                // Its statistic bump (E4).
+                stat_bump: "triangle".into(),
+                stat_bump_height: 3.5,
                 custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
                 custom_palette_flat: true,
                 custom_segments: vec![fractadyne_state::PaletteSegment {

@@ -3407,6 +3407,11 @@ pub(crate) mod slider_range {
     pub(crate) const BAND_TEXTURE_AMOUNT: RangeInclusive<f32> = 0.0..=fractadyne_core::coloring::BAND_TEXTURE_AMOUNT_MAX;
     /// The band texture only near the set (E2): output pixels, 0 everywhere.
     pub(crate) const BAND_TEXTURE_NEAR: RangeInclusive<f32> = 0.0..=64.0;
+    /// The statistic layer's contrast and opacity (coloring plan E3).
+    pub(crate) const STAT_LAYER_CONTRAST: RangeInclusive<f32> = 0.0..=fractadyne_core::coloring::LAYER_CONTRAST_MAX;
+    pub(crate) const STAT_LAYER_OPACITY: RangeInclusive<f32> = 0.0..=1.0;
+    /// The statistic bump's height (coloring plan E4), output pixels per unit of its gray.
+    pub(crate) const STAT_BUMP_HEIGHT: RangeInclusive<f32> = 0.0..=fractadyne_core::coloring::BUMP_HEIGHT_MAX;
     /// Equalize colors' share of histogram coloring (`--equalize`, coloring plan C6).
     pub(crate) const EQUALIZE: RangeInclusive<f32> = 0.0..=1.0;
 }
@@ -7007,6 +7012,19 @@ struct ColoringConfig {
     /// The band texture only near the set (coloring plan E2): the distance in output pixels over
     /// which it fades into plain bands, 0 everywhere. Persisted.
     band_texture_near: f32,
+    /// The Smooth method's statistic layer (coloring plan E3): a gray from an orbit statistic merged
+    /// over the palette's colors by a blend mode, at a contrast and an opacity
+    /// ([`fractadyne_gpu::StatLayering`]); the frame then accumulates the statistic
+    /// ([`ColoringConfig::orbit_stats_with`]). Persisted.
+    stat_layer: fractadyne_core::coloring::BandTexture,
+    stat_layer_blend: fractadyne_core::coloring::BlendMode,
+    stat_layer_contrast: f32,
+    stat_layer_opacity: f32,
+    /// The Smooth method's statistic bump (coloring plan E4): a statistic read as a height, its
+    /// slope lit by the relief light ([`fractadyne_gpu::StatBump`]); the frame then accumulates the
+    /// statistic. Persisted.
+    stat_bump: fractadyne_core::coloring::BandTexture,
+    stat_bump_height: f32,
     /// Equalize colors (coloring plan C6): the share of histogram coloring, 0 to 1, mixed into the
     /// fitted map wherever the Smooth palette is normalized ([`FractadyneApp::norm_map_for`]): each
     /// color then takes about the same area of the picture. 0 is the fitted map alone. Persisted.
@@ -7042,6 +7060,21 @@ impl ColoringConfig {
             amount: self.band_texture_amount,
             near_px: self.band_texture_near,
         }
+    }
+
+    /// The Smooth method's statistic layer as the GPU draws it (E3).
+    fn stat_layering(&self) -> fractadyne_gpu::StatLayering {
+        fractadyne_gpu::StatLayering {
+            statistic: self.stat_layer,
+            blend: self.stat_layer_blend,
+            contrast: self.stat_layer_contrast,
+            opacity: self.stat_layer_opacity,
+        }
+    }
+
+    /// The Smooth method's statistic bump as the GPU draws it (E4).
+    fn stat_bumping(&self) -> fractadyne_gpu::StatBump {
+        fractadyne_gpu::StatBump { statistic: self.stat_bump, height: self.stat_bump_height }
     }
 
     /// The view's outline, when `trap` (the method's or the inside's) measures from it.
@@ -7094,6 +7127,16 @@ impl ColoringConfig {
         let set = set.union(self.hook.stats());
         // ...and what textures the Smooth method's bands (E1)...
         let set = match self.band_texture.stat().filter(|_| method == ColorMethod::Smooth) {
+            Some(st) => set.with(st),
+            None => set,
+        };
+        // ...and what its statistic layer is made of (E3)...
+        let set = match self.stat_layer.stat().filter(|_| method == ColorMethod::Smooth) {
+            Some(st) => set.with(st),
+            None => set,
+        };
+        // ...and what its bump is the height of (E4)...
+        let set = match self.stat_bump.stat().filter(|_| method == ColorMethod::Smooth) {
             Some(st) => set.with(st),
             None => set,
         };
@@ -7308,11 +7351,6 @@ struct DialogState {
     export_notice: bool,
 }
 
-/// The coloring a session restores: at start-up, and a farm child's from its job's session
-/// (`fractadyne_farm::RenderSettings::to_session`). Split out of `new_state` so the self-test
-/// `round-trip` takes a coloring through this same reader (2026-11-25). The whole session, for the
-/// trap phase's animation, kept beside the other animations' switches. `args` for `--normalize`
-/// and `--log-palette`.
 /// A band texture's strength as read (a session, a view, the command line): in its range, and the
 /// default for a value that is not a number.
 fn band_texture_amount_of(a: f32) -> f32 {
@@ -7327,6 +7365,30 @@ fn band_texture_near_of(d: f32) -> f32 {
     if d.is_finite() { d.clamp(*r.start(), *r.end()) } else { 0.0 }
 }
 
+/// The statistic layer's contrast as read (E3): in its range, and the default for a value that is
+/// not a number.
+fn stat_layer_contrast_of(c: f32) -> f32 {
+    let r = slider_range::STAT_LAYER_CONTRAST;
+    if c.is_finite() { c.clamp(*r.start(), *r.end()) } else { fractadyne_core::coloring::LAYER_CONTRAST_DEFAULT }
+}
+
+/// The statistic bump's height as read (E4): in its range, and the default for a value that is not
+/// a number.
+fn stat_bump_height_of(h: f32) -> f32 {
+    let r = slider_range::STAT_BUMP_HEIGHT;
+    if h.is_finite() { h.clamp(*r.start(), *r.end()) } else { fractadyne_core::coloring::BUMP_HEIGHT_DEFAULT }
+}
+
+/// The statistic layer's opacity as read (E3): 0 to 1, and 1 for a value that is not a number.
+fn stat_layer_opacity_of(o: f32) -> f32 {
+    if o.is_finite() { o.clamp(0.0, 1.0) } else { 1.0 }
+}
+
+/// The coloring a session restores: at start-up, and a farm child's from its job's session
+/// (`fractadyne_farm::RenderSettings::to_session`). Split out of `new_state` so the self-test
+/// `round-trip` takes a coloring through this same reader (2026-11-25). The whole session, for the
+/// trap phase's animation, kept beside the other animations' switches. `args` for `--normalize`
+/// and `--log-palette`.
 fn coloring_from_session(s: &fractadyne_state::SessionState, args: &[String]) -> ColoringConfig {
     let c = &s.coloring;
     // The view's outline from its saved text (one that is not one is set aside, logged).
@@ -7422,6 +7484,12 @@ fn coloring_from_session(s: &fractadyne_state::SessionState, args: &[String]) ->
         band_texture: fractadyne_core::coloring::BandTexture::parse_key(&c.band_texture).unwrap_or_default(),
         band_texture_amount: band_texture_amount_of(c.band_texture_amount),
         band_texture_near: band_texture_near_of(c.band_texture_near),
+        stat_layer: fractadyne_core::coloring::BandTexture::parse_key(&c.stat_layer).unwrap_or_default(),
+        stat_layer_blend: fractadyne_core::coloring::BlendMode::parse_key(&c.stat_layer_blend).unwrap_or_default(),
+        stat_layer_contrast: stat_layer_contrast_of(c.stat_layer_contrast),
+        stat_layer_opacity: stat_layer_opacity_of(c.stat_layer_opacity),
+        stat_bump: fractadyne_core::coloring::BandTexture::parse_key(&c.stat_bump).unwrap_or_default(),
+        stat_bump_height: stat_bump_height_of(c.stat_bump_height),
         steps: c.steps.min(fractadyne_core::coloring::MAX_STEPS),
         equalize: equalize_of(c.equalize),
         orbit_stats_override: None,
@@ -9943,6 +10011,47 @@ impl FractadyneApp {
         if let Some(d) = val("--band-texture-near").map(|s| arg_parse::<f32>("--band-texture-near", s, "a number of pixels")) {
             self.coloring.band_texture_near = band_texture_near_of(d);
         }
+        // The Smooth method's statistic layer (coloring plan E3): its statistic, blend, contrast and
+        // opacity.
+        if let Some(t) = val("--stat-layer") {
+            match fractadyne_core::coloring::BandTexture::parse_key(t) {
+                Some(x) => self.coloring.stat_layer = x,
+                None => {
+                    eprintln!("fractadyne: --stat-layer: unknown statistic \"{t}\"; use none, stripe or triangle.");
+                    crate::exit(2)
+                }
+            }
+        }
+        if let Some(b) = val("--stat-layer-blend") {
+            match fractadyne_core::coloring::BlendMode::parse_key(b) {
+                Some(x) => self.coloring.stat_layer_blend = x,
+                None => {
+                    eprintln!(
+                        "fractadyne: --stat-layer-blend: unknown blend \"{b}\"; use hard-light, soft-light, overlay, multiply or screen."
+                    );
+                    crate::exit(2)
+                }
+            }
+        }
+        if let Some(c) = val("--stat-layer-contrast").map(|s| arg_parse::<f32>("--stat-layer-contrast", s, "a number")) {
+            self.coloring.stat_layer_contrast = stat_layer_contrast_of(c);
+        }
+        if let Some(o) = val("--stat-layer-opacity").map(|s| arg_parse::<f32>("--stat-layer-opacity", s, "a number from 0 to 1")) {
+            self.coloring.stat_layer_opacity = stat_layer_opacity_of(o);
+        }
+        // ...and its statistic bump (coloring plan E4).
+        if let Some(t) = val("--stat-bump") {
+            match fractadyne_core::coloring::BandTexture::parse_key(t) {
+                Some(x) => self.coloring.stat_bump = x,
+                None => {
+                    eprintln!("fractadyne: --stat-bump: unknown statistic \"{t}\"; use none, stripe or triangle.");
+                    crate::exit(2)
+                }
+            }
+        }
+        if let Some(h) = val("--stat-bump-height").map(|s| arg_parse::<f32>("--stat-bump-height", s, "a number of pixels")) {
+            self.coloring.stat_bump_height = stat_bump_height_of(h);
+        }
         if let Some(w) = val("--wrap") {
             match fractadyne_core::coloring::Wrap::parse_key(w) {
                 Some(x) => self.coloring.wrap = x,
@@ -10192,6 +10301,21 @@ impl FractadyneApp {
             },
             band_texture_amount: self.coloring.band_texture_amount,
             band_texture_near: self.coloring.band_texture_near,
+            stat_layer: match self.coloring.stat_layer {
+                fractadyne_core::coloring::BandTexture::None => String::new(),
+                t => t.key().to_string(),
+            },
+            stat_layer_blend: match self.coloring.stat_layer_blend {
+                fractadyne_core::coloring::BlendMode::HardLight => String::new(),
+                b => b.key().to_string(),
+            },
+            stat_layer_contrast: self.coloring.stat_layer_contrast,
+            stat_layer_opacity: self.coloring.stat_layer_opacity,
+            stat_bump: match self.coloring.stat_bump {
+                fractadyne_core::coloring::BandTexture::None => String::new(),
+                t => t.key().to_string(),
+            },
+            stat_bump_height: self.coloring.stat_bump_height,
             steps: self.coloring.steps,
             normalize_live: self.coloring.normalize_live,
             normalize_fit: self.coloring.normalize_fit,
@@ -10294,6 +10418,12 @@ impl FractadyneApp {
         c.band_texture = fractadyne_core::coloring::BandTexture::parse_key(&s.band_texture).unwrap_or_default();
         c.band_texture_amount = band_texture_amount_of(s.band_texture_amount);
         c.band_texture_near = band_texture_near_of(s.band_texture_near);
+        c.stat_layer = fractadyne_core::coloring::BandTexture::parse_key(&s.stat_layer).unwrap_or_default();
+        c.stat_layer_blend = fractadyne_core::coloring::BlendMode::parse_key(&s.stat_layer_blend).unwrap_or_default();
+        c.stat_layer_contrast = stat_layer_contrast_of(s.stat_layer_contrast);
+        c.stat_layer_opacity = stat_layer_opacity_of(s.stat_layer_opacity);
+        c.stat_bump = fractadyne_core::coloring::BandTexture::parse_key(&s.stat_bump).unwrap_or_default();
+        c.stat_bump_height = stat_bump_height_of(s.stat_bump_height);
         c.steps = s.steps.min(fractadyne_core::coloring::MAX_STEPS);
         c.equalize = equalize_of(s.equalize);
         c.normalize_live = s.normalize_live;
@@ -18447,6 +18577,12 @@ impl FractadyneApp {
         c.band_texture.hash(&mut h);
         c.band_texture_amount.to_bits().hash(&mut h);
         c.band_texture_near.to_bits().hash(&mut h);
+        c.stat_layer.hash(&mut h);
+        c.stat_layer_blend.hash(&mut h);
+        c.stat_layer_contrast.to_bits().hash(&mut h);
+        c.stat_layer_opacity.to_bits().hash(&mut h);
+        c.stat_bump.hash(&mut h);
+        c.stat_bump_height.to_bits().hash(&mut h);
         c.steps.hash(&mut h);
         let e = &self.effects;
         e.light.hash(&mut h);

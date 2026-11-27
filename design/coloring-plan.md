@@ -1657,14 +1657,13 @@ bulbs, looking for seams. A new GPU regime: a capped first run, PLUTO first.
 
 ### E. Statistic combinations (tier 1 after B3)
 
-| Id  | Combination                         | Notes                                                                                                                                                                                                                                   | Size |
-| --- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| E1  | Statistic-warped bands              | position = rate·μ + offset + λ·(s − center); center fixed at first (no stripe/TIA histogram exists). Done 2026-11-26 as Band texture under Smooth (stripe or triangle inequality; centers 0.5 and 0.34; self-test group `band-texture`) | S    |
-| E2  | done: the band texture near the set | commit and merge recorded with the next step                                                                                                                                                                                            |      |
-| E2  | Statistic near filaments            | weight exp(−d_px/k); needs A9. Done 2026-11-26 as the band texture's Near the set (the shift weighted, not two colors mixed: the fur grows out of the filaments into plain bands)                                                       | S    |
-| E3  | Two-layer blend                     | statistic over smooth with multiply, screen, overlay, hard light and soft light; second LUT from B5                                                                                                                                     | M    |
-| E4  | Statistic bump map                  | screen-space differences of the statistic (analytic gradients measured as noise), reusing the palette-AA neighbor fetch and the relief low-pass                                                                                         | M    |
-| E5  | Specular strength from a statistic  | after C5                                                                                                                                                                                                                                | S    |
+| Id  | Combination                        | Notes                                                                                                                                                                                                                                                                                                                                                                                                               | Size |                                                                                                                        |     |
+| --- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------- | --- |
+| E1  | Statistic-warped bands             | position = rate·μ + offset + λ·(s − center); center fixed at first (no stripe/TIA histogram exists). Done 2026-11-26 as Band texture under Smooth (stripe or triangle inequality; centers 0.5 and 0.34; self-test group `band-texture`)                                                                                                                                                                             | S    |                                                                                                                        |     |
+| E2  | Statistic near filaments           | weight exp(−d_px/k); needs A9. Done 2026-11-26 as the band texture's Near the set (the shift weighted, not two colors mixed: the fur grows out of the filaments into plain bands)                                                                                                                                                                                                                                   | S    |                                                                                                                        |     |
+| E3  | Two-layer blend                    | statistic over smooth with multiply, screen, overlay, hard light and soft light; second LUT from B5. Done 2026-11-26 as the Layer under Smooth: a GRAY layer (Very Plotter's hard-light stripe), the stretch fixed (contrast 4 about the statistic's center: the GPU has no histogram, and it matched the prototype's 1st-99th percentile stretch); a palette-colored layer through a third LUT slot left for later | M    |                                                                                                                        |     |
+| E4  | Statistic bump map                 | screen-space differences of the statistic (analytic gradients measured as noise), reusing the palette-AA neighbor fetch and the relief low-pass. Done 2026-11-26 as the Bump under Smooth: the layer's gray (contrast 4) as a height, each NEIGHBOR PIXEL'S MEAN (0.89 of the structure held against a shifted render; one sample a neighbor 0.56), added to the relief's surface H = k·n + b (shade (H·l + h)/(    | H    | + h), the old expression kept to the bit without a bump), lit alone with the relief off; exports take the apron for it | M   |
+| E5  | Specular strength from a statistic | after C5                                                                                                                                                                                                                                                                                                                                                                                                            | S    |                                                                                                                        |     |
 
 Every E step shows "slower at depth" in the picker: it needs the statistic, so it pays the aux
 restrictions under Smooth.
@@ -1838,49 +1837,52 @@ coloring in these places, so sequence the two with care:
 
 ## 10. Status
 
-| Step       | State                                                              | Commit                                                                                    |
-| ---------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| A9         | done, merged                                                       | `33c6527e` (merge `3d202f30`)                                                             |
-| A6         | done, merged                                                       | `2c898852` (merge `38d93def`)                                                             |
-| A2         | done, merged                                                       | `3e5aa578` (merge `2a14e005`)                                                             |
-| A4         | done, merged                                                       | `475e2190` (merge `b9812c74`)                                                             |
-| A8         | done, merged                                                       | `095a7131` (merge `1db50a24`)                                                             |
-| A1         | done, merged                                                       | `c15bd9c7` (merge `aa5b22e7`)                                                             |
-| A3         | done, merged                                                       | `3ee690d7` (merge `3c8a59e7`)                                                             |
-| A5b        | done, merged                                                       | `fddc6ada` (merge `e11d1890`)                                                             |
-| A5a        | done, merged                                                       | `05306f71` (merge `45c2e84d`)                                                             |
-| A7         | done, merged                                                       | `603275eb` (merge `1bfdc833`)                                                             |
-| A10        | done, merged                                                       | `aaffca7f` (merge `6ec2fc76`)                                                             |
-| B1         | done, merged (agent v41, deployed)                                 | `312c54a8` (merge `4efdbbb3`)                                                             |
-| B1 fixes   | Distance NaN; Newton's statistics methods                          | merges `91fa8f91`, `7722b660`                                                             |
-| B1b        | done, merged                                                       | `dc457c3f` (merge `2c51a6be`)                                                             |
-| B2         | done, merged                                                       | `c017a577` (merge `dcfd776b`)                                                             |
-| B3         | done, merged                                                       | `412fafc6` (merge `542a5264`)                                                             |
-| B4         | done, merged                                                       | `a5d7d74b` (merge `ba452e9c`)                                                             |
-| B6         | done, merged                                                       | `c1e4bd61` (merge `35001f80`)                                                             |
-| B7         | done, merged                                                       | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
-| B5         | done, merged                                                       | `b2b927d6` (merge `e3e53257`)                                                             |
-| B8         | done, merged                                                       | `fad9c868` (merge `d7593385`)                                                             |
-| B9         | done, merged                                                       | `6d18af38` (merge `23d32dc5`)                                                             |
-| B10        | done, merged                                                       | `2f9648d2` (merge `2f5db211`)                                                             |
-| C1         | done, merged                                                       | `58d6dce3` (merge `84af4b0d`)                                                             |
-| C4         | done, merged                                                       | `e99bfafd` (merge `9a3f9ff9`)                                                             |
-| C8         | done, merged; on by default on `feat/color-c8-aa-default`          | `5430aa2c` (merge `49153662`)                                                             |
-| C11        | done, merged                                                       | `b8a24c8f` (merge `a14b2296`)                                                             |
-| C9         | done, merged                                                       | `0b0c5f03` (merge `20e2fff5`)                                                             |
-| C2         | done, merged                                                       | `ca8acfe6` (merge `1694d7e4`)                                                             |
-| C3         | done, merged                                                       | `b0bd9259` (merge `550139a7`)                                                             |
-| C10        | done, merged                                                       | `43368601` (merge `cc471188`)                                                             |
-| C5         | done, merged                                                       | `ed36a532` (merge `2eb22119`)                                                             |
-| C6         | done, merged (after the C2 map fix, merge `c44d9d35`)              | `2674cffe` (merge `61325df2`)                                                             |
-| C6b        | done, merged (tours, zoom videos)                                  | `5d53ce76` (merge `9d08ac0d`)                                                             |
-| C6c        | done, merged                                                       | `92836a58` (merge `e5a0432a`)                                                             |
-| C7         | done, merged                                                       | `3535dd38` (merge `e472c5ce`)                                                             |
-| F4 (1)     | done, merged                                                       | `559bb679` (merge `a9c8704e`)                                                             |
-| F4 (2)     | done, merged                                                       | `bbabc385` (merge `0c082800`)                                                             |
-| F4 inside  | the trap method's inside with a trap of its own: done, merged      | `f8140294`, `6580ee12` (merge `67cf1e67`)                                                 |
-| F4 (3)     | done, merged (six shapes, compiled only into frames that draw one) | `864af084`, `849bc9a5`, `e42772d9`, `08df4c87` (merge `99d5f8d6`)                         |
-| F4 (4)     | done: outlines from SVG, in pipelines of their own (text next)     | commit and merge recorded with the next step                                              |
-| F4 (5)     | done: the tail, every hit aged by its distance from the end        | commit and merge recorded with the next step                                              |
-| E1         | done: Band texture, a statistic feathering Smooth's bands          | commit and merge recorded with the next step                                              |
-| D, E, F, G | not started (F4 from part 4's text outlines)                       |                                                                                           |
+| Step       | State                                                                  | Commit                                                                                    |
+| ---------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| A9         | done, merged                                                           | `33c6527e` (merge `3d202f30`)                                                             |
+| A6         | done, merged                                                           | `2c898852` (merge `38d93def`)                                                             |
+| A2         | done, merged                                                           | `3e5aa578` (merge `2a14e005`)                                                             |
+| A4         | done, merged                                                           | `475e2190` (merge `b9812c74`)                                                             |
+| A8         | done, merged                                                           | `095a7131` (merge `1db50a24`)                                                             |
+| A1         | done, merged                                                           | `c15bd9c7` (merge `aa5b22e7`)                                                             |
+| A3         | done, merged                                                           | `3ee690d7` (merge `3c8a59e7`)                                                             |
+| A5b        | done, merged                                                           | `fddc6ada` (merge `e11d1890`)                                                             |
+| A5a        | done, merged                                                           | `05306f71` (merge `45c2e84d`)                                                             |
+| A7         | done, merged                                                           | `603275eb` (merge `1bfdc833`)                                                             |
+| A10        | done, merged                                                           | `aaffca7f` (merge `6ec2fc76`)                                                             |
+| B1         | done, merged (agent v41, deployed)                                     | `312c54a8` (merge `4efdbbb3`)                                                             |
+| B1 fixes   | Distance NaN; Newton's statistics methods                              | merges `91fa8f91`, `7722b660`                                                             |
+| B1b        | done, merged                                                           | `dc457c3f` (merge `2c51a6be`)                                                             |
+| B2         | done, merged                                                           | `c017a577` (merge `dcfd776b`)                                                             |
+| B3         | done, merged                                                           | `412fafc6` (merge `542a5264`)                                                             |
+| B4         | done, merged                                                           | `a5d7d74b` (merge `ba452e9c`)                                                             |
+| B6         | done, merged                                                           | `c1e4bd61` (merge `35001f80`)                                                             |
+| B7         | done, merged                                                           | `9e1efa0e` (merge `97c91c32`; step 1 `17b6d60d` with the browser's dual view, `ef2acde7`) |
+| B5         | done, merged                                                           | `b2b927d6` (merge `e3e53257`)                                                             |
+| B8         | done, merged                                                           | `fad9c868` (merge `d7593385`)                                                             |
+| B9         | done, merged                                                           | `6d18af38` (merge `23d32dc5`)                                                             |
+| B10        | done, merged                                                           | `2f9648d2` (merge `2f5db211`)                                                             |
+| C1         | done, merged                                                           | `58d6dce3` (merge `84af4b0d`)                                                             |
+| C4         | done, merged                                                           | `e99bfafd` (merge `9a3f9ff9`)                                                             |
+| C8         | done, merged; on by default on `feat/color-c8-aa-default`              | `5430aa2c` (merge `49153662`)                                                             |
+| C11        | done, merged                                                           | `b8a24c8f` (merge `a14b2296`)                                                             |
+| C9         | done, merged                                                           | `0b0c5f03` (merge `20e2fff5`)                                                             |
+| C2         | done, merged                                                           | `ca8acfe6` (merge `1694d7e4`)                                                             |
+| C3         | done, merged                                                           | `b0bd9259` (merge `550139a7`)                                                             |
+| C10        | done, merged                                                           | `43368601` (merge `cc471188`)                                                             |
+| C5         | done, merged                                                           | `ed36a532` (merge `2eb22119`)                                                             |
+| C6         | done, merged (after the C2 map fix, merge `c44d9d35`)                  | `2674cffe` (merge `61325df2`)                                                             |
+| C6b        | done, merged (tours, zoom videos)                                      | `5d53ce76` (merge `9d08ac0d`)                                                             |
+| C6c        | done, merged                                                           | `92836a58` (merge `e5a0432a`)                                                             |
+| C7         | done, merged                                                           | `3535dd38` (merge `e472c5ce`)                                                             |
+| F4 (1)     | done, merged                                                           | `559bb679` (merge `a9c8704e`)                                                             |
+| F4 (2)     | done, merged                                                           | `bbabc385` (merge `0c082800`)                                                             |
+| F4 inside  | the trap method's inside with a trap of its own: done, merged          | `f8140294`, `6580ee12` (merge `67cf1e67`)                                                 |
+| F4 (3)     | done, merged (six shapes, compiled only into frames that draw one)     | `864af084`, `849bc9a5`, `e42772d9`, `08df4c87` (merge `99d5f8d6`)                         |
+| F4 (4)     | done, merged: outlines from SVG, in pipelines of their own (text next) | `24f4441e`, `f75980ed`, `10ea8fcf` (merge `933dd9fd`)                                     |
+| F4 (5)     | done, merged: the tail, every hit aged by its distance from the end    | `c22e3c60` (merge `933dd9fd`)                                                             |
+| E1         | done, merged: Band texture, a statistic feathering Smooth's bands      | `9b27eaa1` (merge `933dd9fd`)                                                             |
+| E2         | done, merged: the band texture near the set                            | `1d366379` (merge `933dd9fd`)                                                             |
+| E3         | done: the Layer, a statistic's gray merged over Smooth in five blends  | commit and merge recorded with the next step                                              |
+| E4         | done: the Bump, a statistic's height lit by the relief light           | commit and merge recorded with the next step                                              |
+| D, E, F, G | not started (E5 next; F4 from part 4's text outlines)                  |                                                                                           |

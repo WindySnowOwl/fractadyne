@@ -2871,6 +2871,23 @@ panel-band-texture-amount = Intensité
 panel-band-texture-amount-hover = De combien la texture déplace les bandes, en cycles de palette par unité de la statistique. 0 laisse les bandes lisses.
 panel-band-texture-near = Près de l’ensemble
 panel-band-texture-near-hover = N’affiche la texture que près de l’ensemble, en la fondant dans des bandes lisses sur environ ce nombre de pixels, si bien qu’elle pousse depuis les filaments ; 0 l’affiche partout. Elle a besoin de la distance à l’ensemble : là où une formule n’en a pas, les bandes restent lisses.
+panel-stat-layer = Calque
+panel-stat-layer-hover = Pose sur les couleurs un gris tiré d’une statistique de chaque orbite : ses clairs et ses sombres éclairent et ombrent les bandes le long des lignes de champ, en mèches fines et peignées avec la moyenne de rayures, en mèches plus longues avec l’inégalité triangulaire. La vue calcule alors aussi la statistique, plus lente en profondeur. Aussi --stat-layer NOM pour --render.
+panel-stat-layer-blend = Fusion
+panel-stat-layer-blend-hover = Comment le calque se fond avec les couleurs. Lumière crue les éclaire et les ombre et laisse le gris moyen tel quel ; Lumière tamisée est plus douce ; Incrustation laisse mener les clairs et les sombres des couleurs elles-mêmes ; Produit ne fait qu’assombrir ; Superposition ne fait qu’éclaircir.
+panel-stat-layer-blend-hard-light = Lumière crue
+panel-stat-layer-blend-soft-light = Lumière tamisée
+panel-stat-layer-blend-overlay = Incrustation
+panel-stat-layer-blend-multiply = Produit
+panel-stat-layer-blend-screen = Superposition
+panel-stat-layer-contrast = Contraste
+panel-stat-layer-contrast-hover = De combien les valeurs de la statistique s’étalent entre le noir et le blanc du calque. 0 fait du calque un gris uni.
+panel-stat-layer-opacity = Opacité
+panel-stat-layer-opacity-hover = Quelle part du calque fondu se voit. 0 laisse les couleurs comme elles étaient.
+panel-stat-bump = Bosselage
+panel-stat-bump-hover = Lit une statistique de chaque orbite comme une hauteur et éclaire sa pente sous l’angle de la lumière de relief : des mèches gravées le long des lignes de champ, plus fines avec la moyenne de rayures, plus longues avec l’inégalité triangulaire. Avec la lumière de relief allumée, il s’ajoute à la surface du relief, un gaufrage satiné et peigné ; éteinte, il est éclairé seul. La vue calcule alors aussi la statistique, plus lente en profondeur. Aussi --stat-bump NOM pour --render.
+panel-stat-bump-height = Hauteur
+panel-stat-bump-height-hover = La hauteur de la statistique, en pixels par unité de son gris : plus haut creuse les mèches plus profond. 0 laisse la surface plate.
 panel-trap-shape = Forme du piège
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

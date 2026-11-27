@@ -84,6 +84,95 @@ impl crate::FractadyneApp {
         }
     }
 
+    /// The Smooth method's statistic layer (coloring plan E3): which statistic's gray lies over the
+    /// colors, and while one does, how it merges, its contrast and its opacity.
+    fn stat_layer_rows(&mut self, ui: &mut egui::Ui) {
+        use fractadyne_core::coloring::{BandTexture, BlendMode};
+        let label = |t: BandTexture| match t {
+            BandTexture::None => tr!(panel_band_texture_none),
+            BandTexture::Stripe => tr!(color_method_stripe),
+            BandTexture::Triangle => tr!(color_method_triangle),
+        };
+        let blend = |b: BlendMode| match b {
+            BlendMode::HardLight => tr!(panel_stat_layer_blend_hard_light),
+            BlendMode::SoftLight => tr!(panel_stat_layer_blend_soft_light),
+            BlendMode::Overlay => tr!(panel_stat_layer_blend_overlay),
+            BlendMode::Multiply => tr!(panel_stat_layer_blend_multiply),
+            BlendMode::Screen => tr!(panel_stat_layer_blend_screen),
+        };
+        labelled(ui, &tr!(panel_stat_layer), |ui| {
+            egui::ComboBox::from_id_salt("panel_stat_layer")
+                .selected_text(label(self.coloring.stat_layer))
+                .show_ui(ui, |ui| {
+                    for t in BandTexture::ALL {
+                        ui.selectable_value(&mut self.coloring.stat_layer, t, label(t));
+                    }
+                })
+                .response
+                .on_hover_text(tr!(panel_stat_layer_hover));
+        });
+        if self.coloring.stat_layer == BandTexture::None {
+            return;
+        }
+        labelled(ui, &tr!(panel_stat_layer_blend), |ui| {
+            egui::ComboBox::from_id_salt("panel_stat_layer_blend")
+                .selected_text(blend(self.coloring.stat_layer_blend))
+                .show_ui(ui, |ui| {
+                    for b in BlendMode::ALL {
+                        ui.selectable_value(&mut self.coloring.stat_layer_blend, b, blend(b));
+                    }
+                })
+                .response
+                .on_hover_text(tr!(panel_stat_layer_blend_hover));
+        });
+        let r = labelled(ui, &tr!(panel_stat_layer_contrast), |ui| {
+            ui.add(egui::Slider::new(&mut self.coloring.stat_layer_contrast, crate::slider_range::STAT_LAYER_CONTRAST))
+        });
+        if slider_double_clicked(&r) {
+            self.coloring.stat_layer_contrast = fractadyne_core::coloring::LAYER_CONTRAST_DEFAULT;
+        }
+        r.on_hover_text(format!("{}\n\n{}", tr!(panel_stat_layer_contrast_hover), tr!(panel_double_click_reset)));
+        let r = labelled(ui, &tr!(panel_stat_layer_opacity), |ui| {
+            ui.add(egui::Slider::new(&mut self.coloring.stat_layer_opacity, crate::slider_range::STAT_LAYER_OPACITY))
+        });
+        if slider_double_clicked(&r) {
+            self.coloring.stat_layer_opacity = 1.0;
+        }
+        r.on_hover_text(format!("{}\n\n{}", tr!(panel_stat_layer_opacity_hover), tr!(panel_double_click_reset)));
+    }
+
+    /// The Smooth method's statistic bump (coloring plan E4): which statistic is read as a height,
+    /// and while one is, its height.
+    fn stat_bump_rows(&mut self, ui: &mut egui::Ui) {
+        use fractadyne_core::coloring::BandTexture;
+        let label = |t: BandTexture| match t {
+            BandTexture::None => tr!(panel_band_texture_none),
+            BandTexture::Stripe => tr!(color_method_stripe),
+            BandTexture::Triangle => tr!(color_method_triangle),
+        };
+        labelled(ui, &tr!(panel_stat_bump), |ui| {
+            egui::ComboBox::from_id_salt("panel_stat_bump")
+                .selected_text(label(self.coloring.stat_bump))
+                .show_ui(ui, |ui| {
+                    for t in BandTexture::ALL {
+                        ui.selectable_value(&mut self.coloring.stat_bump, t, label(t));
+                    }
+                })
+                .response
+                .on_hover_text(tr!(panel_stat_bump_hover));
+        });
+        if self.coloring.stat_bump == BandTexture::None {
+            return;
+        }
+        let r = labelled(ui, &tr!(panel_stat_bump_height), |ui| {
+            ui.add(egui::Slider::new(&mut self.coloring.stat_bump_height, crate::slider_range::STAT_BUMP_HEIGHT).suffix(" px"))
+        });
+        if slider_double_clicked(&r) {
+            self.coloring.stat_bump_height = fractadyne_core::coloring::BUMP_HEIGHT_DEFAULT;
+        }
+        r.on_hover_text(format!("{}\n\n{}", tr!(panel_stat_bump_height_hover), tr!(panel_double_click_reset)));
+    }
+
     /// The trap's tail (F4 part 5), the method's trap and the inside's alike: Tail only, and its
     /// length while it is on. Under the trap's shape, wherever that is drawn.
     fn trap_tail_rows(&mut self, ui: &mut egui::Ui) {
@@ -667,11 +756,18 @@ impl FractadyneApp {
                 // texture. A family with no orbit statistics has nothing to texture them with.
                 if self.coloring.color_method == ColorMethod::Smooth && ColorMethod::Stripe.lacks(caps).is_none() {
                     self.band_texture_rows(ui);
+                    // ...and its statistic layer (E3) and bump (E4), on the same terms.
+                    self.stat_layer_rows(ui);
+                    self.stat_bump_rows(ui);
                 }
-                // The stripe average's density and tail: the stripe method's, or a stripe texture's.
+                // The stripe average's density and tail: the stripe method's, or a stripe texture's,
+                // layer's or bump's.
+                let stripe = fractadyne_core::coloring::BandTexture::Stripe;
                 let stripe_used = self.coloring.color_method == ColorMethod::Stripe
                     || (self.coloring.color_method == ColorMethod::Smooth
-                        && self.coloring.band_texture == fractadyne_core::coloring::BandTexture::Stripe);
+                        && (self.coloring.band_texture == stripe
+                            || self.coloring.stat_layer == stripe
+                            || self.coloring.stat_bump == stripe));
                 if stripe_used {
                     let r = labelled(ui, &tr!(panel_stripe_density), |ui| {
                         ui.add(
