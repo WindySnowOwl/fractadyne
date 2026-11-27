@@ -1877,9 +1877,9 @@ struct Renderer {
     iter_src: std::sync::Arc<IterSrc>,
     /// The pair below with the trap shapes above the base compiled in, one for each tier
     /// ([`TrapTier`]; `TRAP_EXTRA`, then `TRAP_WAVES`, then `TRAP_DRAWING` too), for a frame that
-    /// draws one ([`MandelbrotParams::trap_tier`]): the Extra and Waves pairs built by a worker after
-    /// start-up ([`warm_trap_shapes`]), the Outline pair by one once a view has an outline
-    /// ([`warm_trap_outline`]); any built when the app first needs it ([`prepare_trap_shapes_now`]).
+    /// draws one ([`MandelbrotParams::trap_tier`]): all three built by a worker after start-up
+    /// ([`warm_trap_shapes`]), the Outline pair sooner by one of its own when a view has an outline
+    /// first ([`warm_trap_outline`]); any built when the app first needs it ([`prepare_trap_shapes_now`]).
     iter_tiers: [std::sync::Arc<TrapShapePipelines>; 3],
     /// [`warm_trap_outline`] has started its worker: it starts one once.
     outline_warming: std::sync::atomic::AtomicBool,
@@ -2052,28 +2052,33 @@ pub fn warm_trap_shapes(render_state: &egui_wgpu::RenderState) {
     if render_state.adapter.get_info().backend == wgpu::Backend::Gl {
         return;
     }
-    let (src, extra, waves) = {
+    let (src, extra, waves, outline) = {
         let guard = render_state.renderer.read();
         let Some(r) = guard.callback_resources.get::<Renderer>() else { return };
-        (r.iter_src.clone(), r.iter_tiers[tier_slot(TrapTier::Extra)].clone(), r.iter_tiers[tier_slot(TrapTier::Waves)].clone())
+        let tier = |t| r.iter_tiers[tier_slot(t)].clone();
+        (r.iter_src.clone(), tier(TrapTier::Extra), tier(TrapTier::Waves), tier(TrapTier::Outline))
     };
     let device = render_state.device.clone();
     // The Extra pair first, then the waves' (the sinc, the square wave, an overlaid sine wave): left
     // to its first use, the waves' cold build stalled the RX 6800 XT 3.5 s inside the method sheet's
     // Sinc cell, and the walk captured the sheet before a cell had calculated (PLUTO dev.11,
-    // 2026-11-26). Built here it also warms the driver's cache the exports' own builds hit.
+    // 2026-11-26). Built here it also warms the driver's cache the exports' own builds hit. Then the
+    // outline's: left to a view's first outline, its cold build froze the window 27 s on the RTX 3070
+    // (PLUTO dev.18, 2026-11-26). Warm, the three take milliseconds.
     let _ = std::thread::Builder::new().name("fd-trap-shapes".into()).spawn(move || {
         extra.get_or_init(|| build_trap_shapes(&device, &src, "a worker", TrapTier::Extra));
         waves.get_or_init(|| build_trap_shapes(&device, &src, "a worker", TrapTier::Waves));
+        outline.get_or_init(|| build_trap_shapes(&device, &src, "a worker", TrapTier::Outline));
     });
 }
 
 /// Build the live renderer's pipelines for the trap outline (coloring plan F4, part 4) on a worker,
 /// once, so the frame that first draws a view's outline finds them ready: the app calls this as the
 /// shape Outline is picked (its SVG file dialog opens meanwhile) and whenever a view has an outline;
-/// after the first call it only reads a flag. Not at start-up for every
-/// view, as [`warm_trap_shapes`] builds the other tiers: few views have an outline, and the build is
-/// seconds cold. Not on OpenGL, for the reason there.
+/// after the first call it only reads a flag. [`warm_trap_shapes`] builds them too, last, after the
+/// start-up's other two pairs (seconds cold): this worker is for an outline sooner than that, built
+/// beside that worker rather than behind it; whichever reaches them first builds them, once. Not on
+/// OpenGL, for the reason there.
 pub fn warm_trap_outline(render_state: &egui_wgpu::RenderState) {
     if render_state.adapter.get_info().backend == wgpu::Backend::Gl {
         return;
@@ -2094,7 +2099,7 @@ pub fn warm_trap_outline(render_state: &egui_wgpu::RenderState) {
 }
 
 /// Have the live renderer's pipelines for the trap shapes of `tier` ready before a frame that draws
-/// one reaches the paint callback: waiting for [`warm_trap_shapes`]'s worker (both tiers), or
+/// one reaches the paint callback: waiting for [`warm_trap_shapes`]'s worker (its three tiers), or
 /// building them here (OpenGL, the first time a frame draws one).
 /// `true` when they were not ready and the caller's thread waited, so the app can leave the time out
 /// of the frame's price, as for a custom formula ([`prepare_custom_now`]). The base tier is always
