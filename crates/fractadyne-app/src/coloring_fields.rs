@@ -17,7 +17,7 @@
 //! - A value out of range is clamped and named; an unreadable one keeps the current setting.
 
 use crate::{slider_range, ColorMethod, InteriorMode, TrapType};
-use fractadyne_core::coloring::BandTexture;
+use fractadyne_core::coloring::{BandTexture, BlendMode};
 use fractadyne_state::ColoringSpec;
 
 /// How a row reads and writes its setting on a [`ColoringSpec`], by kind.
@@ -57,11 +57,17 @@ fn transfer_keys() -> Vec<&'static str> {
     fractadyne_core::coloring::Transfer::ALL.iter().map(|t| t.key()).collect()
 }
 
-/// The wraps' keys (C2).
+/// The statistics' keys, for the band texture (E1) and the statistic layer (E3).
 fn band_texture_keys() -> Vec<&'static str> {
     BandTexture::ALL.iter().map(|b| b.key()).collect()
 }
 
+/// The statistic layer's blend modes' keys (E3).
+fn blend_keys() -> Vec<&'static str> {
+    BlendMode::ALL.iter().map(|b| b.key()).collect()
+}
+
+/// The wraps' keys (C2).
 fn wrap_keys() -> Vec<&'static str> {
     fractadyne_core::coloring::Wrap::ALL.iter().map(|w| w.key()).collect()
 }
@@ -80,10 +86,22 @@ fn band_texture(s: &ColoringSpec) -> BandTexture {
     BandTexture::parse_key(&s.band_texture).unwrap_or_default()
 }
 
-/// The stripe average is drawn: the stripe method, or Smooth's bands textured by it (E1). Its density
-/// and tail then matter.
+/// The Smooth method's statistic layer (E3), by its key; none for an empty or unknown one.
+fn stat_layer(s: &ColoringSpec) -> BandTexture {
+    BandTexture::parse_key(&s.stat_layer).unwrap_or_default()
+}
+
+/// A statistic layer is drawn over the Smooth method's colors (E3).
+fn layer_on(s: &ColoringSpec) -> bool {
+    method(s) == ColorMethod::Smooth && stat_layer(s) != BandTexture::None
+}
+
+/// The stripe average is drawn: the stripe method, or Smooth's bands textured (E1) or layered (E3)
+/// by it. Its density and tail then matter.
 fn stripe_used(s: &ColoringSpec) -> bool {
-    method(s) == ColorMethod::Stripe || (method(s) == ColorMethod::Smooth && band_texture(s) == BandTexture::Stripe)
+    method(s) == ColorMethod::Stripe
+        || (method(s) == ColorMethod::Smooth
+            && (band_texture(s) == BandTexture::Stripe || stat_layer(s) == BandTexture::Stripe))
 }
 
 fn always(_: &ColoringSpec) -> bool {
@@ -147,7 +165,7 @@ pub(crate) fn inside_color_used(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 67] = [
+pub(crate) const FIELDS: [Field; 71] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -191,6 +209,48 @@ pub(crate) const FIELDS: [Field; 67] = [
         ),
         parents: &["method", "band_texture"],
         shows: |s| method(s) == ColorMethod::Smooth && band_texture(s) != BandTexture::None,
+    },
+    Field {
+        key: "stat_layer",
+        name: "statistic layer",
+        doc: "The Smooth method's statistic layer: a gray from a statistic of each orbit merged over the palette's colors, \"stripe\" (the stripe average, at the stripe density) or \"triangle\" (the triangle inequality average); \"none\" or left out: no layer (method \"smooth\").",
+        access: Access::Choice(|s| s.stat_layer.as_str(), |s, v| s.stat_layer = v.to_string(), band_texture_keys),
+        parents: &["method"],
+        shows: |s| method(s) == ColorMethod::Smooth,
+    },
+    Field {
+        key: "stat_layer_blend",
+        name: "statistic layer blend",
+        doc: "How the statistic layer merges over the colors: \"hard-light\" (also when left out), \"soft-light\", \"overlay\", \"multiply\" or \"screen\" (with `stat_layer`).",
+        access: Access::Choice(|s| s.stat_layer_blend.as_str(), |s, v| s.stat_layer_blend = v.to_string(), blend_keys),
+        parents: &["method", "stat_layer"],
+        shows: layer_on,
+    },
+    Field {
+        key: "stat_layer_contrast",
+        name: "statistic layer contrast",
+        doc: "The statistic layer's contrast: its gray is 0.5 + contrast × (statistic − its center), 0 to 16 (4 when left out; with `stat_layer`).",
+        access: Access::Real(
+            |s| s.stat_layer_contrast,
+            |s, v| s.stat_layer_contrast = v,
+            *slider_range::STAT_LAYER_CONTRAST.start(),
+            *slider_range::STAT_LAYER_CONTRAST.end(),
+        ),
+        parents: &["method", "stat_layer"],
+        shows: layer_on,
+    },
+    Field {
+        key: "stat_layer_opacity",
+        name: "statistic layer opacity",
+        doc: "How much of the merged layer shows, 0 to 1 (1 when left out; with `stat_layer`).",
+        access: Access::Real(
+            |s| s.stat_layer_opacity,
+            |s, v| s.stat_layer_opacity = v,
+            *slider_range::STAT_LAYER_OPACITY.start(),
+            *slider_range::STAT_LAYER_OPACITY.end(),
+        ),
+        parents: &["method", "stat_layer"],
+        shows: layer_on,
     },
     Field {
         key: "stripe_freq",

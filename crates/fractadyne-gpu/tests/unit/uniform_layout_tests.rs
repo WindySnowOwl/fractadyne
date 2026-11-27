@@ -165,6 +165,12 @@ fn the_palette_fade_fields_line_up() {
         ("eq_knots", std::mem::offset_of!(ColorUniforms, eq_knots)),
         ("fade_eq_knots", std::mem::offset_of!(ColorUniforms, fade_eq_knots)),
         ("band_tex_near", std::mem::offset_of!(ColorUniforms, band_tex_near)),
+        // The statistic layer (E3): its lane, blend, contrast, opacity and center.
+        ("layer_stat", std::mem::offset_of!(ColorUniforms, layer_stat)),
+        ("layer_blend", std::mem::offset_of!(ColorUniforms, layer_blend)),
+        ("layer_contrast", std::mem::offset_of!(ColorUniforms, layer_contrast)),
+        ("layer_opacity", std::mem::offset_of!(ColorUniforms, layer_opacity)),
+        ("layer_center", std::mem::offset_of!(ColorUniforms, layer_center)),
     ] {
         assert_eq!(wgsl_field_offset(&fields, wgsl), rust, "`{wgsl}` is at another offset in ColorU than in ColorUniforms");
     }

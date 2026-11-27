@@ -126,6 +126,17 @@ pub struct ColoringSpec {
     /// which it fades into plain bands; 0, and absent from every session from before it: everywhere.
     #[serde(default)]
     pub band_texture_near: f32,
+    /// The Smooth method's statistic layer (coloring plan E3): its statistic (`BandTexture` by key:
+    /// "stripe", "triangle"; empty or "none" for none, and absent from every session from before it),
+    /// its blend mode (`BlendMode` by key: "hard-light" when empty), its contrast and its opacity.
+    #[serde(default)]
+    pub stat_layer: String,
+    #[serde(default)]
+    pub stat_layer_blend: String,
+    #[serde(default = "default_stat_layer_contrast")]
+    pub stat_layer_contrast: f32,
+    #[serde(default = "default_stat_layer_opacity")]
+    pub stat_layer_opacity: f32,
     /// Blend in OKLab (coloring plan C7): a palette's RGB segments blended in OKLab, a perceptual
     /// space, rather than between their display (sRGB-encoded) values. Off by default.
     #[serde(default)]
@@ -966,6 +977,17 @@ fn default_band_texture_amount() -> f32 {
     DEFAULT_BAND_TEXTURE_AMOUNT
 }
 
+/// `fractadyne_core::coloring::LAYER_CONTRAST_DEFAULT` (the app's tests hold the two equal).
+pub const DEFAULT_STAT_LAYER_CONTRAST: f32 = 4.0;
+
+fn default_stat_layer_contrast() -> f32 {
+    DEFAULT_STAT_LAYER_CONTRAST
+}
+
+fn default_stat_layer_opacity() -> f32 {
+    1.0
+}
+
 /// `fractadyne_core::coloring::TRAP_TAIL_DEFAULT` (the app's tests hold the two equal): at the
 /// seahorse at 1e20x the line trap's bands thread the valley at 256 (spread 8.1, against 0.000 for
 /// the whole orbit; 2026-11-26).
@@ -1056,6 +1078,10 @@ impl Default for ColoringSpec {
             band_texture: String::new(),
             band_texture_amount: DEFAULT_BAND_TEXTURE_AMOUNT,
             band_texture_near: 0.0,
+            stat_layer: String::new(),
+            stat_layer_blend: String::new(),
+            stat_layer_contrast: DEFAULT_STAT_LAYER_CONTRAST,
+            stat_layer_opacity: 1.0,
             palette_oklab: false,
             coloring_hook: String::new(),
             coloring_hook_params: Vec::new(),

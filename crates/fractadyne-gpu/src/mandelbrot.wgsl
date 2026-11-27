@@ -4281,9 +4281,16 @@ struct ColorU {
     // The band texture only near the set (coloring plan E2): its distance in output pixels, 0
     // everywhere. Mirrors `ColorUniforms.band_tex_near`.
     band_tex_near: f32,
-    _pad_bt0: f32,
-    _pad_bt1: f32,
-    _pad_bt2: f32,
+    // The statistic layer (coloring plan E3): its lane (0 none, 1 the stripe average `aux.r`, 2 the
+    // triangle inequality's `aux.g`), blend mode (`BlendMode::gpu_id`) and contrast, then its
+    // opacity and the statistic's center. Mirrors `ColorUniforms.layer_*`.
+    layer_stat: u32,
+    layer_blend: u32,
+    layer_contrast: f32,
+    layer_opacity: f32,
+    layer_center: f32,
+    _pad_ly0: f32,
+    _pad_ly1: f32,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -4707,7 +4714,47 @@ const AA_MIN_TAP: f32 = 0.499;
 fn shade(m: vec4<f32>, a: vec4<f32>) -> vec3<f32> {
     let coord = coord_of(m, a);
     if (coord >= INTERIOR_COORD) { return interior_shade(a); }
-    return fringed(palette_shaded(coord, 0.0), m);
+    return layered(fringed(palette_shaded(coord, 0.0), m), a);
+}
+
+// ---- The statistic layer (coloring plan E3) ----
+// An escaped texel's color under the Smooth method with a gray from an orbit statistic merged over
+// it: the gray `0.5 + layer_contrast · (s − layer_center)` clamped (`fractadyne_core::coloring::
+// layer_gray`), the merge by `layer_blend` (`BlendMode::apply`) on the display-encoded color, as
+// Ultra Fractal's layers and image editors merge, then mixed back by the opacity. Off (lane 0), or
+// under any other method (a method sheet's cell), the color as it was. Each texel is layered before
+// a pixel's texels are averaged, so the layer's fine texture is anti-aliased as the rest is.
+fn layered(c: vec3<f32>, a: vec4<f32>) -> vec3<f32> {
+    if (cu.layer_stat == 0u || cu.color_method != METHOD_SMOOTH) { return c; }
+    let s = select(a.r, a.g, cu.layer_stat == 2u);
+    let g = clamp(0.5 + cu.layer_contrast * (s - cu.layer_center), 0.0, 1.0);
+    return mix(c, blended(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), g), cu.layer_opacity);
+}
+
+// Hard light: multiply by 2s where s <= 0.5, else screen by 2s - 1, per channel.
+fn hard_lit(b: vec3<f32>, s: vec3<f32>) -> vec3<f32> {
+    let mul = b * 2.0 * s;
+    let s2 = 2.0 * s - 1.0;
+    let scr = b + s2 - b * s2;
+    return select(scr, mul, s <= vec3<f32>(0.5));
+}
+
+// The backdrop `b` merged with the gray `g` by `cu.layer_blend` (`BlendMode::gpu_id`): multiply,
+// screen, overlay, hard light, soft light (the W3C compositing formulas).
+fn blended(b: vec3<f32>, g: f32) -> vec3<f32> {
+    let s = vec3<f32>(g);
+    switch (cu.layer_blend) {
+        case 0u: { return b * s; }
+        case 1u: { return b + s - b * s; }
+        case 2u: { return hard_lit(s, b); }
+        case 4u: {
+            let d = select(sqrt(b), ((16.0 * b - 12.0) * b + 4.0) * b, b <= vec3<f32>(0.25));
+            let lo = b - (1.0 - 2.0 * s) * b * (1.0 - b);
+            let hi = b + (2.0 * s - 1.0) * (d - b);
+            return select(hi, lo, s <= vec3<f32>(0.5));
+        }
+        default: { return hard_lit(b, s); }
+    }
 }
 
 // ---- The fringe (coloring plan C9) ----
@@ -4820,7 +4867,7 @@ fn shade_aa(m: vec4<f32>, a: vec4<f32>, width: f32, width_fade: f32) -> vec3<f32
     if (cu.fade_weight > 0.0) {
         col = mix(col, palette_shaded(coord_fade(m, a), width_fade), cu.fade_weight);
     }
-    return fringed(col, m);
+    return layered(fringed(col, m), a);
 }
 
 // Average color of the frozen frame, from a coarse grid over the iteration texture. Used to

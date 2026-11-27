@@ -2790,6 +2790,19 @@ panel-band-texture-amount = 強度
 panel-band-texture-amount-hover = 紋理移動色帶的幅度，以統計量每單位對應的調色盤週期數計。0 時色帶保持平滑。
 panel-band-texture-near = 僅在集合附近
 panel-band-texture-near-hover = 只在集合附近顯示紋理，並在大約這麼多像素內淡入平滑色帶，使紋理像是從細絲中長出；0 表示處處顯示。需要到集合的距離：公式沒有距離時，色帶保持平滑。
+panel-stat-layer = 圖層
+panel-stat-layer-hover = 在顏色上疊加一層由每條軌道的統計量產生的灰色：它的明暗沿力線照亮並加深色帶，條紋平均下成為細密梳理的絲縷，三角不等式下成為更長的絲縷。此時畫面也要計算該統計量，在深處會更慢。--render 中為 --stat-layer NAME。
+panel-stat-layer-blend = 混合模式
+panel-stat-layer-blend-hover = 圖層與顏色的混合方式。實光會照亮和加深顏色，灰色的中間值保持不變；柔光更柔和；覆蓋由顏色本身的明暗主導；色彩增值只會變暗；濾色只會變亮。
+panel-stat-layer-blend-hard-light = 實光
+panel-stat-layer-blend-soft-light = 柔光
+panel-stat-layer-blend-overlay = 覆蓋
+panel-stat-layer-blend-multiply = 色彩增值
+panel-stat-layer-blend-screen = 濾色
+panel-stat-layer-contrast = 對比
+panel-stat-layer-contrast-hover = 統計量的值在圖層的黑與白之間鋪開的程度。為 0 時圖層是均勻的灰色。
+panel-stat-layer-opacity = 不透明度
+panel-stat-layer-opacity-hover = 混合後的圖層顯示多少。為 0 時顏色保持原樣。
 panel-trap-shape = 陷阱形狀
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

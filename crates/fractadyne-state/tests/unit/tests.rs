@@ -360,6 +360,10 @@ fn every_session_field_survives_save_and_reload() {
         band_texture: "stripe".into(),
         band_texture_amount: 3.5,
         band_texture_near: 12.0,
+        stat_layer: "triangle".into(),
+        stat_layer_blend: "soft-light".into(),
+        stat_layer_contrast: 6.0,
+        stat_layer_opacity: 0.75,
         custom_palette: vec![[0.0, 0.1, 0.2, 0.3], [1.0, 0.4, 0.5, 0.6]],
         custom_palette_flat: true,
         custom_segments: vec![PaletteSegment {
@@ -878,6 +882,8 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
         "band_texture", "band_texture_amount",
         // ...only near the set (E2).
         "band_texture_near",
+        // The statistic layer (E3).
+        "stat_layer", "stat_layer_blend", "stat_layer_contrast", "stat_layer_opacity",
     ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {

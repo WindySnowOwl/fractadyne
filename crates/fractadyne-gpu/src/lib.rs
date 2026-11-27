@@ -200,6 +200,30 @@ pub(crate) fn band_texture_words(method: u32, tex: BandTexturing) -> (u32, f32, 
     (t.gpu_id(), amount, t.center(), if near_px > 0.0 { near_px } else { 0.0 })
 }
 
+/// The Smooth method's statistic layer as a frame draws it (coloring plan E3, "two-layer blend"): a
+/// gray from an orbit statistic, `0.5 + contrast · (statistic − center)` clamped, merged over the
+/// palette's color by a blend mode, at an opacity (0: off).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct StatLayering {
+    /// Which statistic: the same choice as the band texture's (`BandTexture::None`: no layer).
+    pub statistic: fractadyne_core::coloring::BandTexture,
+    pub blend: fractadyne_core::coloring::BlendMode,
+    pub contrast: f32,
+    pub opacity: f32,
+}
+
+/// The color uniform's statistic layer words (coloring plan E3): `(lane, blend, contrast,
+/// opacity, center)`, the lane 0 (none) but for the Smooth method with a layer at an opacity above
+/// 0, whose statistic the frame then accumulates. Off, the color pass is plain Smooth's.
+pub(crate) fn stat_layer_words(method: u32, l: StatLayering) -> (u32, u32, f32, f32, f32) {
+    let StatLayering { statistic: t, blend, contrast, opacity } = l;
+    if method != fractadyne_core::coloring::ColorMethod::Smooth.gpu_id() || t == fractadyne_core::coloring::BandTexture::None || !(opacity > 0.0) {
+        return (0, 0, 0.0, 0.0, 0.0);
+    }
+    let contrast = if contrast.is_finite() { contrast.max(0.0) } else { fractadyne_core::coloring::LAYER_CONTRAST_DEFAULT };
+    (t.gpu_id(), blend.gpu_id(), contrast, opacity.min(1.0), t.center())
+}
+
 /// Where the orbit trap sits, turned and sized (the shader's `trap_c` .. `trap_on`; coloring plan
 /// F4): the shape's coordinates are `w = R(−θ)·(z − center)·inv_size` and its distance is
 /// `size · shape(w)`, as [`fractadyne_core::coloring::TrapPlace::dist`] computes it in f64.
@@ -634,7 +658,15 @@ pub(crate) struct ColorUniforms {
     /// The band texture only near the set (coloring plan E2, [`BandTexturing::near_px`]): its
     /// distance in output pixels, 0 everywhere; a new 16-byte row. `ColorU.band_tex_near` mirrors it.
     pub(crate) band_tex_near: f32,
-    pub(crate) _pad_bt: [f32; 3],
+    /// The statistic layer (coloring plan E3, [`stat_layer_words`]): its lane (`BandTexture::gpu_id`,
+    /// 0 none), blend mode (`BlendMode::gpu_id`) and contrast in what were this row's pad words, then
+    /// a new 16-byte row of its opacity and the statistic's center. `ColorU.layer_*` mirror them.
+    pub(crate) layer_stat: u32,
+    pub(crate) layer_blend: u32,
+    pub(crate) layer_contrast: f32,
+    pub(crate) layer_opacity: f32,
+    pub(crate) layer_center: f32,
+    pub(crate) _pad_ly: [f32; 2],
 }
 
 /// [`ColorUniforms::tap_stride`] for a palette-browser thumbnail colored from a texture built at
@@ -4153,6 +4185,9 @@ pub struct MandelbrotParams {
     /// The Smooth method's band texture and its strength (coloring plan E1): the statistic must be
     /// among the frame's (`orbit_stats`), and is read only under Smooth.
     pub band_texture: BandTexturing,
+    /// The Smooth method's statistic layer (coloring plan E3): its statistic must be among the
+    /// frame's (`orbit_stats`), and is read only under Smooth.
+    pub stat_layer: StatLayering,
     /// Edge shading (coloring plan C3); off by default.
     pub edge: EdgeShade,
     /// Equipotential lines (coloring plan C10); off by default.
@@ -4491,6 +4526,7 @@ impl Default for MandelbrotParams {
             wrap: 0,
             steps: 0.0,
             band_texture: Default::default(),
+            stat_layer: Default::default(),
             edge: EdgeShade::default(),
             grid: GridLines::default(),
             relief: ReliefLight::default(),
@@ -5021,7 +5057,12 @@ impl CallbackTrait for MandelbrotParams {
             eq_knots: eqw.knots,
             fade_eq_knots: eqw.fade_knots,
             band_tex_near: band_texture_words(self.color_method, self.band_texture).3,
-            _pad_bt: [0.0; 3],
+            layer_stat: stat_layer_words(self.color_method, self.stat_layer).0,
+            layer_blend: stat_layer_words(self.color_method, self.stat_layer).1,
+            layer_contrast: stat_layer_words(self.color_method, self.stat_layer).2,
+            layer_opacity: stat_layer_words(self.color_method, self.stat_layer).3,
+            layer_center: stat_layer_words(self.color_method, self.stat_layer).4,
+            _pad_ly: [0.0; 2],
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);

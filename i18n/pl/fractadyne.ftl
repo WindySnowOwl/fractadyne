@@ -2962,6 +2962,19 @@ panel-band-texture-amount = Siła
 panel-band-texture-amount-hover = Jak daleko tekstura przesuwa pasma, w cyklach palety na jednostkę statystyki. 0 zostawia pasma gładkie.
 panel-band-texture-near = Blisko zbioru
 panel-band-texture-near-hover = Pokazuje teksturę tylko blisko zbioru i przechodzi w gładkie pasma na mniej więcej tylu pikselach, więc wyrasta z włókien; 0 pokazuje ją wszędzie. Potrzebuje odległości od zbioru: tam, gdzie formuła jej nie ma, pasma zostają gładkie.
+panel-stat-layer = Warstwa
+panel-stat-layer-hover = Kładzie na kolory szarość z statystyki każdej orbity: jej jasne i ciemne miejsca rozjaśniają i cieniują pasma wzdłuż linii pola, w cienkie, zaczesane pasemka ze średnią pasków, w dłuższe z nierównością trójkąta. Widok liczy wtedy także statystykę, wolniej w głębi. Także --stat-layer NAZWA dla --render.
+panel-stat-layer-blend = Tryb mieszania
+panel-stat-layer-blend-hover = Jak warstwa miesza się z kolorami. Ostre światło rozjaśnia je i cieniuje, a środek szarości zostawia bez zmian; Łagodne światło jest delikatniejsze; Nakładka pozwala prowadzić jasnym i ciemnym miejscom samych kolorów; Mnożenie tylko przyciemnia; Mnożenie odwrotności tylko rozjaśnia.
+panel-stat-layer-blend-hard-light = Ostre światło
+panel-stat-layer-blend-soft-light = Łagodne światło
+panel-stat-layer-blend-overlay = Nakładka
+panel-stat-layer-blend-multiply = Mnożenie
+panel-stat-layer-blend-screen = Mnożenie odwrotności
+panel-stat-layer-contrast = Kontrast
+panel-stat-layer-contrast-hover = Jak szeroko wartości statystyki rozkładają się między czernią a bielą warstwy. 0 daje równą szarość.
+panel-stat-layer-opacity = Krycie
+panel-stat-layer-opacity-hover = Ile zmieszanej warstwy widać. 0 zostawia kolory takie, jakie były.
 panel-trap-shape = Kształt pułapki
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

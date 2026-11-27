@@ -85,6 +85,11 @@ pub(crate) struct ViewColoring {
     pub(crate) band_texture_amount: f32,
     /// ...only near the set (E2), output pixels; 0 everywhere.
     pub(crate) band_texture_near: f32,
+    /// The Smooth method's statistic layer (E3): its statistic, blend, contrast and opacity.
+    pub(crate) stat_layer: fractadyne_core::coloring::BandTexture,
+    pub(crate) stat_layer_blend: fractadyne_core::coloring::BlendMode,
+    pub(crate) stat_layer_contrast: f32,
+    pub(crate) stat_layer_opacity: f32,
     /// Relief lighting: on, angle (radians), the "Relief" slider.
     pub(crate) light: bool,
     pub(crate) light_angle: f32,
@@ -173,6 +178,10 @@ impl ViewColoring {
             band_texture: fractadyne_core::coloring::BandTexture::parse_key(&s.band_texture).unwrap_or_default(),
             band_texture_amount: s.band_texture_amount,
             band_texture_near: s.band_texture_near,
+            stat_layer: fractadyne_core::coloring::BandTexture::parse_key(&s.stat_layer).unwrap_or_default(),
+            stat_layer_blend: fractadyne_core::coloring::BlendMode::parse_key(&s.stat_layer_blend).unwrap_or_default(),
+            stat_layer_contrast: s.stat_layer_contrast,
+            stat_layer_opacity: s.stat_layer_opacity,
             light: s.light,
             light_angle: s.light_angle,
             light_height: s.light_height,
@@ -257,6 +266,16 @@ impl ViewColoring {
             },
             band_texture_amount: self.band_texture_amount,
             band_texture_near: self.band_texture_near,
+            stat_layer: match self.stat_layer {
+                fractadyne_core::coloring::BandTexture::None => String::new(),
+                t => t.key().to_string(),
+            },
+            stat_layer_blend: match self.stat_layer_blend {
+                fractadyne_core::coloring::BlendMode::HardLight => String::new(),
+                b => b.key().to_string(),
+            },
+            stat_layer_contrast: self.stat_layer_contrast,
+            stat_layer_opacity: self.stat_layer_opacity,
             light: self.light,
             light_angle: self.light_angle,
             light_height: self.light_height,

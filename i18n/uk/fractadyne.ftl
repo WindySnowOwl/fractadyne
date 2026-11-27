@@ -3019,6 +3019,19 @@ panel-band-texture-amount = Сила
 panel-band-texture-amount-hover = Наскільки текстура зсуває смуги, у циклах палітри на одиницю статистики. При 0 смуги гладкі.
 panel-band-texture-near = Біля множини
 panel-band-texture-near-hover = Показує текстуру лише біля множини, переходячи в гладкі смуги приблизно за стільки пікселів, тож вона виростає з філаментів; 0 показує її всюди. Потрібна відстань до множини: де формула її не має, смуги лишаються гладкими.
+panel-stat-layer = Шар
+panel-stat-layer-hover = Накладає на кольори сірий, отриманий зі статистики кожної орбіти: його світлі й темні місця висвітлюють і затінюють смуги вздовж силових ліній, тонкими розчесаними пасмами із середнім смуг, довшими з нерівністю трикутника. Вигляд тоді обчислює й статистику, на глибині повільніше. Для --render: --stat-layer НАЗВА.
+panel-stat-layer-blend = Режим накладання
+panel-stat-layer-blend-hover = Як шар змішується з кольорами. Жорстке світло висвітлює й затінює їх, а середину сірого лишає як є; М’яке світло м’якше; Перекриття дає вести світлим і темним місцям самих кольорів; Множення лише затемнює; Екран лише висвітлює.
+panel-stat-layer-blend-hard-light = Жорстке світло
+panel-stat-layer-blend-soft-light = М’яке світло
+panel-stat-layer-blend-overlay = Перекриття
+panel-stat-layer-blend-multiply = Множення
+panel-stat-layer-blend-screen = Екран
+panel-stat-layer-contrast = Контраст
+panel-stat-layer-contrast-hover = Наскільки широко значення статистики розходяться між чорним і білим шару. При 0 шар рівномірно сірий.
+panel-stat-layer-opacity = Непрозорість
+panel-stat-layer-opacity-hover = Скільки змішаного шару видно. При 0 кольори лишаються як були.
 panel-trap-shape = Форма пастки
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

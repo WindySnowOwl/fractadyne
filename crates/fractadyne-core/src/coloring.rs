@@ -1607,6 +1607,86 @@ impl BandTexture {
     }
 }
 
+/// How the statistic layer merges over the Smooth method's colors (coloring plan E3, "two-layer
+/// blend"): the merge modes of Ultra Fractal's layers and the W3C compositing spec, on the
+/// display-encoded colors as those blend, the backdrop B the palette's color and the source S the
+/// layer's gray. Hard light (Very Plotter's stripe over smooth) is the default.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
+pub enum BlendMode {
+    /// B·S: always darker, the gray's middle halves the color.
+    Multiply,
+    /// B + S − B·S: always lighter.
+    Screen,
+    /// Hard light with the roles swapped: the backdrop decides between multiply and screen.
+    Overlay,
+    /// Multiply by 2S where S ≤ ½, else screen by 2S − 1: the gray's middle leaves the color as it
+    /// is, its darks and lights shade and light it.
+    #[default]
+    HardLight,
+    /// A milder hard light (the W3C formula).
+    SoftLight,
+}
+
+impl BlendMode {
+    pub const ALL: [BlendMode; 5] =
+        [BlendMode::HardLight, BlendMode::SoftLight, BlendMode::Overlay, BlendMode::Multiply, BlendMode::Screen];
+    pub const fn key(self) -> &'static str {
+        match self {
+            BlendMode::Multiply => "multiply",
+            BlendMode::Screen => "screen",
+            BlendMode::Overlay => "overlay",
+            BlendMode::HardLight => "hard-light",
+            BlendMode::SoftLight => "soft-light",
+        }
+    }
+    pub fn parse_key(s: &str) -> Option<BlendMode> {
+        BlendMode::ALL.into_iter().find(|m| m.key() == s)
+    }
+    /// Its GPU number (`ColorU.layer_blend`), for one build only.
+    pub const fn gpu_id(self) -> u32 {
+        match self {
+            BlendMode::Multiply => 0,
+            BlendMode::Screen => 1,
+            BlendMode::Overlay => 2,
+            BlendMode::HardLight => 3,
+            BlendMode::SoftLight => 4,
+        }
+    }
+    /// One channel merged, `b` the backdrop and `s` the source, both 0..1: the shader's `blended`.
+    pub fn apply(self, b: f32, s: f32) -> f32 {
+        let multiply = |b: f32, s: f32| b * s;
+        let screen = |b: f32, s: f32| b + s - b * s;
+        let hard = |b: f32, s: f32| if s <= 0.5 { multiply(b, 2.0 * s) } else { screen(b, 2.0 * s - 1.0) };
+        match self {
+            BlendMode::Multiply => multiply(b, s),
+            BlendMode::Screen => screen(b, s),
+            BlendMode::Overlay => hard(s, b),
+            BlendMode::HardLight => hard(b, s),
+            BlendMode::SoftLight => {
+                if s <= 0.5 {
+                    b - (1.0 - 2.0 * s) * b * (1.0 - b)
+                } else {
+                    let d = if b <= 0.25 { ((16.0 * b - 12.0) * b + 4.0) * b } else { b.sqrt() };
+                    b + (2.0 * s - 1.0) * (d - b)
+                }
+            }
+        }
+    }
+}
+
+/// The statistic layer's contrast: its gray is `0.5 + contrast · (statistic − center)`, clamped,
+/// the statistic's center ([`BandTexture::center`]) the gray's middle. 4 maps the stripe's 1st to
+/// 99th percentile at the seahorse valley (0.37 to 0.62) about onto 0 to 1, where the hard light
+/// looked as the prototype's stretch to those percentiles did (2026-11-26); the GPU has no
+/// histogram of the statistic, so the stretch is fixed.
+pub const LAYER_CONTRAST_DEFAULT: f32 = 4.0;
+pub const LAYER_CONTRAST_MAX: f32 = 16.0;
+
+/// The gray of the statistic layer for a statistic value `s` (coloring plan E3): the shader's.
+pub fn layer_gray(s: f32, center: f32, contrast: f32) -> f32 {
+    (0.5 + contrast * (s - center)).clamp(0.0, 1.0)
+}
+
 /// The most steps a palette cycle may be cut into (`steps`; 0 is none).
 pub const MAX_STEPS: u32 = 64;
 
@@ -1852,3 +1932,6 @@ mod grid_tests;
 #[cfg(test)]
 #[path = "../tests/unit/coloring/relief_tests.rs"]
 mod relief_tests;
+#[cfg(test)]
+#[path = "../tests/unit/coloring/layer_tests.rs"]
+mod layer_tests;

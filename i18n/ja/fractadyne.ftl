@@ -2791,6 +2791,19 @@ panel-band-texture-amount = 強さ
 panel-band-texture-amount-hover = テクスチャが帯をずらす量（統計量1あたりのパレット周期数）。0 で帯はそのままです。
 panel-band-texture-near = 集合の近くのみ
 panel-band-texture-near-hover = テクスチャを集合の近くだけに表示し、およそこのピクセル数で無地の帯に溶け込ませるので、フィラメントから生えたように見えます。0 ではどこにでも表示します。集合までの距離が必要で、距離を持たない式では帯は無地のままです。
+panel-stat-layer = レイヤー
+panel-stat-layer-hover = 各軌道の統計量から作った灰色を色の上に重ねます。その明暗が力線に沿って帯を照らし陰影をつけ、ストライプ平均では細くくしけずった筋に、三角不等式ではより長い筋になります。表示はその統計量も計算するため、深い位置では遅くなります。--render では --stat-layer NAME。
+panel-stat-layer-blend = 描画モード
+panel-stat-layer-blend-hover = レイヤーと色の合成方法。ハードライトは色を明るくも暗くもし、灰色の中間はそのままにします。ソフトライトはより穏やかです。オーバーレイは色自体の明暗が主になります。乗算は暗くするだけ、スクリーンは明るくするだけです。
+panel-stat-layer-blend-hard-light = ハードライト
+panel-stat-layer-blend-soft-light = ソフトライト
+panel-stat-layer-blend-overlay = オーバーレイ
+panel-stat-layer-blend-multiply = 乗算
+panel-stat-layer-blend-screen = スクリーン
+panel-stat-layer-contrast = コントラスト
+panel-stat-layer-contrast-hover = 統計量の値をレイヤーの黒から白までどれだけ広げるか。0 でレイヤーは一様な灰色になります。
+panel-stat-layer-opacity = 不透明度
+panel-stat-layer-opacity-hover = 合成したレイヤーをどれだけ見せるか。0 で色は元のままです。
 panel-trap-shape = トラップの形
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

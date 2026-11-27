@@ -475,6 +475,13 @@ enum Screen {
     /// ...then the stripe band texture (coloring plan E1): another picture, the statistic reaching
     /// the live view's color pass; the panel's Band texture row with its Strength.
     BandTexture,
+    /// ...then no band texture and the stripe statistic layer in hard light (coloring plan E3):
+    /// another picture than `band-texture-off`, the layer reaching the live color pass; the panel's
+    /// Layer row with its Blend, Contrast and Opacity...
+    StatLayer,
+    /// ...then its blend switched to Multiply: another picture, and no pass (a recolor: the
+    /// statistic the frame holds is the same).
+    StatLayerBlend,
     /// Edge shading (coloring plan C3): the Julia-link point in Smooth, point sampled, the shading
     /// off (the base)...
     EdgeShadeOff,
@@ -1509,6 +1516,8 @@ fn build_steps() -> Vec<Step> {
         screen("trap-phase-animating", Screen::TrapPhaseAnimating),
         screen("band-texture-off", Screen::BandTextureOff),
         screen("band-texture", Screen::BandTexture),
+        screen("stat-layer", Screen::StatLayer),
+        screen("stat-layer-blend", Screen::StatLayerBlend),
         screen("edge-shade-off", Screen::EdgeShadeOff),
         screen("edge-shade", Screen::EdgeShade),
         screen("edge-shade-inside", Screen::EdgeShadeInside),
@@ -2108,9 +2117,6 @@ impl FractadyneApp {
         });
     }
 
-    /// The outline draws another picture live than the point and the star do (a mean difference of
-    /// 3 levels or more from each: without the outline on the GPU it would measure as the point),
-    /// and the view's text carries it (`trap_outline=`, with its name).
     /// The stripe band texture draws another picture live than Smooth without it at the same view
     /// (`band-texture-off`; a mean difference of 3 levels or more), and the coloring carries it.
     fn uitest_band_texture_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, checks: &mut Vec<Check>) {
@@ -2151,6 +2157,40 @@ impl FractadyneApp {
         });
     }
 
+    /// The statistic layer (coloring plan E3): the stripe layer in hard light draws another picture
+    /// live than Smooth without it at the same view (`band-texture-off`; a mean difference of 3 levels
+    /// or more), and the coloring carries it; then Multiply another picture again (1 level or more)
+    /// with no pass, a recolor.
+    fn uitest_stat_layer_checks(&self, sc: Screen, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, ran_why: [u64; 7], checks: &mut Vec<Check>) {
+        let before = if matches!(sc, Screen::StatLayer) { "band-texture-off" } else { "stat-layer" };
+        let b = ut.results.iter().rev().find(|r| r.name == before);
+        let r = view.zip(b).and_then(|((px, _), b)| {
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            let s: f64 = px.chunks_exact(4).zip(prev.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            Some((s / (3 * (px.len() / 4)).max(1) as f64, (ran_why[0] - b.ran_why[0]) + (ran_why[1] - b.ran_why[1])))
+        });
+        let layer = self.coloring.stat_layering();
+        let (name, ok) = if matches!(sc, Screen::StatLayer) {
+            (
+                "stat-layer-drawn-live",
+                r.is_some_and(|(d, _)| d >= 3.0) && layer.statistic == fractadyne_core::coloring::BandTexture::Stripe,
+            )
+        } else {
+            (
+                "stat-layer-blend-recolors",
+                r.is_some_and(|(d, ran)| d >= 1.0 && ran == 0) && layer.blend == fractadyne_core::coloring::BlendMode::Multiply,
+            )
+        };
+        checks.push(Check {
+            name: name.into(),
+            verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+            detail: format!("against {before} (mean difference in levels, passes caused): {r:?}; the layer {layer:?}"),
+        });
+    }
+
+    /// The outline draws another picture live than the point and the star do (a mean difference of
+    /// 3 levels or more from each: without the outline on the GPU it would measure as the point),
+    /// and the view's text carries it (`trap_outline=`, with its name).
     fn uitest_trap_outline_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, checks: &mut Vec<Check>) {
         let diff = |before: &str| {
             let b = ut.results.iter().rev().find(|r| r.name == before);
@@ -3812,6 +3852,20 @@ impl FractadyneApp {
                 } else {
                     fractadyne_core::coloring::BandTexture::None
                 };
+                self.coloring.stat_layer = fractadyne_core::coloring::BandTexture::None;
+                self.dialogs.right_panel_open = true;
+            }
+            // E3: the same view, no band texture, the stripe layer in hard light, then in Multiply.
+            Screen::StatLayer | Screen::StatLayerBlend => {
+                self.coloring.band_texture = fractadyne_core::coloring::BandTexture::None;
+                self.coloring.stat_layer = fractadyne_core::coloring::BandTexture::Stripe;
+                self.coloring.stat_layer_contrast = fractadyne_core::coloring::LAYER_CONTRAST_DEFAULT;
+                self.coloring.stat_layer_opacity = 1.0;
+                self.coloring.stat_layer_blend = if matches!(s, Screen::StatLayerBlend) {
+                    fractadyne_core::coloring::BlendMode::Multiply
+                } else {
+                    fractadyne_core::coloring::BlendMode::HardLight
+                };
                 self.dialogs.right_panel_open = true;
             }
             Screen::EdgeShadeOff | Screen::EdgeShade | Screen::EdgeShadeInside | Screen::EdgeShadePanel => {
@@ -3823,6 +3877,7 @@ impl FractadyneApp {
                 }
                 // The band texture `band-texture` turned on, off again.
                 self.coloring.band_texture = fractadyne_core::coloring::BandTexture::None;
+                self.coloring.stat_layer = fractadyne_core::coloring::BandTexture::None;
                 if matches!(s, Screen::EdgeShadeOff) {
                     let (cx, cy) = UITEST_JULIA_LINK_C;
                     self.set_show_mode(crate::ShowMode::Set);
@@ -4590,6 +4645,8 @@ impl FractadyneApp {
                     | Screen::TrapTail
                     | Screen::BandTextureOff
                     | Screen::BandTexture
+                    | Screen::StatLayer
+                    | Screen::StatLayerBlend
                     | Screen::EdgeShadeOff
                     | Screen::EdgeShade
                     | Screen::EdgeShadeInside
@@ -5563,6 +5620,9 @@ impl FractadyneApp {
         }
         if let StepKind::Screen(Screen::BandTexture) = step.kind {
             self.uitest_band_texture_checks(ut, inside_view.as_ref(), &mut checks);
+        }
+        if let StepKind::Screen(sc @ (Screen::StatLayer | Screen::StatLayerBlend)) = step.kind {
+            self.uitest_stat_layer_checks(sc, ut, inside_view.as_ref(), ran_why, &mut checks);
         }
 
         // ---- edge shading (coloring plan C3) ----

@@ -269,6 +269,8 @@ pub struct ExportRequest {
     pub steps: f32,
     /// The band texture — see `MandelbrotParams::band_texture`.
     pub band_texture: crate::BandTexturing,
+    /// The statistic layer — see `MandelbrotParams::stat_layer`.
+    pub stat_layer: crate::StatLayering,
     /// Edge shading (coloring plan C3).
     pub edge: crate::EdgeShade,
     /// Equipotential lines (coloring plan C10).
@@ -2057,7 +2059,12 @@ impl<'a> TileRenderer<'a> {
             eq_knots: eqw.knots,
             fade_eq_knots: eqw.fade_knots,
             band_tex_near: crate::band_texture_words(req.color_method, req.band_texture).3,
-            _pad_bt: [0.0; 3],
+            layer_stat: crate::stat_layer_words(req.color_method, req.stat_layer).0,
+            layer_blend: crate::stat_layer_words(req.color_method, req.stat_layer).1,
+            layer_contrast: crate::stat_layer_words(req.color_method, req.stat_layer).2,
+            layer_opacity: crate::stat_layer_words(req.color_method, req.stat_layer).3,
+            layer_center: crate::stat_layer_words(req.color_method, req.stat_layer).4,
+            _pad_ly: [0.0; 2],
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4516,7 +4523,12 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         eq_knots: eqw.knots,
         fade_eq_knots: eqw.fade_knots,
         band_tex_near: crate::band_texture_words(req.color_method, req.band_texture).3,
-        _pad_bt: [0.0; 3],
+        layer_stat: crate::stat_layer_words(req.color_method, req.stat_layer).0,
+        layer_blend: crate::stat_layer_words(req.color_method, req.stat_layer).1,
+        layer_contrast: crate::stat_layer_words(req.color_method, req.stat_layer).2,
+        layer_opacity: crate::stat_layer_words(req.color_method, req.stat_layer).3,
+        layer_center: crate::stat_layer_words(req.color_method, req.stat_layer).4,
+        _pad_ly: [0.0; 2],
     }
 }
 

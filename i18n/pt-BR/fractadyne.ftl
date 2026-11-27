@@ -2870,6 +2870,19 @@ panel-band-texture-amount = Intensidade
 panel-band-texture-amount-hover = Quanto a textura desloca as faixas, em ciclos de paleta por unidade da estatística. 0 deixa as faixas lisas.
 panel-band-texture-near = Perto do conjunto
 panel-band-texture-near-hover = Mostra a textura só perto do conjunto, fundindo-a em faixas lisas ao longo de cerca deste número de pixels, de modo que ela cresce a partir dos filamentos; 0 a mostra em toda parte. Precisa da distância ao conjunto: onde uma fórmula não a tem, as faixas ficam lisas.
+panel-stat-layer = Camada
+panel-stat-layer-hover = Põe sobre as cores um cinza feito de uma estatística de cada órbita: seus claros e escuros iluminam e sombreiam as faixas ao longo das linhas de campo, em fios finos e penteados com a média de listras, em fios mais longos com a desigualdade triangular. A vista passa a calcular também a estatística, mais lenta em profundidade. Também --stat-layer NOME para --render.
+panel-stat-layer-blend = Mesclagem
+panel-stat-layer-blend-hover = Como a camada se mescla com as cores. Luz direta as ilumina e sombreia e deixa o cinza médio como estava; Luz indireta é mais suave; Sobrepor deixa os claros e escuros das próprias cores guiarem; Multiplicação só escurece; Divisão só clareia.
+panel-stat-layer-blend-hard-light = Luz direta
+panel-stat-layer-blend-soft-light = Luz indireta
+panel-stat-layer-blend-overlay = Sobrepor
+panel-stat-layer-blend-multiply = Multiplicação
+panel-stat-layer-blend-screen = Divisão
+panel-stat-layer-contrast = Contraste
+panel-stat-layer-contrast-hover = Quanto os valores da estatística se espalham entre o preto e o branco da camada. 0 deixa a camada num cinza uniforme.
+panel-stat-layer-opacity = Opacidade
+panel-stat-layer-opacity-hover = Quanto da camada mesclada aparece. 0 deixa as cores como estavam.
 panel-trap-shape = Forma da armadilha
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

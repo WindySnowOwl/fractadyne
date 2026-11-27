@@ -75,6 +75,20 @@ detail is in the git history.
   now fitted to its own values, as the live view fits the screen, so the video looks like the
   view. Fitting a frame costs about a quarter more time at 2x2 supersampling. A frame depends on
   nothing but its own view, so one full turn of the trap's phase rendered once loops seamlessly.
+- **Layer: a statistic's light and shade over Smooth's colors.** Under Smooth iteration, Layer
+  lays a gray made from a statistic of each orbit over the colors, so its lights and darks light
+  and shade the bands along the field lines: fine combed strands with the stripe average, longer
+  ones with the triangle inequality. Blend picks how it merges, as image editors and Ultra
+  Fractal's layers merge: Hard light (the default) lights and shades and leaves the gray's middle
+  as it was, Soft light is gentler, Overlay lets the colors' own lights and darks lead, Multiply
+  only darkens and Screen only lightens. Contrast sets how far the statistic's values spread
+  between black and white, and Opacity how much of the merged layer shows. Changing the blend,
+  contrast or opacity recolors without calculating again; turning the layer on calculates the
+  statistic too, which is slower at depth. It works beside a band texture, and the relief light
+  shades the layered colors. A view file keeps it (`stat_layer`, `stat_layer_blend`,
+  `stat_layer_contrast`, `stat_layer_opacity`), a tour's keyframes can state it, and on the
+  command line it is `--stat-layer stripe` or `triangle`, with `--stat-layer-blend MODE`,
+  `--stat-layer-contrast X` and `--stat-layer-opacity X`.
 - **Band texture: Smooth's bands feathered by a statistic.** Under Smooth iteration, Band
   texture lets a statistic of each orbit move the band edges along its texture: the bands keep
   their colors and order, and every edge feathers along the field lines, into fur or flame with

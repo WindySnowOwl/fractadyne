@@ -27,6 +27,8 @@ fn other_value(f: &Field) -> &'static str {
         }
         // 2.5 clamps to the edge strength's default, 1.
         Access::Real(..) if f.key == "edge_strength" => "0.5",
+        // ...as it does the statistic layer's opacity (E3).
+        Access::Real(..) if f.key == "stat_layer_opacity" => "0.5",
         Access::Real(..) => "2.5",
         Access::Count(..) => "77",
         Access::Choice(..) => match f.key {
@@ -40,6 +42,8 @@ fn other_value(f: &Field) -> &'static str {
             "wrap" => "mirror",
             "edge_curve" => "smooth",
             "band_texture" => "stripe",
+            "stat_layer" => "triangle",
+            "stat_layer_blend" => "screen",
             k => panic!("no other value for the choice {k}"),
         },
         Access::Rgb(..) => "0.25,0.5,0.75",

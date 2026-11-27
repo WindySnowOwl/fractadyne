@@ -2790,6 +2790,19 @@ panel-band-texture-amount = 세기
 panel-band-texture-amount-hover = 텍스처가 띠를 옮기는 정도(통계값 1당 팔레트 주기 수). 0이면 띠가 그대로입니다.
 panel-band-texture-near = 집합 근처만
 panel-band-texture-near-hover = 텍스처를 집합 근처에만 보이고 대략 이 픽셀 수에 걸쳐 무늬 없는 띠로 녹아들게 하여, 필라멘트에서 자라난 것처럼 보이게 합니다. 0이면 어디에나 보입니다. 집합까지의 거리가 필요하며, 거리가 없는 식에서는 띠가 그대로 유지됩니다.
+panel-stat-layer = 레이어
+panel-stat-layer-hover = 각 궤도의 통계값으로 만든 회색을 색 위에 겹칩니다. 그 명암이 역선을 따라 띠를 밝히고 그늘지게 하여, 스트라이프 평균으로는 가늘게 빗은 가닥이, 삼각 부등식으로는 더 긴 가닥이 됩니다. 화면이 그 통계값도 계산하므로 깊은 곳에서는 느려집니다. --render에서는 --stat-layer NAME.
+panel-stat-layer-blend = 혼합 모드
+panel-stat-layer-blend-hover = 레이어가 색과 섞이는 방식. 하드 라이트는 색을 밝히고 그늘지게 하며 회색의 중간은 그대로 둡니다. 소프트 라이트는 더 부드럽습니다. 오버레이는 색 자체의 명암이 이끕니다. 곱하기는 어둡게만, 스크린은 밝게만 합니다.
+panel-stat-layer-blend-hard-light = 하드 라이트
+panel-stat-layer-blend-soft-light = 소프트 라이트
+panel-stat-layer-blend-overlay = 오버레이
+panel-stat-layer-blend-multiply = 곱하기
+panel-stat-layer-blend-screen = 스크린
+panel-stat-layer-contrast = 대비
+panel-stat-layer-contrast-hover = 통계값의 값을 레이어의 검정과 흰색 사이에 얼마나 펼칠지. 0이면 레이어가 고른 회색이 됩니다.
+panel-stat-layer-opacity = 불투명도
+panel-stat-layer-opacity-hover = 섞인 레이어가 얼마나 보일지. 0이면 색이 원래대로입니다.
 panel-trap-shape = 트랩 모양
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

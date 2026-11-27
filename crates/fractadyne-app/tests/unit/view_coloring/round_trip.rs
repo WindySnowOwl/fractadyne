@@ -39,6 +39,10 @@ fn scrambled() -> ViewColoring {
         band_texture: fractadyne_core::coloring::BandTexture::Triangle,
         band_texture_amount: 5.0,
         band_texture_near: 40.0,
+        stat_layer: fractadyne_core::coloring::BandTexture::Stripe,
+        stat_layer_blend: fractadyne_core::coloring::BlendMode::Screen,
+        stat_layer_contrast: 9.0,
+        stat_layer_opacity: 0.3,
         light: true,
         light_angle: -1.25,
         light_height: 3.5,
@@ -124,6 +128,15 @@ fn variants() -> Vec<ViewColoring> {
     v.push(ViewColoring { band_texture: fractadyne_core::coloring::BandTexture::Triangle, band_texture_amount: 0.75, ..d.clone() });
     // ...only near the set (E2).
     v.push(ViewColoring { band_texture: fractadyne_core::coloring::BandTexture::Stripe, band_texture_near: 6.0, ..d.clone() });
+    // The statistic layer (E3): the stripe at its defaults (hard light, written as no key), the
+    // triangle inequality under each other blend, a contrast and an opacity; and a layer beside a band
+    // texture of the other statistic.
+    v.push(ViewColoring { stat_layer: fractadyne_core::coloring::BandTexture::Stripe, ..d.clone() });
+    for b in [fractadyne_core::coloring::BlendMode::SoftLight, fractadyne_core::coloring::BlendMode::Overlay, fractadyne_core::coloring::BlendMode::Multiply, fractadyne_core::coloring::BlendMode::Screen] {
+        v.push(ViewColoring { stat_layer: fractadyne_core::coloring::BandTexture::Triangle, stat_layer_blend: b, ..d.clone() });
+    }
+    v.push(ViewColoring { stat_layer: fractadyne_core::coloring::BandTexture::Stripe, stat_layer_contrast: 7.5, stat_layer_opacity: 0.25, ..d.clone() });
+    v.push(ViewColoring { stat_layer: fractadyne_core::coloring::BandTexture::Triangle, band_texture: fractadyne_core::coloring::BandTexture::Stripe, ..d.clone() });
     // The trap's tail (F4 part 5): on at its default length, then at another; and on with only the
     // inside colored by the trap (Smooth outside).
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, trap_tail: true, ..d.clone() });

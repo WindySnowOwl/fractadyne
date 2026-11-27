@@ -2871,6 +2871,19 @@ panel-band-texture-amount = Stärke
 panel-band-texture-amount-hover = Wie weit die Textur die Bänder verschiebt, in Palettenzyklen je Einheit der Statistik. 0 lässt die Bänder glatt.
 panel-band-texture-near = Nahe der Menge
 panel-band-texture-near-hover = Zeigt die Textur nur nahe der Menge und lässt sie über etwa so viele Pixel in glatte Bänder übergehen, sodass sie aus den Filamenten wächst; 0 zeigt sie überall. Sie braucht den Abstand zur Menge: Wo eine Formel keinen hat, bleiben die Bänder glatt.
+panel-stat-layer = Ebene
+panel-stat-layer-hover = Legt ein Grau aus einer Statistik jedes Orbits über die Farben: Seine hellen und dunklen Stellen hellen die Bänder entlang der Feldlinien auf und schattieren sie, mit dem Streifenmittel zu feinen, gekämmten Strähnen, mit der Dreiecksungleichung zu längeren. Die Ansicht berechnet die Statistik dann mit, in der Tiefe langsamer. Auch --stat-layer NAME für --render.
+panel-stat-layer-blend = Mischmodus
+panel-stat-layer-blend-hover = Wie sich die Ebene mit den Farben mischt. Hartes Licht hellt sie auf und schattiert sie und lässt die Mitte des Graus unverändert; Weiches Licht ist sanfter; Ineinanderkopieren lässt die hellen und dunklen Stellen der Farben selbst führen; Multiplizieren dunkelt nur ab; Negativ multiplizieren hellt nur auf.
+panel-stat-layer-blend-hard-light = Hartes Licht
+panel-stat-layer-blend-soft-light = Weiches Licht
+panel-stat-layer-blend-overlay = Ineinanderkopieren
+panel-stat-layer-blend-multiply = Multiplizieren
+panel-stat-layer-blend-screen = Negativ multiplizieren
+panel-stat-layer-contrast = Kontrast
+panel-stat-layer-contrast-hover = Wie weit sich die Werte der Statistik zwischen Schwarz und Weiß der Ebene verteilen. 0 macht die Ebene zu einem gleichmäßigen Grau.
+panel-stat-layer-opacity = Deckkraft
+panel-stat-layer-opacity-hover = Wie viel der gemischten Ebene zu sehen ist. 0 lässt die Farben, wie sie waren.
 panel-trap-shape = Fallenform
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.
