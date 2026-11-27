@@ -5,6 +5,7 @@
 #   .\scripts\field-request.ps1                                   # status: agents, queue, recent results
 #   .\scripts\field-request.ps1 -Action battery -Wait             # the full battery, latest build
 #   .\scripts\field-request.ps1 -Action battery -Quick -Package accelerated
+#   .\scripts\field-request.ps1 -Action battery -Adapter 6800 -Build v0.4.0-beta.0.dev.19   # on one card (agent v42)
 #   .\scripts\field-request.ps1 -Action harness -Run "--recordtest" -Wait
 #   .\scripts\field-request.ps1 -Action harness -Run "--zoomtest 40 --zoomtest-rate 4.0" `
 #       -Builds v0.2.41-beta.113,v0.2.41-beta.114 -Repeat 3 -Wait    # A,B,A,B,A,B
@@ -68,6 +69,9 @@ param(
     [ValidateSet("standard", "accelerated")][string]$Package = "standard",
     [switch]$Quick,
     [string]$Label = "",
+    # battery: the graphics card its windowed steps run on (agent v42, a build whose battery has
+    # -Adapter): a number from --list-adapters or part of a card's name, such as 6800.
+    [string]$Adapter = "",
     # harness: the fractadyne flags, as one string ("--zoomtest 40 --zoomtest-rate 4.0").
     [string]$Run = "",
     [int]$Repeat = 1,
@@ -196,6 +200,10 @@ switch ($Action) {
         $req.build = $Build
         $req.quick = [bool]$Quick
         if ($Label) { $req.label = $Label }
+        if ($Adapter) {
+            if ($Adapter -notmatch '^[A-Za-z0-9_.-]{1,64}$') { throw "-Adapter must be a word such as 6800 or 1" }
+            $req.adapter = $Adapter
+        }
     }
     "harness" {
         if (-not $Run) { throw "-Action harness needs -Run `"--flag ...`"" }
