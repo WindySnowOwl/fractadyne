@@ -2804,6 +2804,10 @@ panel-stat-layer-contrast = コントラスト
 panel-stat-layer-contrast-hover = 統計量の値をレイヤーの黒から白までどれだけ広げるか。0 でレイヤーは一様な灰色になります。
 panel-stat-layer-opacity = 不透明度
 panel-stat-layer-opacity-hover = 合成したレイヤーをどれだけ見せるか。0 で色は元のままです。
+panel-stat-bump = バンプ
+panel-stat-bump-hover = 各軌道の統計量を高さとして読み、その傾きをレリーフライトの角度で照らします。力線に沿って彫り込まれた筋になり、ストライプ平均ではより細かく、三角不等式ではより長くなります。レリーフライトがオンならレリーフの表面に加わり、くしけずったサテンのエンボスに、オフならそれだけで照らされます。表示はその統計量も計算するため、深い位置では遅くなります。--render では --stat-bump NAME。
+panel-stat-bump-height = 高さ
+panel-stat-bump-height-hover = 統計量の高さ（灰色1あたりのピクセル数）。高いほど筋が深く刻まれます。0 で表面は平らです。
 panel-trap-shape = トラップの形
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

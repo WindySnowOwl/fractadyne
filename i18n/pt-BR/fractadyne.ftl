@@ -2883,6 +2883,10 @@ panel-stat-layer-contrast = Contraste
 panel-stat-layer-contrast-hover = Quanto os valores da estatística se espalham entre o preto e o branco da camada. 0 deixa a camada num cinza uniforme.
 panel-stat-layer-opacity = Opacidade
 panel-stat-layer-opacity-hover = Quanto da camada mesclada aparece. 0 deixa as cores como estavam.
+panel-stat-bump = Relevo
+panel-stat-bump-hover = Lê uma estatística de cada órbita como uma altura e ilumina sua inclinação com o ângulo da luz de relevo: fios gravados ao longo das linhas de campo, mais finos com a média de listras, mais longos com a desigualdade triangular. Com a luz de relevo ligada, soma-se à superfície do relevo, um gofrado acetinado e penteado; desligada, é iluminado sozinho. A vista passa a calcular também a estatística, mais lenta em profundidade. Também --stat-bump NOME para --render.
+panel-stat-bump-height = Altura
+panel-stat-bump-height-hover = Quão alto a estatística se ergue, em pixels por unidade do seu cinza: mais alto grava os fios mais fundo. 0 deixa a superfície plana.
 panel-trap-shape = Forma da armadilha
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

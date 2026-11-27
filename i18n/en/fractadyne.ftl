@@ -3082,6 +3082,10 @@ panel-stat-layer-contrast = Contrast
 panel-stat-layer-contrast-hover = How far the statistic's values spread between the layer's black and white. 0 makes the layer an even gray.
 panel-stat-layer-opacity = Opacity
 panel-stat-layer-opacity-hover = How much of the merged layer shows. 0 leaves the colors as they were.
+panel-stat-bump = Bump
+panel-stat-bump-hover = Read a statistic of each orbit as a height and light its slope with the relief light's angle: engraved strands along the field lines, finer with the stripe average, longer with the triangle inequality. With Relief light on it is added to the relief's surface, a combed satin emboss; with it off it is lit alone. The view then calculates the statistic too, slower at depth. Also --stat-bump NAME for --render.
+panel-stat-bump-height = Height
+panel-stat-bump-height-hover = How high the statistic stands, in pixels per unit of its gray: higher cuts the strands deeper. 0 leaves the surface flat.
 panel-trap-shape = Trap shape
 # Where the orbit trap sits (coloring plan F4): its two coordinates in the plane the orbits move in.
 panel-trap-center-x = Trap center x

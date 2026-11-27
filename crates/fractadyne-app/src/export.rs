@@ -370,6 +370,8 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "band_texture", "band_texture_amount", "band_texture_near",
     // Its statistic layer (coloring plan E3).
     "stat_layer", "stat_layer_blend", "stat_layer_contrast", "stat_layer_opacity",
+    // Its statistic bump (coloring plan E4).
+    "stat_bump", "stat_bump_height",
     // Edge shading (coloring plan C3).
     "edge", "edge_inside", "edge_width", "edge_strength", "edge_curve", "edge_color",
     // Equipotential lines (coloring plan C10).
@@ -499,6 +501,8 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("stat_layer_blend", ValueKind::BlendMode),
     ("stat_layer_contrast", ValueKind::Float),
     ("stat_layer_opacity", ValueKind::Float),
+    ("stat_bump", ValueKind::BandTexture),
+    ("stat_bump_height", ValueKind::Float),
     ("steps", ValueKind::Uint),
     ("equalize", ValueKind::Float),
     ("edge", ValueKind::Flag),

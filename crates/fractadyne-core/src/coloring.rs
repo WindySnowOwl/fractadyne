@@ -1682,6 +1682,13 @@ impl BlendMode {
 pub const LAYER_CONTRAST_DEFAULT: f32 = 4.0;
 pub const LAYER_CONTRAST_MAX: f32 = 16.0;
 
+/// The statistic bump's height (coloring plan E4): output pixels of height per unit of the layer's
+/// gray ([`layer_gray`] at the default contrast), the study's 6 (2026-11-26: at the seahorse valley
+/// the bump's shade from each neighbor pixel's mean held 0.89 of its structure against a render
+/// shifted a third of a pixel; from one sample a neighbor, 0.56).
+pub const BUMP_HEIGHT_DEFAULT: f32 = 6.0;
+pub const BUMP_HEIGHT_MAX: f32 = 32.0;
+
 /// The gray of the statistic layer for a statistic value `s` (coloring plan E3): the shader's.
 pub fn layer_gray(s: f32, center: f32, contrast: f32) -> f32 {
     (0.5 + contrast * (s - center)).clamp(0.0, 1.0)

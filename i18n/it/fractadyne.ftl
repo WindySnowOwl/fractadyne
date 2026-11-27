@@ -2883,6 +2883,10 @@ panel-stat-layer-contrast = Contrasto
 panel-stat-layer-contrast-hover = Quanto si distribuiscono i valori della statistica tra il nero e il bianco del livello. 0 rende il livello un grigio uniforme.
 panel-stat-layer-opacity = Opacità
 panel-stat-layer-opacity-hover = Quanto si vede del livello fuso. 0 lascia i colori com’erano.
+panel-stat-bump = Rilievo
+panel-stat-bump-hover = Legge una statistica di ogni orbita come un’altezza e ne illumina la pendenza con l’angolo della luce di rilievo: filamenti incisi lungo le linee di campo, più fini con la media delle strisce, più lunghi con la disuguaglianza triangolare. Con la luce di rilievo accesa si somma alla superficie del rilievo, una goffratura satinata e pettinata; spenta, è illuminato da solo. La vista calcola allora anche la statistica, più lenta in profondità. Anche --stat-bump NOME per --render.
+panel-stat-bump-height = Altezza
+panel-stat-bump-height-hover = Quanto si alza la statistica, in pixel per unità del suo grigio: più alta incide i filamenti più a fondo. 0 lascia la superficie piatta.
 panel-trap-shape = Forma trappola
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

@@ -91,17 +91,23 @@ fn stat_layer(s: &ColoringSpec) -> BandTexture {
     BandTexture::parse_key(&s.stat_layer).unwrap_or_default()
 }
 
+/// The Smooth method's statistic bump (E4), by its key; none for an empty or unknown one.
+fn stat_bump(s: &ColoringSpec) -> BandTexture {
+    BandTexture::parse_key(&s.stat_bump).unwrap_or_default()
+}
+
 /// A statistic layer is drawn over the Smooth method's colors (E3).
 fn layer_on(s: &ColoringSpec) -> bool {
     method(s) == ColorMethod::Smooth && stat_layer(s) != BandTexture::None
 }
 
-/// The stripe average is drawn: the stripe method, or Smooth's bands textured (E1) or layered (E3)
-/// by it. Its density and tail then matter.
+/// The stripe average is drawn: the stripe method, or Smooth's bands textured (E1), layered (E3) or
+/// bumped (E4) by it. Its density and tail then matter.
 fn stripe_used(s: &ColoringSpec) -> bool {
+    let stripe = BandTexture::Stripe;
     method(s) == ColorMethod::Stripe
         || (method(s) == ColorMethod::Smooth
-            && (band_texture(s) == BandTexture::Stripe || stat_layer(s) == BandTexture::Stripe))
+            && (band_texture(s) == stripe || stat_layer(s) == stripe || stat_bump(s) == stripe))
 }
 
 fn always(_: &ColoringSpec) -> bool {
@@ -165,7 +171,7 @@ pub(crate) fn inside_color_used(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 71] = [
+pub(crate) const FIELDS: [Field; 73] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -251,6 +257,27 @@ pub(crate) const FIELDS: [Field; 71] = [
         ),
         parents: &["method", "stat_layer"],
         shows: layer_on,
+    },
+    Field {
+        key: "stat_bump",
+        name: "statistic bump",
+        doc: "The Smooth method's statistic bump: a statistic of each orbit read as a height, its slope lit by the relief light (with `light`, added to the relief's surface; without, lit alone), \"stripe\" (the stripe average, at the stripe density) or \"triangle\" (the triangle inequality average); \"none\" or left out: no bump (method \"smooth\").",
+        access: Access::Choice(|s| s.stat_bump.as_str(), |s, v| s.stat_bump = v.to_string(), band_texture_keys),
+        parents: &["method"],
+        shows: |s| method(s) == ColorMethod::Smooth,
+    },
+    Field {
+        key: "stat_bump_height",
+        name: "statistic bump height",
+        doc: "The statistic bump's height: output pixels per unit of the statistic's gray, 0 to 32 (6 when left out; with `stat_bump`).",
+        access: Access::Real(
+            |s| s.stat_bump_height,
+            |s, v| s.stat_bump_height = v,
+            *slider_range::STAT_BUMP_HEIGHT.start(),
+            *slider_range::STAT_BUMP_HEIGHT.end(),
+        ),
+        parents: &["method", "stat_bump"],
+        shows: |s| method(s) == ColorMethod::Smooth && stat_bump(s) != BandTexture::None,
     },
     Field {
         key: "stripe_freq",

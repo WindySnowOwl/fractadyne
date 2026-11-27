@@ -2884,6 +2884,10 @@ panel-stat-layer-contrast = Contraste
 panel-stat-layer-contrast-hover = De combien les valeurs de la statistique s’étalent entre le noir et le blanc du calque. 0 fait du calque un gris uni.
 panel-stat-layer-opacity = Opacité
 panel-stat-layer-opacity-hover = Quelle part du calque fondu se voit. 0 laisse les couleurs comme elles étaient.
+panel-stat-bump = Bosselage
+panel-stat-bump-hover = Lit une statistique de chaque orbite comme une hauteur et éclaire sa pente sous l’angle de la lumière de relief : des mèches gravées le long des lignes de champ, plus fines avec la moyenne de rayures, plus longues avec l’inégalité triangulaire. Avec la lumière de relief allumée, il s’ajoute à la surface du relief, un gaufrage satiné et peigné ; éteinte, il est éclairé seul. La vue calcule alors aussi la statistique, plus lente en profondeur. Aussi --stat-bump NOM pour --render.
+panel-stat-bump-height = Hauteur
+panel-stat-bump-height-hover = La hauteur de la statistique, en pixels par unité de son gris : plus haut creuse les mèches plus profond. 0 laisse la surface plate.
 panel-trap-shape = Forme du piège
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

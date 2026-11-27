@@ -2884,6 +2884,10 @@ panel-stat-layer-contrast = Kontrast
 panel-stat-layer-contrast-hover = Wie weit sich die Werte der Statistik zwischen Schwarz und Weiß der Ebene verteilen. 0 macht die Ebene zu einem gleichmäßigen Grau.
 panel-stat-layer-opacity = Deckkraft
 panel-stat-layer-opacity-hover = Wie viel der gemischten Ebene zu sehen ist. 0 lässt die Farben, wie sie waren.
+panel-stat-bump = Prägung
+panel-stat-bump-hover = Liest eine Statistik jedes Orbits als Höhe und beleuchtet ihre Neigung im Winkel des Relieflichts: gravierte Strähnen entlang der Feldlinien, feiner mit dem Streifenmittel, länger mit der Dreiecksungleichung. Mit eingeschaltetem Relieflicht kommt sie zur Oberfläche des Reliefs hinzu, eine gekämmte Satinprägung; ausgeschaltet wird sie allein beleuchtet. Die Ansicht berechnet die Statistik dann mit, in der Tiefe langsamer. Auch --stat-bump NAME für --render.
+panel-stat-bump-height = Höhe
+panel-stat-bump-height-hover = Wie hoch die Statistik steht, in Pixeln je Einheit ihres Graus: höher schneidet die Strähnen tiefer ein. 0 lässt die Oberfläche flach.
 panel-trap-shape = Fallenform
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

@@ -75,6 +75,14 @@ detail is in the git history.
   now fitted to its own values, as the live view fits the screen, so the video looks like the
   view. Fitting a frame costs about a quarter more time at 2x2 supersampling. A frame depends on
   nothing but its own view, so one full turn of the trap's phase rendered once loops seamlessly.
+- **Bump: a statistic as a surface.** Under Smooth iteration, Bump reads a statistic of each
+  orbit as a height and lights its slope with the relief light's angle: engraved strands along
+  the field lines, finer with the stripe average, longer with the triangle inequality. With Relief
+  light on it is added to the relief's surface, a combed satin emboss, its highlight included;
+  with it off it is lit alone. Height sets how deep the strands are cut. The view then calculates
+  the statistic too, which is slower at depth. A view file keeps it (`stat_bump`,
+  `stat_bump_height`), a tour's keyframes can state it, and on the command line it is
+  `--stat-bump stripe` or `triangle`, with `--stat-bump-height PX`.
 - **Layer: a statistic's light and shade over Smooth's colors.** Under Smooth iteration, Layer
   lays a gray made from a statistic of each orbit over the colors, so its lights and darks light
   and shade the bands along the field lines: fine combed strands with the stripe average, longer

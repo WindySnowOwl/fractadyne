@@ -419,6 +419,8 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--stat-layer-blend MODE", "How the statistic layer merges over the colors: hard-light (the default), soft-light, overlay, multiply or screen."),
         Flag("--stat-layer-contrast X", "The statistic layer's contrast: its gray is 0.5 + X times the statistic's distance from its center (0 to 16, default 4)."),
         Flag("--stat-layer-opacity X", "How much of the merged statistic layer shows (0 to 1, default 1)."),
+        Flag("--stat-bump NAME", "The Smooth method's statistic bump: stripe or triangle, a statistic of each orbit read as a height and its slope lit by the relief light (with --light added to the relief's surface, without it lit alone); none, the default, for no bump."),
+        Flag("--stat-bump-height PX", "The statistic bump's height in output pixels per unit of the statistic's gray (0 to 32, default 6)."),
         Flag("--wrap NAME", "How the palette continues past its end: repeat (start again, the default), mirror (run back the other way, so a palette whose ends differ shows no seam) or clamp (hold the last color: each color used once)."),
         Flag("--steps N", "Cut each palette cycle into N flat bands, each the color at its start (0, the default: smooth; at most 64)."),
         Flag("--log-palette","Spread the palette by the LOGARITHM of the escape value rather than linearly, wherever normalization is active. Escape counts crowd towards the high end at depth, so a linear map spends most of the palette on a thin shell near the boundary and flattens the rest; log keeps color readable and stable as a zoom video's range grows."),

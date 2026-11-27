@@ -156,6 +156,8 @@ fn kitchen_sink() -> fractadyne_state::ColoringSpec {
         stat_layer_blend: "soft-light".into(),
         stat_layer_contrast: 6.0,
         stat_layer_opacity: 0.6,
+        stat_bump: "stripe".into(),
+        stat_bump_height: 8.0,
         custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
         custom_palette_flat: true,
         custom_segments: vec![fractadyne_state::PaletteSegment {
@@ -259,6 +261,8 @@ fn scrambled_for(d: &fractadyne_state::ColoringSpec) -> fractadyne_state::Colori
         stat_layer_blend: "screen".into(),
         stat_layer_contrast: 1.5,
         stat_layer_opacity: 0.4,
+        stat_bump: "triangle".into(),
+        stat_bump_height: 2.5,
         custom_palette: vec![[0.0, 0.2, 0.9, 0.2], [1.0, 0.9, 0.9, 0.1]],
         custom_palette_flat: false,
         custom_segments: vec![fractadyne_state::PaletteSegment {

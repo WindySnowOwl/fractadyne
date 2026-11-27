@@ -2803,6 +2803,10 @@ panel-stat-layer-contrast = 對比
 panel-stat-layer-contrast-hover = 統計量的值在圖層的黑與白之間鋪開的程度。為 0 時圖層是均勻的灰色。
 panel-stat-layer-opacity = 不透明度
 panel-stat-layer-opacity-hover = 混合後的圖層顯示多少。為 0 時顏色保持原樣。
+panel-stat-bump = 凹凸
+panel-stat-bump-hover = 把每條軌道的一個統計量讀作高度，並用浮雕光的角度照亮它的坡度：沿力線刻出的絲縷，條紋平均下更細，三角不等式下更長。浮雕光開啟時疊加到浮雕的表面上，成為梳理過的緞面壓紋；關閉時單獨照亮。此時畫面也要計算該統計量，在深處會更慢。--render 中為 --stat-bump NAME。
+panel-stat-bump-height = 高度
+panel-stat-bump-height-hover = 統計量的高度，以其灰度每單位對應的像素計：越高絲縷刻得越深。為 0 時表面平坦。
 panel-trap-shape = 陷阱形狀
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

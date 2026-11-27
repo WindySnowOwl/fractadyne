@@ -63,6 +63,8 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `stat_layer_blend` | string: hard-light \| soft-light \| overlay \| multiply \| screen | (left out) | How the statistic layer merges over the colors: "hard-light" (also when left out), "soft-light", "overlay", "multiply" or "screen" (with `stat_layer`). |
 | `stat_layer_contrast` | float, 0 to 16 | 4 | The statistic layer's contrast: its gray is 0.5 + contrast × (statistic − its center), 0 to 16 (4 when left out; with `stat_layer`). |
 | `stat_layer_opacity` | float, 0 to 1 | 1 | How much of the merged layer shows, 0 to 1 (1 when left out; with `stat_layer`). |
+| `stat_bump` | string: none \| stripe \| triangle | (left out) | The Smooth method's statistic bump: a statistic of each orbit read as a height, its slope lit by the relief light (with `light`, added to the relief's surface; without, lit alone), "stripe" (the stripe average, at the stripe density) or "triangle" (the triangle inequality average); "none" or left out: no bump (method "smooth"). |
+| `stat_bump_height` | float, 0 to 32 | 6 | The statistic bump's height: output pixels per unit of the statistic's gray, 0 to 32 (6 when left out; with `stat_bump`). |
 | `stripe_freq` | float, 1 to 24 | 6 | Stripe average: the stripes' density (method "stripe"). |
 | `stripe_tail` | bool | false | Stripe average over the last `stripe_tail_len` iterations only, which keeps its contrast at depth (method "stripe"). |
 | `stripe_tail_len` | int, 4 to 1048576 | 16 | The tail's length in iterations (with `stripe_tail`). |

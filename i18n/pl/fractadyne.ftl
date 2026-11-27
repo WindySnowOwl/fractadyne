@@ -2975,6 +2975,10 @@ panel-stat-layer-contrast = Kontrast
 panel-stat-layer-contrast-hover = Jak szeroko wartości statystyki rozkładają się między czernią a bielą warstwy. 0 daje równą szarość.
 panel-stat-layer-opacity = Krycie
 panel-stat-layer-opacity-hover = Ile zmieszanej warstwy widać. 0 zostawia kolory takie, jakie były.
+panel-stat-bump = Wypukłość
+panel-stat-bump-hover = Czyta statystykę każdej orbity jako wysokość i oświetla jej nachylenie pod kątem światła reliefu: wygrawerowane pasemka wzdłuż linii pola, drobniejsze ze średnią pasków, dłuższe z nierównością trójkąta. Z włączonym światłem reliefu dodaje się do jego powierzchni, czesany satynowy tłok; z wyłączonym jest oświetlana sama. Widok liczy wtedy także statystykę, wolniej w głębi. Także --stat-bump NAZWA dla --render.
+panel-stat-bump-height = Wysokość
+panel-stat-bump-height-hover = Jak wysoko stoi statystyka, w pikselach na jednostkę jej szarości: wyżej rzeźbi pasemka głębiej. 0 zostawia powierzchnię płaską.
 panel-trap-shape = Kształt pułapki
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

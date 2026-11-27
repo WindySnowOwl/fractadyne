@@ -44,6 +44,7 @@ fn other_value(f: &Field) -> &'static str {
             "band_texture" => "stripe",
             "stat_layer" => "triangle",
             "stat_layer_blend" => "screen",
+            "stat_bump" => "stripe",
             k => panic!("no other value for the choice {k}"),
         },
         Access::Rgb(..) => "0.25,0.5,0.75",

@@ -364,6 +364,8 @@ fn every_session_field_survives_save_and_reload() {
         stat_layer_blend: "soft-light".into(),
         stat_layer_contrast: 6.0,
         stat_layer_opacity: 0.75,
+        stat_bump: "stripe".into(),
+        stat_bump_height: 9.0,
         custom_palette: vec![[0.0, 0.1, 0.2, 0.3], [1.0, 0.4, 0.5, 0.6]],
         custom_palette_flat: true,
         custom_segments: vec![PaletteSegment {
@@ -884,6 +886,8 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
         "band_texture_near",
         // The statistic layer (E3).
         "stat_layer", "stat_layer_blend", "stat_layer_contrast", "stat_layer_opacity",
+        // The statistic bump (E4).
+        "stat_bump", "stat_bump_height",
     ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {

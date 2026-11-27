@@ -2803,6 +2803,10 @@ panel-stat-layer-contrast = 대비
 panel-stat-layer-contrast-hover = 통계값의 값을 레이어의 검정과 흰색 사이에 얼마나 펼칠지. 0이면 레이어가 고른 회색이 됩니다.
 panel-stat-layer-opacity = 불투명도
 panel-stat-layer-opacity-hover = 섞인 레이어가 얼마나 보일지. 0이면 색이 원래대로입니다.
+panel-stat-bump = 범프
+panel-stat-bump-hover = 각 궤도의 통계값을 높이로 읽고 그 기울기를 릴리프 조명의 각도로 비춥니다. 역선을 따라 새겨진 가닥이 되며, 스트라이프 평균으로는 더 가늘게, 삼각 부등식으로는 더 길게 됩니다. 릴리프 조명이 켜져 있으면 릴리프의 표면에 더해져 빗질한 새틴 엠보스가 되고, 꺼져 있으면 홀로 비춰집니다. 화면이 그 통계값도 계산하므로 깊은 곳에서는 느려집니다. --render에서는 --stat-bump NAME.
+panel-stat-bump-height = 높이
+panel-stat-bump-height-hover = 통계값이 서 있는 높이(회색 1당 픽셀 수). 높을수록 가닥이 더 깊이 새겨집니다. 0이면 표면이 평평합니다.
 panel-trap-shape = 트랩 모양
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.
