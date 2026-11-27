@@ -82,7 +82,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe", "round-trip",
     "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize", "palette-oklab",
-    "tour-equalize", "video-equalize", "trap-equalize", "lossy-formats", "tour-trap-fit", "trap-tail",
+    "tour-equalize", "video-equalize", "trap-equalize", "lossy-formats", "tour-trap-fit", "trap-tail", "band-texture",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -7973,6 +7973,115 @@ impl FractadyneApp {
         // smooth field, not the angle group's chaotic one: > 50 colors and a nudge that moves >= 0.25%
         // (measured 2026-11-24: 78 to 176 colors, the nudge 0.7% (the square) to 6.5% (the hexagon),
         // BLA 0.4% to 3.4%; a flat picture, as at the aux-bla view, is 3 or 4 colors and 0%).
+        // ---- the Smooth method's band texture (coloring plan E1) ----
+        // A statistic of each orbit moves the band edges along its texture. At the study's view (the
+        // seahorse valley, 0.008 wide): each texture changes the picture; at strength 0 the frame is
+        // Smooth's to the bit with the same statistic accumulated (accumulating one changes the
+        // iteration's route, the series off, so against plain Smooth it is not), the color pass
+        // adding nothing; and
+        // at 1e30x the stripe texture through BLA is every iteration's (the stripe lane's fold).
+        if want("band-texture") {
+            use fractadyne_core::coloring::BandTexture as B;
+            let saved = (
+                (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.interior),
+                (self.coloring.band_texture, self.coloring.band_texture_amount, self.coloring.stripe_freq, self.coloring.use_custom_palette),
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
+            );
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.interior = None;
+            self.coloring.use_custom_palette = false;
+            self.coloring.stripe_freq = 5.0;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 6_000;
+            self.render_cfg.series_approx = true;
+            self.render_cfg.use_bla = true;
+            let (w, h) = (320u32, 200u32);
+            let progress = std::sync::atomic::AtomicU32::new(0);
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 128).expect("the view's coordinate");
+            let mut vp = Viewport::new(w as f64, h as f64);
+            // The study's view B: 0.008 wide, so its 200 rows span 0.005 (zoom 4 / 0.005).
+            vp.set_center_mag(at("-0.7435"), at("0.1315"), 800.0);
+            let shot = |app: &mut Self, vp: &Viewport, tex: B, amount: f32, bla: bool| -> Option<Vec<f32>> {
+                app.coloring.band_texture = tex;
+                app.coloring.band_texture_amount = amount;
+                let mut r = app.current_export_request_for(vp, false);
+                r.width = vp.width_px as u32;
+                r.height = vp.height_px as u32;
+                r.ss = 1;
+                if !bla {
+                    r.bla_on = 0;
+                    r.sa_skip = 0;
+                }
+                match fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel) {
+                    Ok(x) => Some(x.pixels),
+                    Err(e) => {
+                        eprintln!("[selftest] GPU ERROR (render_export): {e}");
+                        None
+                    }
+                }
+            };
+            let bytes = |p: &[f32]| p.iter().map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect::<Vec<u8>>();
+            let plain = shot(self, &vp, B::None, 2.0, true);
+            for (tex, name) in [(B::Stripe, "stripe"), (B::Triangle, "triangle inequality")] {
+                let on = shot(self, &vp, tex, 2.0, true);
+                let zero = shot(self, &vp, tex, 0.0, true);
+                // Plain Smooth with the texture's statistic accumulated beside the count.
+                self.coloring.orbit_stats_override = tex.stat().map(crate::StatSet::of);
+                let alike = shot(self, &vp, B::None, 2.0, true);
+                self.coloring.orbit_stats_override = None;
+                let moved = plain.as_ref().zip(on.as_ref()).map(|(a, b)| frame::distance(&bytes(a), &bytes(b)));
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "consistency",
+                    name: format!("the {name} band texture moves Smooth's bands"),
+                    params: "the seahorse valley, 0.008 wide, 320x200, strength 2".into(),
+                    result: format!("the mean difference from plain Smooth: {moved:.2?} levels"),
+                    threshold: "at least 2 levels",
+                    pass: moved.is_some_and(|d| d >= 2.0),
+                });
+                let same = alike.as_ref().zip(zero.as_ref()).map(|(a, b)| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits()));
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "consistency",
+                    name: format!("the {name} band texture at strength 0 is plain Smooth to the bit"),
+                    params: "the same view; plain Smooth with the same statistic accumulated beside the count".into(),
+                    result: format!("identical: {same:?}"),
+                    threshold: "every channel the same bits",
+                    pass: same == Some(true),
+                });
+            }
+            // Through BLA at 1e30x (the aux-bla view): the stripe texture's frame against every
+            // iteration's.
+            let mut deep = Viewport::new(N as f64, N as f64);
+            deep.center_x = fractadyne_core::parse_bf(SX).unwrap();
+            deep.center_y = fractadyne_core::parse_bf(SY).unwrap();
+            deep.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * 1.0e30));
+            deep.precision = fractadyne_core::precision_for_magnification(1.0e30);
+            self.render_cfg.series_approx = false;
+            let (a, b) = (shot(self, &deep, B::Stripe, 2.0, true), shot(self, &deep, B::Stripe, 2.0, false));
+            let (maxd, nd, chans) = match (&a, &b) {
+                (Some(a), Some(b)) if a.len() == b.len() => {
+                    let maxd = a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+                    (maxd, a.iter().zip(b).filter(|(x, y)| (*x - *y).abs() > 0.02).count(), a.len())
+                }
+                _ => (f32::INFINITY, usize::MAX, 0),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "BLA",
+                name: "the stripe band texture through BLA == every iteration @1e30×".into(),
+                params: format!("{N}x{N}, strength 2, series off; maxΔ {maxd:.4}"),
+                result: format!("{nd}/{chans} channels >2%"),
+                threshold: "maxΔ<0.1, <1% differ",
+                pass: maxd < 0.1 && nd < chans / 100,
+            });
+            (
+                (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.interior),
+                (self.coloring.band_texture, self.coloring.band_texture_amount, self.coloring.stripe_freq, self.coloring.use_custom_palette),
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
+            ) = saved;
+        }
+
         // ---- the trap's tail draws a deep view again (coloring plan F4, part 5) ----
         // The coloring matrix's known-flat trap cells: at the seahorse at 1e20x every pixel's orbit
         // follows the reference for all but its last iterations and comes nearest the trap in that
@@ -11624,6 +11733,8 @@ zoom = \"1e94\"
                 interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5, phase: 0.0, ..crate::TrapPlace::DEFAULT },
                 trap_tail: true,
                 trap_tail_len: 900,
+                band_texture: fractadyne_core::coloring::BandTexture::Triangle,
+                band_texture_amount: 5.0,
                 light: true,
                 light_angle: -1.25,
                 light_height: 3.5,
@@ -11905,6 +12016,9 @@ zoom = \"1e94\"
                 // The trap's tail (F4 part 5).
                 trap_tail: true,
                 trap_tail_len: 64,
+                // The Smooth method's band texture (E1).
+                band_texture: "triangle".into(),
+                band_texture_amount: 3.0,
                 custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
                 custom_palette_flat: true,
                 custom_segments: vec![fractadyne_state::PaletteSegment {

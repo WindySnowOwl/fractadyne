@@ -2863,6 +2863,11 @@ panel-tail-length-hover = Lunghezza della finestra in iterazioni. Finestre corte
 panel-trap-tail = Solo coda (zoom profondo)
 panel-trap-tail-hover = Conta gli avvicinamenti tardivi di ogni orbita alla trappola più di quelli iniziali: la distanza di un avvicinamento conta il doppio per ogni lunghezza di coda di iterazioni prima della fine dell’orbita. A profondità estreme ogni orbita segue quella di riferimento tranne che nelle ultime iterazioni e si avvicina di più alla trappola in quel tratto comune, così l’avvicinamento minimo dell’intera orbita è un solo colore per tutta la vista; la coda disegna di nuovo la trappola. Le orbite brevi cambiano appena. Anche --trap-tail N per --render.
 panel-trap-tail-length-hover = Iterazioni in cui la distanza di un avvicinamento raddoppia. Code più corte mostrano più delle ultime iterazioni di ogni orbita, più fini e più fitte; quelle più lunghe tornano verso l’avvicinamento minimo dell’intera orbita.
+panel-band-texture = Texture delle bande
+panel-band-texture-hover = Una statistica di ogni orbita sposta i bordi delle bande lungo la sua texture: le bande mantengono colori e ordine, e ogni bordo si sfrangia lungo le linee di campo, in pelliccia o fiamme con la media delle strisce, in filamenti più lunghi con la disuguaglianza triangolare. La vista calcola allora anche la statistica, più lenta in profondità. Anche --band-texture NOME per --render.
+panel-band-texture-none = Nessuna
+panel-band-texture-amount = Intensità
+panel-band-texture-amount-hover = Quanto la texture sposta le bande, in cicli di palette per unità della statistica. 0 lascia le bande lisce.
 panel-trap-shape = Forma trappola
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

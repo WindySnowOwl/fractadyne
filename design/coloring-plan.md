@@ -1657,13 +1657,13 @@ bulbs, looking for seams. A new GPU regime: a capped first run, PLUTO first.
 
 ### E. Statistic combinations (tier 1 after B3)
 
-| Id  | Combination                        | Notes                                                                                                                                           | Size |
-| --- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
-| E1  | Statistic-warped bands             | position = rate·μ + offset + λ·(s − center); center fixed at first (no stripe/TIA histogram exists)                                             | S    |
-| E2  | Statistic near filaments           | weight exp(−d_px/k); needs A9                                                                                                                   | S    |
-| E3  | Two-layer blend                    | statistic over smooth with multiply, screen, overlay, hard light and soft light; second LUT from B5                                             | M    |
-| E4  | Statistic bump map                 | screen-space differences of the statistic (analytic gradients measured as noise), reusing the palette-AA neighbor fetch and the relief low-pass | M    |
-| E5  | Specular strength from a statistic | after C5                                                                                                                                        | S    |
+| Id  | Combination                        | Notes                                                                                                                                                                                                                                   | Size |
+| --- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| E1  | Statistic-warped bands             | position = rate·μ + offset + λ·(s − center); center fixed at first (no stripe/TIA histogram exists). Done 2026-11-26 as Band texture under Smooth (stripe or triangle inequality; centers 0.5 and 0.34; self-test group `band-texture`) | S    |
+| E2  | Statistic near filaments           | weight exp(−d_px/k); needs A9                                                                                                                                                                                                           | S    |
+| E3  | Two-layer blend                    | statistic over smooth with multiply, screen, overlay, hard light and soft light; second LUT from B5                                                                                                                                     | M    |
+| E4  | Statistic bump map                 | screen-space differences of the statistic (analytic gradients measured as noise), reusing the palette-AA neighbor fetch and the relief low-pass                                                                                         | M    |
+| E5  | Specular strength from a statistic | after C5                                                                                                                                                                                                                                | S    |
 
 Every E step shows "slower at depth" in the picker: it needs the statistic, so it pays the aux
 restrictions under Smooth.
@@ -1881,4 +1881,5 @@ coloring in these places, so sequence the two with care:
 | F4 (3)     | done, merged (six shapes, compiled only into frames that draw one) | `864af084`, `849bc9a5`, `e42772d9`, `08df4c87` (merge `99d5f8d6`)                         |
 | F4 (4)     | done: outlines from SVG, in pipelines of their own (text next)     | commit and merge recorded with the next step                                              |
 | F4 (5)     | done: the tail, every hit aged by its distance from the end        | commit and merge recorded with the next step                                              |
+| E1         | done: Band texture, a statistic feathering Smooth's bands          | commit and merge recorded with the next step                                              |
 | D, E, F, G | not started (F4 from part 4's text outlines)                       |                                                                                           |

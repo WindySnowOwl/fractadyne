@@ -177,6 +177,18 @@ pub(crate) fn outline_row(base: usize, outline: Option<&OutlineGpu>, read: bool)
     }
 }
 
+/// The color uniform's band texture words (coloring plan E1): `(lane, strength, center)`, the lane 0
+/// (none) but for the Smooth method with a texture at a strength above 0, whose statistic the frame
+/// then accumulates. At strength 0 the color pass is plain Smooth's (its distance-sized palette
+/// footprint included).
+pub(crate) fn band_texture_words(method: u32, tex: (fractadyne_core::coloring::BandTexture, f32)) -> (u32, f32, f32) {
+    let (t, amount) = tex;
+    if method != fractadyne_core::coloring::ColorMethod::Smooth.gpu_id() || t == fractadyne_core::coloring::BandTexture::None || !(amount > 0.0) {
+        return (0, 0.0, 0.0);
+    }
+    (t.gpu_id(), amount, t.center())
+}
+
 /// Where the orbit trap sits, turned and sized (the shader's `trap_c` .. `trap_on`; coloring plan
 /// F4): the shape's coordinates are `w = R(−θ)·(z − center)·inv_size` and its distance is
 /// `size · shape(w)`, as [`fractadyne_core::coloring::TrapPlace::dist`] computes it in f64.
@@ -560,7 +572,9 @@ pub(crate) struct ColorUniforms {
     /// pane's atlas, a second of GPU time when the dual view came back on over a pane last drawn
     /// at 8x (2026-11-15). In what was the first `_pad_aa` word; `ColorU.tap_stride` mirrors it.
     pub(crate) tap_stride: u32,
-    pub(crate) _pad_aa: f32,
+    /// The band texture's center ([`fractadyne_core::coloring::BandTexture::center`], coloring plan
+    /// E1), in what was the second `_pad_aa` word; its lane and strength are in the edge row's two.
+    pub(crate) band_tex_center: f32,
     /// A coloring hook's parameters `p1`..`p4` ([`color_hook`], coloring plan B10), a new 16-byte
     /// row; 0 without a hook, whose module is the only one that reads them. `ColorU.hook_p`.
     pub(crate) hook_p: [f32; 4],
@@ -575,7 +589,11 @@ pub(crate) struct ColorUniforms {
     pub(crate) edge_curve: u32,
     pub(crate) edge_px: f32,
     pub(crate) edge_strength: f32,
-    pub(crate) _pad_edge: [u32; 2],
+    /// The band texture (coloring plan E1, [`band_texture_words`]): which statistic shifts the
+    /// Smooth method's palette position (`BandTexture::gpu_id`, 0 none) and by how much per unit of
+    /// it, in palette cycles; in what were this row's two pad words. `ColorU.band_tex*` mirror them.
+    pub(crate) band_tex: u32,
+    pub(crate) band_tex_amount: f32,
     pub(crate) edge_col: [f32; 4],
     /// Equipotential lines ([`GridLines`], coloring plan C10): a row of on, the spacing, the width
     /// and the strength, then a row of the color. `ColorU.grid_*` mirror them.
@@ -4112,6 +4130,9 @@ pub struct MandelbrotParams {
     /// The palette's Wrap (`Wrap::gpu_id`) and Steps (0: none), coloring plan C2.
     pub wrap: u32,
     pub steps: f32,
+    /// The Smooth method's band texture and its strength (coloring plan E1): the statistic must be
+    /// among the frame's (`orbit_stats`), and is read only under Smooth.
+    pub band_texture: (fractadyne_core::coloring::BandTexture, f32),
     /// Edge shading (coloring plan C3); off by default.
     pub edge: EdgeShade,
     /// Equipotential lines (coloring plan C10); off by default.
@@ -4449,6 +4470,7 @@ impl Default for MandelbrotParams {
             hook_params: [0.0; 4],
             wrap: 0,
             steps: 0.0,
+            band_texture: Default::default(),
             edge: EdgeShade::default(),
             grid: GridLines::default(),
             relief: ReliefLight::default(),
@@ -4954,7 +4976,7 @@ impl CallbackTrait for MandelbrotParams {
             aa_ln_p: aa_ln_p(self.formula),
             aa_scale: aa_scale(self.aa_sample),
             tap_stride: 0,
-            _pad_aa: 0.0,
+            band_tex_center: band_texture_words(self.color_method, self.band_texture).2,
             hook_p: self.hook_params,
             wrap: self.wrap,
             steps: self.steps,
@@ -4962,7 +4984,8 @@ impl CallbackTrait for MandelbrotParams {
             edge_curve: self.edge.curve,
             edge_px: self.edge.width,
             edge_strength: self.edge.strength,
-            _pad_edge: [0; 2],
+            band_tex: band_texture_words(self.color_method, self.band_texture).0,
+            band_tex_amount: band_texture_words(self.color_method, self.band_texture).1,
             edge_col: [self.edge.color[0], self.edge.color[1], self.edge.color[2], 1.0],
             grid_on: self.grid.gpu_on(),
             grid_spacing: self.grid.spacing,

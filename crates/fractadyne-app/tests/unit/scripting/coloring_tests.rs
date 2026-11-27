@@ -43,7 +43,7 @@ fn no_table_is_no_coloring() {
 #[test]
 fn an_unknown_key_is_refused_with_the_keys() {
     let e = tour("[render.coloring]\nmethd = \"stripe\"\n").err().expect("refused");
-    assert!(e.contains("has no key `methd`") && e.contains("method, stripe_freq"), "{e}");
+    assert!(e.contains("has no key `methd`") && e.contains("method, band_texture, band_texture_amount, stripe_freq"), "{e}");
 }
 
 /// The wrong shape, a value the key cannot take, and a number out of its slider's range are each

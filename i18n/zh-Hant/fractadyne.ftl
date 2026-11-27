@@ -2783,6 +2783,11 @@ panel-tail-length-hover = 以疊代次數表示的區間長度。短區間（8�
 panel-trap-tail = 僅尾段（深度縮放）
 panel-trap-tail-hover = 每條軌道越晚接近陷阱，權重越大：在軌道結束前每隔一個尾段長度的迭代，接近的距離按兩倍計算。在極深處，每條軌道除最後幾次迭代外都沿著參考軌道運行，並在這段共同的部分最接近陷阱，因此整條軌道的最近距離會讓整個畫面只有一種顏色；使用尾段後陷阱會重新顯現。短軌道幾乎不變。--render 中為 --trap-tail N。
 panel-trap-tail-length-hover = 接近距離加倍所需的迭代次數。尾段越短，越能顯示每條軌道最後幾次迭代，圖案更細更繁雜；越長則越接近整條軌道的最近距離。
+panel-band-texture = 色帶紋理
+panel-band-texture-hover = 用每條軌道的一個統計量沿其紋理移動色帶的邊緣：色帶保持原有顏色和順序，每條邊緣沿力線散開，條紋平均下如毛髮或火焰，三角不等式下成為更長的絲縷。此時畫面也要計算該統計量，在深處會更慢。--render 中為 --band-texture NAME。
+panel-band-texture-none = 無
+panel-band-texture-amount = 強度
+panel-band-texture-amount-hover = 紋理移動色帶的幅度，以統計量每單位對應的調色盤週期數計。0 時色帶保持平滑。
 panel-trap-shape = 陷阱形狀
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

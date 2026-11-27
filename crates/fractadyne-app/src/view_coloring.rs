@@ -80,6 +80,9 @@ pub(crate) struct ViewColoring {
     /// The trap's tail (F4 part 5), the method's trap and the inside's, and its length.
     pub(crate) trap_tail: bool,
     pub(crate) trap_tail_len: u32,
+    /// The Smooth method's band texture (E1) and its strength.
+    pub(crate) band_texture: fractadyne_core::coloring::BandTexture,
+    pub(crate) band_texture_amount: f32,
     /// Relief lighting: on, angle (radians), the "Relief" slider.
     pub(crate) light: bool,
     pub(crate) light_angle: f32,
@@ -165,6 +168,8 @@ impl ViewColoring {
             interior_trap_place: crate::interior_trap_place_of(s),
             trap_tail: s.trap_tail,
             trap_tail_len: s.trap_tail_len,
+            band_texture: fractadyne_core::coloring::BandTexture::parse_key(&s.band_texture).unwrap_or_default(),
+            band_texture_amount: s.band_texture_amount,
             light: s.light,
             light_angle: s.light_angle,
             light_height: s.light_height,
@@ -243,6 +248,11 @@ impl ViewColoring {
             interior_trap_sine_harmonics: self.interior_trap_place.sine_harmonics,
             trap_tail: self.trap_tail,
             trap_tail_len: self.trap_tail_len,
+            band_texture: match self.band_texture {
+                fractadyne_core::coloring::BandTexture::None => String::new(),
+                t => t.key().to_string(),
+            },
+            band_texture_amount: self.band_texture_amount,
             light: self.light,
             light_angle: self.light_angle,
             light_height: self.light_height,

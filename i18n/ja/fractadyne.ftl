@@ -2784,6 +2784,11 @@ panel-tail-length-hover = 窓の長さ（反復回数）です。短い窓（8�
 panel-trap-tail = 末尾のみ（ディープズーム）
 panel-trap-tail-hover = 各軌道がトラップに近づいたときの距離を、遅い接近ほど重く数えます。軌道の終わりより末尾の長さ分の反復だけ前にある接近は、距離が2倍として扱われます。極端な深さではどの軌道も最後の反復以外は参照軌道をたどり、その共通部分でトラップに最も近づくため、軌道全体の最接近では表示全体が1色になります。末尾を使うとトラップが再び描かれます。短い軌道はほとんど変わりません。--render では --trap-tail N。
 panel-trap-tail-length-hover = 接近の距離が2倍になる反復数。短い末尾では各軌道の最後の反復がより多く現れ、細かく込み入った模様になります。長い末尾では軌道全体の最接近に戻っていきます。
+panel-band-texture = 帯のテクスチャ
+panel-band-texture-hover = 各軌道の統計量で帯の境界をそのテクスチャに沿ってずらします。帯の色と順序はそのままで、境界が力線に沿ってほぐれ、ストライプ平均では毛並みや炎のように、三角不等式では長い筋になります。表示はその統計量も計算するため、深い位置では遅くなります。--render では --band-texture NAME。
+panel-band-texture-none = なし
+panel-band-texture-amount = 強さ
+panel-band-texture-amount-hover = テクスチャが帯をずらす量（統計量1あたりのパレット周期数）。0 で帯はそのままです。
 panel-trap-shape = トラップの形
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

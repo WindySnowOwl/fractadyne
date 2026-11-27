@@ -39,6 +39,7 @@ fn other_value(f: &Field) -> &'static str {
             "transfer" => "sqrt",
             "wrap" => "mirror",
             "edge_curve" => "smooth",
+            "band_texture" => "stripe",
             k => panic!("no other value for the choice {k}"),
         },
         Access::Rgb(..) => "0.25,0.5,0.75",

@@ -470,6 +470,11 @@ enum Screen {
     /// The sine wave with Animate the phase on (user 2026-11-25, "it seems to be blocky"): the phase
     /// turns, and every frame of it is drawn at the panel's resolution, none shrunk.
     TrapPhaseAnimating,
+    /// Smooth at the edge-shading steps' view, no band texture...
+    BandTextureOff,
+    /// ...then the stripe band texture (coloring plan E1): another picture, the statistic reaching
+    /// the live view's color pass; the panel's Band texture row with its Strength.
+    BandTexture,
     /// Edge shading (coloring plan C3): the Julia-link point in Smooth, point sampled, the shading
     /// off (the base)...
     EdgeShadeOff,
@@ -1502,6 +1507,8 @@ fn build_steps() -> Vec<Step> {
         screen("trap-square-wave", Screen::TrapSquareWave),
         screen("trap-sine-harmonics", Screen::TrapSineHarmonics),
         screen("trap-phase-animating", Screen::TrapPhaseAnimating),
+        screen("band-texture-off", Screen::BandTextureOff),
+        screen("band-texture", Screen::BandTexture),
         screen("edge-shade-off", Screen::EdgeShadeOff),
         screen("edge-shade", Screen::EdgeShade),
         screen("edge-shade-inside", Screen::EdgeShadeInside),
@@ -2104,6 +2111,28 @@ impl FractadyneApp {
     /// The outline draws another picture live than the point and the star do (a mean difference of
     /// 3 levels or more from each: without the outline on the GPU it would measure as the point),
     /// and the view's text carries it (`trap_outline=`, with its name).
+    /// The stripe band texture draws another picture live than Smooth without it at the same view
+    /// (`band-texture-off`; a mean difference of 3 levels or more), and the coloring carries it.
+    fn uitest_band_texture_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, checks: &mut Vec<Check>) {
+        let before = "band-texture-off";
+        let b = ut.results.iter().rev().find(|r| r.name == before);
+        let d = view.zip(b).and_then(|((px, _), b)| {
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            let s: f64 = px.chunks_exact(4).zip(prev.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            Some(s / (3 * (px.len() / 4)).max(1) as f64)
+        });
+        let tex = self.coloring.band_texture;
+        checks.push(Check {
+            name: "band-texture-drawn-live".into(),
+            verdict: if d.is_some_and(|d| d >= 3.0) && tex == fractadyne_core::coloring::BandTexture::Stripe {
+                Verdict::Pass
+            } else {
+                Verdict::Fail
+            },
+            detail: format!("against {before}, the mean difference in levels: {d:?}; the band texture {tex:?}"),
+        });
+    }
+
     /// The point with the trap's tail draws another picture live than without it at the same view
     /// (`trap-shape-point`; a mean difference of 3 levels or more), and the trap carries the tail.
     fn uitest_trap_tail_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, checks: &mut Vec<Check>) {
@@ -3750,6 +3779,41 @@ impl FractadyneApp {
             }
             // C3: the Julia-link point again (filaments enough to shade), Smooth, point sampled; the
             // shading off, on toward white, then toward the inside's near-black, one change a step.
+            // E1: Smooth at the edge-shading steps' view, then with the stripe band texture.
+            Screen::BandTextureOff | Screen::BandTexture => {
+                // The phase animation `trap-phase-animating` turned on, off again, and its
+                // supersampling back.
+                self.coloring.trap_phase_anim = false;
+                if let Some(aa) = self.harness.uitest_held_aa.take() {
+                    self.render_cfg.aa = aa;
+                }
+                if matches!(s, Screen::BandTextureOff) {
+                    let (cx, cy) = UITEST_JULIA_LINK_C;
+                    self.set_show_mode(crate::ShowMode::Set);
+                    self.set_fractal(crate::FractalKind::Mandelbrot);
+                    let at = |v: f64| fractadyne_core::BigFloat::from_f64(v, 64);
+                    self.viewport.set_center_mag(at(cx), at(cy), 100.0);
+                    self.render_cfg.auto_iter = false;
+                    self.render_cfg.max_iter = 2_000;
+                    self.coloring.use_custom_palette = false;
+                    self.coloring.use_duotone = false;
+                    self.coloring.use_binary = false;
+                    self.coloring.palette_idx = fractadyne_color::preset_by_id("ember").unwrap_or(0);
+                    self.coloring.stripe_freq = 5.0;
+                    self.coloring.band_texture_amount = 2.0;
+                }
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.interior = Some(crate::InteriorMode::Solid);
+                self.coloring.normalize_live = false;
+                self.coloring.normalize_fit = false;
+                self.effects.edge = false;
+                self.coloring.band_texture = if matches!(s, Screen::BandTexture) {
+                    fractadyne_core::coloring::BandTexture::Stripe
+                } else {
+                    fractadyne_core::coloring::BandTexture::None
+                };
+                self.dialogs.right_panel_open = true;
+            }
             Screen::EdgeShadeOff | Screen::EdgeShade | Screen::EdgeShadeInside | Screen::EdgeShadePanel => {
                 // The phase animation `trap-phase-animating` turned on, off again, and its
                 // supersampling back.
@@ -3757,6 +3821,8 @@ impl FractadyneApp {
                 if let Some(aa) = self.harness.uitest_held_aa.take() {
                     self.render_cfg.aa = aa;
                 }
+                // The band texture `band-texture` turned on, off again.
+                self.coloring.band_texture = fractadyne_core::coloring::BandTexture::None;
                 if matches!(s, Screen::EdgeShadeOff) {
                     let (cx, cy) = UITEST_JULIA_LINK_C;
                     self.set_show_mode(crate::ShowMode::Set);
@@ -4522,6 +4588,8 @@ impl FractadyneApp {
                     | Screen::TrapPhaseAnimating
                     | Screen::TrapShapeOutline
                     | Screen::TrapTail
+                    | Screen::BandTextureOff
+                    | Screen::BandTexture
                     | Screen::EdgeShadeOff
                     | Screen::EdgeShade
                     | Screen::EdgeShadeInside
@@ -5492,6 +5560,9 @@ impl FractadyneApp {
         }
         if let StepKind::Screen(Screen::TrapTail) = step.kind {
             self.uitest_trap_tail_checks(ut, inside_view.as_ref(), &mut checks);
+        }
+        if let StepKind::Screen(Screen::BandTexture) = step.kind {
+            self.uitest_band_texture_checks(ut, inside_view.as_ref(), &mut checks);
         }
 
         // ---- edge shading (coloring plan C3) ----

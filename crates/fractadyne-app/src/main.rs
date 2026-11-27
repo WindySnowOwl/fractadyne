@@ -3403,6 +3403,8 @@ pub(crate) mod slider_range {
     pub(crate) const TRAP_TAIL_LEN: RangeInclusive<u32> =
         fractadyne_core::coloring::TRAP_TAIL_MIN..=fractadyne_core::coloring::TRAP_TAIL_MAX;
     pub(crate) const TRAP_TAIL_PANEL: RangeInclusive<u32> = 4..=16_384;
+    /// The band texture's strength (coloring plan E1), palette cycles per unit of its statistic.
+    pub(crate) const BAND_TEXTURE_AMOUNT: RangeInclusive<f32> = 0.0..=fractadyne_core::coloring::BAND_TEXTURE_AMOUNT_MAX;
     /// Equalize colors' share of histogram coloring (`--equalize`, coloring plan C6).
     pub(crate) const EQUALIZE: RangeInclusive<f32> = 0.0..=1.0;
 }
@@ -6995,6 +6997,11 @@ struct ColoringConfig {
     /// none), coloring plan C2. Persisted.
     wrap: fractadyne_core::coloring::Wrap,
     steps: u32,
+    /// The Smooth method's band texture and its strength (coloring plan E1): a statistic of each
+    /// orbit moves the band edges along its texture ([`fractadyne_core::coloring::BandTexture`]); the
+    /// frame then accumulates it ([`ColoringConfig::orbit_stats_with`]). Persisted.
+    band_texture: fractadyne_core::coloring::BandTexture,
+    band_texture_amount: f32,
     /// Equalize colors (coloring plan C6): the share of histogram coloring, 0 to 1, mixed into the
     /// fitted map wherever the Smooth palette is normalized ([`FractadyneApp::norm_map_for`]): each
     /// color then takes about the same area of the picture. 0 is the fitted map alone. Persisted.
@@ -7071,6 +7078,11 @@ impl ColoringConfig {
         };
         // ...and what a coloring hook reads (B10), whatever the method...
         let set = set.union(self.hook.stats());
+        // ...and what textures the Smooth method's bands (E1)...
+        let set = match self.band_texture.stat().filter(|_| method == ColorMethod::Smooth) {
+            Some(st) => set.with(st),
+            None => set,
+        };
         // ...and what its inside is colored by: an interior colored by the trap needs the trap.
         match inside.reads() {
             Some(st) => set.with(st),
@@ -7287,6 +7299,13 @@ struct DialogState {
 /// `round-trip` takes a coloring through this same reader (2026-11-25). The whole session, for the
 /// trap phase's animation, kept beside the other animations' switches. `args` for `--normalize`
 /// and `--log-palette`.
+/// A band texture's strength as read (a session, a view, the command line): in its range, and the
+/// default for a value that is not a number.
+fn band_texture_amount_of(a: f32) -> f32 {
+    let r = slider_range::BAND_TEXTURE_AMOUNT;
+    if a.is_finite() { a.clamp(*r.start(), *r.end()) } else { fractadyne_core::coloring::BAND_TEXTURE_AMOUNT_DEFAULT }
+}
+
 fn coloring_from_session(s: &fractadyne_state::SessionState, args: &[String]) -> ColoringConfig {
     let c = &s.coloring;
     // The view's outline from its saved text (one that is not one is set aside, logged).
@@ -7379,6 +7398,8 @@ fn coloring_from_session(s: &fractadyne_state::SessionState, args: &[String]) ->
             if asked { fractadyne_core::coloring::Transfer::Log } else { transfer_of_spec(c) }
         },
         wrap: fractadyne_core::coloring::Wrap::parse_key(&c.wrap).unwrap_or_default(),
+        band_texture: fractadyne_core::coloring::BandTexture::parse_key(&c.band_texture).unwrap_or_default(),
+        band_texture_amount: band_texture_amount_of(c.band_texture_amount),
         steps: c.steps.min(fractadyne_core::coloring::MAX_STEPS),
         equalize: equalize_of(c.equalize),
         orbit_stats_override: None,
@@ -9884,6 +9905,19 @@ impl FractadyneApp {
                 eprintln!("fractadyne: --transfer has no effect without normalization — add --normalize (or enable Color ▸ Normalize deep colors).");
             }
         }
+        // The Smooth method's band texture (coloring plan E1) and its strength.
+        if let Some(t) = val("--band-texture") {
+            match fractadyne_core::coloring::BandTexture::parse_key(t) {
+                Some(x) => self.coloring.band_texture = x,
+                None => {
+                    eprintln!("fractadyne: --band-texture: unknown texture \"{t}\"; use none, stripe or triangle.");
+                    crate::exit(2)
+                }
+            }
+        }
+        if let Some(a) = val("--band-texture-amount").map(|s| arg_parse::<f32>("--band-texture-amount", s, "a number")) {
+            self.coloring.band_texture_amount = band_texture_amount_of(a);
+        }
         if let Some(w) = val("--wrap") {
             match fractadyne_core::coloring::Wrap::parse_key(w) {
                 Some(x) => self.coloring.wrap = x,
@@ -10127,6 +10161,11 @@ impl FractadyneApp {
             log_palette: self.coloring.transfer == fractadyne_core::coloring::Transfer::Log,
             transfer: if self.coloring.transfer == fractadyne_core::coloring::Transfer::Log { fractadyne_core::coloring::Transfer::Linear.key() } else { self.coloring.transfer.key() }.to_string(),
             wrap: self.coloring.wrap.key().to_string(),
+            band_texture: match self.coloring.band_texture {
+                fractadyne_core::coloring::BandTexture::None => String::new(),
+                t => t.key().to_string(),
+            },
+            band_texture_amount: self.coloring.band_texture_amount,
             steps: self.coloring.steps,
             normalize_live: self.coloring.normalize_live,
             normalize_fit: self.coloring.normalize_fit,
@@ -10226,6 +10265,8 @@ impl FractadyneApp {
         c.offset = s.offset;
         c.transfer = transfer_of_spec(s);
         c.wrap = fractadyne_core::coloring::Wrap::parse_key(&s.wrap).unwrap_or_default();
+        c.band_texture = fractadyne_core::coloring::BandTexture::parse_key(&s.band_texture).unwrap_or_default();
+        c.band_texture_amount = band_texture_amount_of(s.band_texture_amount);
         c.steps = s.steps.min(fractadyne_core::coloring::MAX_STEPS);
         c.equalize = equalize_of(s.equalize);
         c.normalize_live = s.normalize_live;
@@ -18376,6 +18417,8 @@ impl FractadyneApp {
         c.normalize_fit.hash(&mut h); // or ticking the box would change no pixel until something else did
         c.transfer.hash(&mut h);
         c.wrap.hash(&mut h);
+        c.band_texture.hash(&mut h);
+        c.band_texture_amount.to_bits().hash(&mut h);
         c.steps.hash(&mut h);
         let e = &self.effects;
         e.light.hash(&mut h);

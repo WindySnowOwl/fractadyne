@@ -2864,6 +2864,11 @@ panel-tail-length-hover = Longueur de la fenêtre en itérations. Les fenêtres 
 panel-trap-tail = Queue seule (zoom profond)
 panel-trap-tail-hover = Compte davantage les approches tardives de chaque orbite vers le piège que les précoces : la distance d’une approche compte double pour chaque longueur de queue d’itérations avant la fin de l’orbite. À très grande profondeur, chaque orbite suit l’orbite de référence sauf pendant ses dernières itérations et s’approche le plus du piège dans ce tronçon commun ; l’approche la plus proche de toute l’orbite donne alors une seule couleur à toute la vue, et la queue redessine le piège. Les orbites courtes changent à peine. Aussi --trap-tail N pour --render.
 panel-trap-tail-length-hover = Nombre d’itérations sur lequel la distance d’une approche double. Une queue plus courte montre davantage les dernières itérations de chaque orbite, plus fines et plus chargées ; une plus longue revient vers l’approche la plus proche de toute l’orbite.
+panel-band-texture = Texture des bandes
+panel-band-texture-hover = Une statistique de chaque orbite déplace les bords des bandes selon sa texture : les bandes gardent leurs couleurs et leur ordre, et chaque bord s’effiloche le long des lignes de champ, en fourrure ou en flammes avec la moyenne de rayures, en mèches plus longues avec l’inégalité triangulaire. La vue calcule alors aussi la statistique, plus lente en profondeur. Aussi --band-texture NOM pour --render.
+panel-band-texture-none = Aucune
+panel-band-texture-amount = Intensité
+panel-band-texture-amount-hover = De combien la texture déplace les bandes, en cycles de palette par unité de la statistique. 0 laisse les bandes lisses.
 panel-trap-shape = Forme du piège
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

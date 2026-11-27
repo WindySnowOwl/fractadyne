@@ -36,6 +36,8 @@ fn scrambled() -> ViewColoring {
         interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5, phase: 0.0, harmonics: 7, sine_harmonics: 11 },
         trap_tail: true,
         trap_tail_len: 900,
+        band_texture: fractadyne_core::coloring::BandTexture::Triangle,
+        band_texture_amount: 5.0,
         light: true,
         light_angle: -1.25,
         light_height: 3.5,
@@ -114,6 +116,11 @@ fn variants() -> Vec<ViewColoring> {
     // The inside's own square wave, of three harmonics (its harmonics key).
     let three = crate::TrapPlace { harmonics: 3, ..crate::TrapPlace::DEFAULT };
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_trap: Some(TrapType::SquareWave), interior_trap_place: three, ..d.clone() });
+    // The Smooth method's band texture (E1): the stripe at its default strength, then the triangle
+    // inequality at another; the stripe texture writes the stripe's density too.
+    v.push(ViewColoring { band_texture: fractadyne_core::coloring::BandTexture::Stripe, ..d.clone() });
+    v.push(ViewColoring { band_texture: fractadyne_core::coloring::BandTexture::Stripe, stripe_freq: 11.0, ..d.clone() });
+    v.push(ViewColoring { band_texture: fractadyne_core::coloring::BandTexture::Triangle, band_texture_amount: 0.75, ..d.clone() });
     // The trap's tail (F4 part 5): on at its default length, then at another; and on with only the
     // inside colored by the trap (Smooth outside).
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, trap_tail: true, ..d.clone() });

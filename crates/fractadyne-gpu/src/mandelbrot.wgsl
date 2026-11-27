@@ -4231,7 +4231,8 @@ struct ColorU {
     // Every `tap_stride`-th texel of a pixel's block, each standing for that many (0 or 1 = every
     // texel): the palette browser's thumbnails (`atlas_tap_stride` in the Rust). One pad word.
     tap_stride: u32,
-    _pad_aa2: f32,
+    // The band texture's center (coloring plan E1, `band_texture_words`), in what was a pad word.
+    band_tex_center: f32,
     // A coloring hook's parameters `p1()`..`p4()` (coloring plan B10; read only by a hook's module,
     // `color_hook.wgsl`). Mirrors `ColorUniforms.hook_p`.
     hook_p: vec4<f32>,
@@ -4247,8 +4248,11 @@ struct ColorU {
     edge_curve: u32,
     edge_px: f32,
     edge_strength: f32,
-    _pad_edge0: u32,
-    _pad_edge1: u32,
+    // The band texture (coloring plan E1): the lane of the statistic that shifts the Smooth method's
+    // palette position (0 none, 1 the stripe average `aux.r`, 2 the triangle inequality's `aux.g`)
+    // and by how much, palette cycles per unit; in what were this row's pad words.
+    band_tex: u32,
+    band_tex_amount: f32,
     edge_col: vec4<f32>,
     // Equipotential lines (coloring plan C10, `grid_shaded`): on, the spacing, width and strength
     // in output pixels, then the color. Mirrors `ColorUniforms`.
@@ -4421,9 +4425,18 @@ fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, l
         pv = m.r;                                  // smooth iteration count
     }
     if (interior) { return INTERIOR_COORD; }
+    // The Smooth method's band texture (coloring plan E1): a statistic moves each band edge along
+    // its texture, by `band_tex_amount` palette cycles per unit of it from its center, after the
+    // map. Off (0), nothing is added and every value is as before.
+    var tex = 0.0;
+    if (cu.band_tex != 0u && cu.color_method == METHOD_SMOOTH) {
+        let s = select(a.r, a.g, cu.band_tex == 2u);
+        tex = cu.band_tex_amount * (s - cu.band_tex_center);
+    }
     // An equalized map (C6) first, apart: the plain map's expression below is the one the hook's
     // `palette_map` writes too, and the two must stay the same bits (B10's Smooth-hook check).
     if (eq_share(which) > 0.0) {
+        if (tex != 0.0) { return map_equalized(pv, cycle, offset, mode, lo, which) + tex; }
         return map_equalized(pv, cycle, offset, mode, lo, which);
     }
     // Log range mapping. Escape values crowd towards the high end at depth — most of a deep
@@ -4436,6 +4449,7 @@ fn coord_under(m: vec4<f32>, a: vec4<f32>, cycle: f32, offset: f32, mode: u32, l
     if (mode != 0u) {
         pv_mapped = transfer_of(max(pv - lo, 0.0), mode);
     }
+    if (tex != 0.0) { return pv_mapped * cycle + offset + tex; }
     return pv_mapped * cycle + offset;
 }
 
@@ -5003,7 +5017,10 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
         // 2^-de_px_shift output pixels across (1/ss, more on a reduced frame or a reprojection's
         // magnified one), and its sample's share of that.
         let s = cu.aa_scale * exp2(-de_px_shift) * f32(stride);
-        if (cu.aa_palette == 2u && cu.color_method == METHOD_SMOOTH && c0 < INTERIOR_COORD) {
+        // Not with a band texture (E1): the statistic moves the position more than the count does
+        // where its own texture is fine, which the next pixels' difference above sees and the
+        // distance does not.
+        if (cu.aa_palette == 2u && cu.color_method == METHOD_SMOOTH && cu.band_tex == 0u && c0 < INTERIOR_COORD) {
             let wd = de_footprint(m0, cu.cycle, cu.norm_mode, cu.norm_lo, s);
             if (wd >= 0.0) {
                 pal_w = wd;

@@ -3062,6 +3062,11 @@ panel-tail-length-hover = Window length in iterations. Short windows (8–32) gi
 panel-trap-tail = Tail only (deep zoom)
 panel-trap-tail-hover = Count each orbit's late approaches to the trap more than its early ones: a hit's distance counts as twice as far for every tail length of iterations before the orbit's end. At extreme depth every orbit follows the reference for all but its last iterations and comes nearest the trap in that shared stretch, so the whole orbit's nearest approach is one color for the whole view; the tail draws the trap again. Short orbits barely change. Also --trap-tail N for --render.
 panel-trap-tail-length-hover = Iterations over which a hit's distance doubles. Shorter tails show more of each orbit's last iterations, finer and busier; longer ones come back toward the whole orbit's nearest approach.
+panel-band-texture = Band texture
+panel-band-texture-hover = Let a statistic of each orbit move the band edges along its texture: the bands keep their colors and order, and every edge feathers along the field lines, into fur or flame with the stripe average, into longer strands with the triangle inequality. The view then calculates the statistic too, slower at depth. Also --band-texture NAME for --render.
+panel-band-texture-none = None
+panel-band-texture-amount = Strength
+panel-band-texture-amount-hover = How far the texture moves the bands, in palette cycles per unit of the statistic. 0 leaves the bands plain.
 panel-trap-shape = Trap shape
 # Where the orbit trap sits (coloring plan F4): its two coordinates in the plane the orbits move in.
 panel-trap-center-x = Trap center x

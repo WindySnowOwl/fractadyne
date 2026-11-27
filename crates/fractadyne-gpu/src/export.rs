@@ -267,6 +267,8 @@ pub struct ExportRequest {
     /// The palette's Wrap (`Wrap::gpu_id`) and Steps (0: none), coloring plan C2.
     pub wrap: u32,
     pub steps: f32,
+    /// The band texture — see `MandelbrotParams::band_texture`.
+    pub band_texture: (fractadyne_core::coloring::BandTexture, f32),
     /// Edge shading (coloring plan C3).
     pub edge: crate::EdgeShade,
     /// Equipotential lines (coloring plan C10).
@@ -2030,7 +2032,7 @@ impl<'a> TileRenderer<'a> {
             aa_ln_p: crate::aa_ln_p(req.formula),
             aa_scale: crate::aa_scale(req.aa_sample),
             tap_stride: 0,
-            _pad_aa: 0.0,
+            band_tex_center: crate::band_texture_words(req.color_method, req.band_texture).2,
             hook_p: req.hook_params,
             wrap: req.wrap,
             steps: req.steps,
@@ -2038,7 +2040,8 @@ impl<'a> TileRenderer<'a> {
             edge_curve: req.edge.curve,
             edge_px: req.edge.width,
             edge_strength: req.edge.strength,
-            _pad_edge: [0; 2],
+            band_tex: crate::band_texture_words(req.color_method, req.band_texture).0,
+            band_tex_amount: crate::band_texture_words(req.color_method, req.band_texture).1,
             edge_col: [req.edge.color[0], req.edge.color[1], req.edge.color[2], 1.0],
             grid_on: req.grid.gpu_on(),
             grid_spacing: req.grid.spacing,
@@ -4486,7 +4489,7 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         aa_ln_p: crate::aa_ln_p(req.formula),
         aa_scale: crate::aa_scale(req.aa_sample),
         tap_stride: 0,
-        _pad_aa: 0.0,
+        band_tex_center: crate::band_texture_words(req.color_method, req.band_texture).2,
         hook_p: req.hook_params,
         wrap: req.wrap,
         steps: req.steps,
@@ -4494,7 +4497,8 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         edge_curve: req.edge.curve,
         edge_px: req.edge.width,
         edge_strength: req.edge.strength,
-        _pad_edge: [0; 2],
+        band_tex: crate::band_texture_words(req.color_method, req.band_texture).0,
+        band_tex_amount: crate::band_texture_words(req.color_method, req.band_texture).1,
         edge_col: [req.edge.color[0], req.edge.color[1], req.edge.color[2], 1.0],
         grid_on: req.grid.gpu_on(),
         grid_spacing: req.grid.spacing,

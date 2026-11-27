@@ -115,6 +115,13 @@ pub struct ColoringSpec {
     /// the palette is normalized). 0, the default: the fitted map alone.
     #[serde(default)]
     pub equalize: f32,
+    /// The Smooth method's band texture (coloring plan E1, `BandTexture` by key: "stripe",
+    /// "triangle"; empty or "none" for none, and absent from every session from before it) and its
+    /// strength in palette cycles per unit of the statistic.
+    #[serde(default)]
+    pub band_texture: String,
+    #[serde(default = "default_band_texture_amount")]
+    pub band_texture_amount: f32,
     /// Blend in OKLab (coloring plan C7): a palette's RGB segments blended in OKLab, a perceptual
     /// space, rather than between their display (sRGB-encoded) values. Off by default.
     #[serde(default)]
@@ -948,6 +955,13 @@ fn default_sine_harmonics() -> u32 {
     1
 }
 
+/// `fractadyne_core::coloring::BAND_TEXTURE_AMOUNT_DEFAULT` (the app's tests hold the two equal).
+pub const DEFAULT_BAND_TEXTURE_AMOUNT: f32 = 2.0;
+
+fn default_band_texture_amount() -> f32 {
+    DEFAULT_BAND_TEXTURE_AMOUNT
+}
+
 /// `fractadyne_core::coloring::TRAP_TAIL_DEFAULT` (the app's tests hold the two equal): at the
 /// seahorse at 1e20x the line trap's bands thread the valley at 256 (spread 8.1, against 0.000 for
 /// the whole orbit; 2026-11-26).
@@ -1035,6 +1049,8 @@ impl Default for ColoringSpec {
             palette_saturation: 1.0,
             julia_linked: false,
             equalize: 0.0,
+            band_texture: String::new(),
+            band_texture_amount: DEFAULT_BAND_TEXTURE_AMOUNT,
             palette_oklab: false,
             coloring_hook: String::new(),
             coloring_hook_params: Vec::new(),

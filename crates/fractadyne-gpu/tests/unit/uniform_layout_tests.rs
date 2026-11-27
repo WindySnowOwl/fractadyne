@@ -136,6 +136,7 @@ fn the_palette_fade_fields_line_up() {
         // The thumbnails' sample stride: swapped with the pad word it would read 0 (every texel)
         // and the palette browser would cost 16x more at 8x again.
         ("tap_stride", std::mem::offset_of!(ColorUniforms, tap_stride)),
+        ("band_tex_center", std::mem::offset_of!(ColorUniforms, band_tex_center)),
         // The palette's wrap and steps (C2), and the edge shading (C3): swapped, the shader would
         // read a curve as a mode, the strength as the width, or the color from a pad row.
         ("hook_p", std::mem::offset_of!(ColorUniforms, hook_p)),
@@ -145,6 +146,8 @@ fn the_palette_fade_fields_line_up() {
         ("edge_curve", std::mem::offset_of!(ColorUniforms, edge_curve)),
         ("edge_px", std::mem::offset_of!(ColorUniforms, edge_px)),
         ("edge_strength", std::mem::offset_of!(ColorUniforms, edge_strength)),
+        ("band_tex", std::mem::offset_of!(ColorUniforms, band_tex)),
+        ("band_tex_amount", std::mem::offset_of!(ColorUniforms, band_tex_amount)),
         ("edge_col", std::mem::offset_of!(ColorUniforms, edge_col)),
         // The equipotential lines (C10): swapped, the width would be read as the spacing.
         ("grid_on", std::mem::offset_of!(ColorUniforms, grid_on)),

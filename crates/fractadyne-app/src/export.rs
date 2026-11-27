@@ -366,6 +366,8 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "palette_brightness", "palette_contrast", "palette_saturation", "palette_oklab", "julia_linked",
     // The palette map's curve, its wrap and its steps (coloring plan C2); Equalize colors (C6).
     "transfer", "wrap", "steps", "equalize",
+    // The Smooth method's band texture (coloring plan E1).
+    "band_texture", "band_texture_amount",
     // Edge shading (coloring plan C3).
     "edge", "edge_inside", "edge_width", "edge_strength", "edge_curve", "edge_color",
     // Equipotential lines (coloring plan C10).
@@ -488,6 +490,8 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("julia_linked", ValueKind::Flag),
     ("transfer", ValueKind::Transfer),
     ("wrap", ValueKind::Wrap),
+    ("band_texture", ValueKind::BandTexture),
+    ("band_texture_amount", ValueKind::Float),
     ("steps", ValueKind::Uint),
     ("equalize", ValueKind::Float),
     ("edge", ValueKind::Flag),
@@ -535,6 +539,8 @@ enum ValueKind {
     /// A palette map curve's key (`Transfer::key`, C2).
     Transfer,
     /// A wrap's key (`Wrap::key`, C2).
+    /// The Smooth method's band texture (`BandTexture::key`, coloring plan E1).
+    BandTexture,
     Wrap,
     /// An edge shading curve's key (`EdgeCurve::key`, C3).
     EdgeCurve,
@@ -558,6 +564,7 @@ impl ValueKind {
             ValueKind::PaletteMode => crate::view_coloring::TwoColor::from_key(v).is_some(),
             ValueKind::Transfer => fractadyne_core::coloring::Transfer::parse_key(v).is_some(),
             ValueKind::Wrap => fractadyne_core::coloring::Wrap::parse_key(v).is_some(),
+            ValueKind::BandTexture => fractadyne_core::coloring::BandTexture::parse_key(v).is_some(),
             ValueKind::EdgeCurve => fractadyne_core::coloring::EdgeCurve::parse_key(v).is_some(),
             ValueKind::Rgb => {
                 let parts: Vec<&str> = v.split(',').collect();
@@ -581,6 +588,7 @@ impl ValueKind {
             ValueKind::Trap => one_of(crate::TrapType::ALL.iter().map(|t| t.key()).collect()),
             ValueKind::Transfer => one_of(fractadyne_core::coloring::Transfer::ALL.iter().map(|t| t.key()).collect()),
             ValueKind::Wrap => one_of(fractadyne_core::coloring::Wrap::ALL.iter().map(|w| w.key()).collect()),
+            ValueKind::BandTexture => one_of(fractadyne_core::coloring::BandTexture::ALL.iter().map(|b| b.key()).collect()),
             ValueKind::EdgeCurve => one_of(fractadyne_core::coloring::EdgeCurve::ALL.iter().map(|c| c.key()).collect()),
             ValueKind::Interior => one_of(crate::InteriorMode::ALL.iter().map(|m| m.key()).collect()),
             ValueKind::PaletteMode => {

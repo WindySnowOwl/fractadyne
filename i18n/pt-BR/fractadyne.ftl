@@ -2863,6 +2863,11 @@ panel-tail-length-hover = Comprimento da janela em iterações. Janelas curtas (
 panel-trap-tail = Só a cauda (zoom profundo)
 panel-trap-tail-hover = Conta mais as aproximações tardias de cada órbita à armadilha do que as iniciais: a distância de uma aproximação conta como o dobro a cada comprimento de cauda de iterações antes do fim da órbita. Em profundidade extrema, toda órbita segue a de referência, exceto nas últimas iterações, e chega mais perto da armadilha nesse trecho comum, então a aproximação máxima da órbita inteira é uma única cor na vista toda; a cauda volta a desenhar a armadilha. Órbitas curtas quase não mudam. Também --trap-tail N para --render.
 panel-trap-tail-length-hover = Iterações em que a distância de uma aproximação dobra. Caudas mais curtas mostram mais das últimas iterações de cada órbita, mais finas e carregadas; as mais longas voltam à aproximação máxima da órbita inteira.
+panel-band-texture = Textura das faixas
+panel-band-texture-hover = Uma estatística de cada órbita desloca as bordas das faixas ao longo da sua textura: as faixas mantêm cores e ordem, e cada borda se desfia ao longo das linhas de campo, em pelagem ou chamas com a média de listras, em fios mais longos com a desigualdade triangular. A vista passa a calcular também a estatística, mais lenta em profundidade. Também --band-texture NOME para --render.
+panel-band-texture-none = Nenhuma
+panel-band-texture-amount = Intensidade
+panel-band-texture-amount-hover = Quanto a textura desloca as faixas, em ciclos de paleta por unidade da estatística. 0 deixa as faixas lisas.
 panel-trap-shape = Forma da armadilha
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

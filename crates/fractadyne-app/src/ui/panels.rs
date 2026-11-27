@@ -42,6 +42,37 @@ impl crate::FractadyneApp {
         self.trap_tail_rows(ui);
     }
 
+    /// The Smooth method's band texture (coloring plan E1): which statistic moves the band edges,
+    /// and by how much while one does.
+    fn band_texture_rows(&mut self, ui: &mut egui::Ui) {
+        use fractadyne_core::coloring::BandTexture;
+        let label = |t: BandTexture| match t {
+            BandTexture::None => tr!(panel_band_texture_none),
+            BandTexture::Stripe => tr!(color_method_stripe),
+            BandTexture::Triangle => tr!(color_method_triangle),
+        };
+        labelled(ui, &tr!(panel_band_texture), |ui| {
+            egui::ComboBox::from_id_salt("panel_band_texture")
+                .selected_text(label(self.coloring.band_texture))
+                .show_ui(ui, |ui| {
+                    for t in BandTexture::ALL {
+                        ui.selectable_value(&mut self.coloring.band_texture, t, label(t));
+                    }
+                })
+                .response
+                .on_hover_text(tr!(panel_band_texture_hover));
+        });
+        if self.coloring.band_texture != BandTexture::None {
+            let r = labelled(ui, &tr!(panel_band_texture_amount), |ui| {
+                ui.add(egui::Slider::new(&mut self.coloring.band_texture_amount, crate::slider_range::BAND_TEXTURE_AMOUNT))
+            });
+            if slider_double_clicked(&r) {
+                self.coloring.band_texture_amount = fractadyne_core::coloring::BAND_TEXTURE_AMOUNT_DEFAULT;
+            }
+            r.on_hover_text(format!("{}\n\n{}", tr!(panel_band_texture_amount_hover), tr!(panel_double_click_reset)));
+        }
+    }
+
     /// The trap's tail (F4 part 5), the method's trap and the inside's alike: Tail only, and its
     /// length while it is on. Under the trap's shape, wherever that is drawn.
     fn trap_tail_rows(&mut self, ui: &mut egui::Ui) {
@@ -621,7 +652,16 @@ impl FractadyneApp {
                         }
                     }
                 }
-                if self.coloring.color_method == ColorMethod::Stripe {
+                // The Smooth method's band texture (E1): a statistic moves the band edges along its
+                // texture. A family with no orbit statistics has nothing to texture them with.
+                if self.coloring.color_method == ColorMethod::Smooth && ColorMethod::Stripe.lacks(caps).is_none() {
+                    self.band_texture_rows(ui);
+                }
+                // The stripe average's density and tail: the stripe method's, or a stripe texture's.
+                let stripe_used = self.coloring.color_method == ColorMethod::Stripe
+                    || (self.coloring.color_method == ColorMethod::Smooth
+                        && self.coloring.band_texture == fractadyne_core::coloring::BandTexture::Stripe);
+                if stripe_used {
                     let r = labelled(ui, &tr!(panel_stripe_density), |ui| {
                         ui.add(
                             egui::Slider::new(&mut self.coloring.stripe_freq, crate::slider_range::STRIPE_FREQ)

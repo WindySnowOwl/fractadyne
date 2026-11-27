@@ -357,6 +357,8 @@ fn every_session_field_survives_save_and_reload() {
         trap_outline_name: "tri.svg".into(),
         trap_tail: true,
         trap_tail_len: 64,
+        band_texture: "stripe".into(),
+        band_texture_amount: 3.5,
         custom_palette: vec![[0.0, 0.1, 0.2, 0.3], [1.0, 0.4, 0.5, 0.6]],
         custom_palette_flat: true,
         custom_segments: vec![PaletteSegment {
@@ -871,6 +873,8 @@ fn a_session_written_before_the_coloring_spec_reads_and_writes_the_same_keys() {
         "trap_outline", "trap_outline_name",
         // The trap's tail (F4 part 5).
         "trap_tail", "trap_tail_len",
+        // The Smooth method's band texture (E1).
+        "band_texture", "band_texture_amount",
     ];
     assert_eq!(keys.len(), 27 + SINCE.len(), "a coloring field was added: list it in SINCE");
     for k in keys.keys() {

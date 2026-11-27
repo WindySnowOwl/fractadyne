@@ -17,6 +17,7 @@
 //! - A value out of range is clamped and named; an unreadable one keeps the current setting.
 
 use crate::{slider_range, ColorMethod, InteriorMode, TrapType};
+use fractadyne_core::coloring::BandTexture;
 use fractadyne_state::ColoringSpec;
 
 /// How a row reads and writes its setting on a [`ColoringSpec`], by kind.
@@ -57,6 +58,10 @@ fn transfer_keys() -> Vec<&'static str> {
 }
 
 /// The wraps' keys (C2).
+fn band_texture_keys() -> Vec<&'static str> {
+    BandTexture::ALL.iter().map(|b| b.key()).collect()
+}
+
 fn wrap_keys() -> Vec<&'static str> {
     fractadyne_core::coloring::Wrap::ALL.iter().map(|w| w.key()).collect()
 }
@@ -68,6 +73,17 @@ fn edge_curve_keys() -> Vec<&'static str> {
 
 fn method(s: &ColoringSpec) -> ColorMethod {
     ColorMethod::from_key(&s.color_method)
+}
+
+/// The Smooth method's band texture (E1), by its key; none for an empty or unknown one.
+fn band_texture(s: &ColoringSpec) -> BandTexture {
+    BandTexture::parse_key(&s.band_texture).unwrap_or_default()
+}
+
+/// The stripe average is drawn: the stripe method, or Smooth's bands textured by it (E1). Its density
+/// and tail then matter.
+fn stripe_used(s: &ColoringSpec) -> bool {
+    method(s) == ColorMethod::Stripe || (method(s) == ColorMethod::Smooth && band_texture(s) == BandTexture::Stripe)
 }
 
 fn always(_: &ColoringSpec) -> bool {
@@ -131,7 +147,7 @@ pub(crate) fn inside_color_used(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 64] = [
+pub(crate) const FIELDS: [Field; 66] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -141,6 +157,27 @@ pub(crate) const FIELDS: [Field; 64] = [
         }),
         parents: &[],
         shows: always,
+    },
+    Field {
+        key: "band_texture",
+        name: "band texture",
+        doc: "The Smooth method's band texture: a statistic of each orbit moves the band edges along its texture, \"stripe\" (the stripe average, at the stripe density: fur or flame) or \"triangle\" (the triangle inequality average: longer strands); \"none\" or left out: plain bands (method \"smooth\").",
+        access: Access::Choice(|s| s.band_texture.as_str(), |s, v| s.band_texture = v.to_string(), band_texture_keys),
+        parents: &["method"],
+        shows: |s| method(s) == ColorMethod::Smooth,
+    },
+    Field {
+        key: "band_texture_amount",
+        name: "band texture strength",
+        doc: "How far the band texture moves the bands: palette cycles per unit of the statistic, 0 to 8 (with `band_texture`).",
+        access: Access::Real(
+            |s| s.band_texture_amount,
+            |s, v| s.band_texture_amount = v,
+            *slider_range::BAND_TEXTURE_AMOUNT.start(),
+            *slider_range::BAND_TEXTURE_AMOUNT.end(),
+        ),
+        parents: &["method", "band_texture"],
+        shows: |s| method(s) == ColorMethod::Smooth && band_texture(s) != BandTexture::None,
     },
     Field {
         key: "stripe_freq",
@@ -153,7 +190,7 @@ pub(crate) const FIELDS: [Field; 64] = [
             *slider_range::STRIPE_FREQ.end(),
         ),
         parents: &["method"],
-        shows: |s| method(s) == ColorMethod::Stripe,
+        shows: stripe_used,
     },
     Field {
         key: "stripe_tail",
@@ -161,7 +198,7 @@ pub(crate) const FIELDS: [Field; 64] = [
         doc: "Stripe average over the last `stripe_tail_len` iterations only, which keeps its contrast at depth (method \"stripe\").",
         access: Access::Flag(|s| s.stripe_tail, |s, v| s.stripe_tail = v),
         parents: &["method"],
-        shows: |s| method(s) == ColorMethod::Stripe,
+        shows: stripe_used,
     },
     Field {
         key: "stripe_tail_len",
@@ -174,7 +211,7 @@ pub(crate) const FIELDS: [Field; 64] = [
             *slider_range::STRIPE_TAIL_LEN.end(),
         ),
         parents: &["method", "stripe_tail"],
-        shows: |s| method(s) == ColorMethod::Stripe && s.stripe_tail,
+        shows: |s| stripe_used(s) && s.stripe_tail,
     },
     Field {
         key: "interior",
@@ -288,6 +325,19 @@ pub(crate) const FIELDS: [Field; 64] = [
         shows: |s| trap_drawn(s) && TrapType::from_key(&s.trap_type).spec().harmonic,
     },
     Field {
+        key: "trap_sine_harmonics",
+        name: "trap sine harmonics",
+        doc: "How many of the sine wave trap's harmonics are drawn over it at its height, 1 (the wave alone) to 32: the waves of two, three, ... times its frequency (the shapes with overlaid harmonics: the sine wave).",
+        access: Access::Count(
+            |s| s.trap_sine_harmonics,
+            |s, v| s.trap_sine_harmonics = v,
+            *slider_range::TRAP_HARMONICS.start(),
+            *slider_range::TRAP_HARMONICS.end(),
+        ),
+        parents: &["method", "interior", "trap"],
+        shows: |s| trap_drawn(s) && TrapType::from_key(&s.trap_type).spec().overlaid,
+    },
+    Field {
         key: "trap_tail",
         name: "trap tail",
         doc: "The trap's hits aged by their distance from the orbit's end, each counting as twice as far for every `trap_tail_len` iterations before it, the trap's and the inside's own: draws the trap again at depth, where every orbit comes nearest it in the stretch all of them share (method \"trap\", or an inside colored by the trap).",
@@ -307,19 +357,6 @@ pub(crate) const FIELDS: [Field; 64] = [
         ),
         parents: &["method", "interior", "trap_tail"],
         shows: |s| trap_drawn(s) && s.trap_tail,
-    },
-    Field {
-        key: "trap_sine_harmonics",
-        name: "trap sine harmonics",
-        doc: "How many of the sine wave trap's harmonics are drawn over it at its height, 1 (the wave alone) to 32: the waves of two, three, ... times its frequency (the shapes with overlaid harmonics: the sine wave).",
-        access: Access::Count(
-            |s| s.trap_sine_harmonics,
-            |s, v| s.trap_sine_harmonics = v,
-            *slider_range::TRAP_HARMONICS.start(),
-            *slider_range::TRAP_HARMONICS.end(),
-        ),
-        parents: &["method", "interior", "trap"],
-        shows: |s| trap_drawn(s) && TrapType::from_key(&s.trap_type).spec().overlaid,
     },
     Field {
         key: "interior_trap",

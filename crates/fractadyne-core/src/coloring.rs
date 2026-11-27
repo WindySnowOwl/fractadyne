@@ -1545,6 +1545,68 @@ impl Wrap {
     }
 }
 
+/// What textures the Smooth method's bands (coloring plan E1, "statistic-warped bands"): a
+/// statistic of each orbit shifts its palette position by `amount · (statistic − center)` palette
+/// cycles, so the bands keep their colors and order while every band edge feathers along the field
+/// lines: into fur or flame with the stripes, into fewer, longer strands with the triangle
+/// inequality (the study, 2026-11-14: at the seahorse valley, amount 2, no new aliasing: 23.0% and
+/// 22.7% of pixels with a palette footprint over half a cycle, against 22.8% for Smooth). The
+/// statistic is accumulated as its own method accumulates it, the stripe at its density.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
+pub enum BandTexture {
+    #[default]
+    None,
+    Stripe,
+    Triangle,
+}
+
+/// The band texture's strength in palette cycles per unit of the statistic: the panel's and a view's
+/// range, and the study's 2.
+pub const BAND_TEXTURE_AMOUNT_MAX: f32 = 8.0;
+pub const BAND_TEXTURE_AMOUNT_DEFAULT: f32 = 2.0;
+
+impl BandTexture {
+    pub const ALL: [BandTexture; 3] = [BandTexture::None, BandTexture::Stripe, BandTexture::Triangle];
+    pub const fn key(self) -> &'static str {
+        match self {
+            BandTexture::None => "none",
+            BandTexture::Stripe => "stripe",
+            BandTexture::Triangle => "triangle",
+        }
+    }
+    pub fn parse_key(s: &str) -> Option<BandTexture> {
+        BandTexture::ALL.into_iter().find(|t| t.key() == s)
+    }
+    /// What the iteration must accumulate for it (none for `None`).
+    pub fn stat(self) -> Option<Stat> {
+        match self {
+            BandTexture::None => None,
+            BandTexture::Stripe => Some(Stat::Stripe),
+            BandTexture::Triangle => Some(Stat::Triangle),
+        }
+    }
+    /// Its GPU number (`ColorU.band_tex`): 0 none, 1 the stripe average (`aux.r`), 2 the triangle
+    /// inequality's (`aux.g`).
+    pub const fn gpu_id(self) -> u32 {
+        match self {
+            BandTexture::None => 0,
+            BandTexture::Stripe => 1,
+            BandTexture::Triangle => 2,
+        }
+    }
+    /// The statistic's value that leaves a band where it was: the stripe term's mean, 0.5 by its
+    /// symmetry, and the triangle inequality's median at the seahorse valley, 0.34 (the study). Fixed,
+    /// since a constant only moves every band alike, as the palette's offset does; held so that a
+    /// change of strength does not.
+    pub const fn center(self) -> f32 {
+        match self {
+            BandTexture::None => 0.0,
+            BandTexture::Stripe => 0.5,
+            BandTexture::Triangle => 0.34,
+        }
+    }
+}
+
 /// The most steps a palette cycle may be cut into (`steps`; 0 is none).
 pub const MAX_STEPS: u32 = 64;
 
