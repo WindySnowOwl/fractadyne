@@ -98,6 +98,7 @@ mod coloring_fields;
 mod coloring_hook;
 mod startup_shaders;
 mod trap_cycle;
+mod trap_outline;
 mod view_coloring;
 mod scripting;
 mod session_outcome;
@@ -3344,6 +3345,7 @@ impl ColoringLabel for TrapType {
             TrapType::SCurve => tr!(trap_s_curve),
             TrapType::Sinc => tr!(trap_sinc),
             TrapType::SquareWave => tr!(trap_square_wave),
+            TrapType::Outline => tr!(trap_outline),
         }
     }
 }
@@ -3396,6 +3398,15 @@ pub(crate) mod slider_range {
     /// The stripe tail's length in iterations: what `--stripe-tail` and a view file accept. The
     /// panel's slider stops at 1024; past that only the command line goes.
     pub(crate) const STRIPE_TAIL_LEN: RangeInclusive<u32> = 4..=1 << 20;
+    /// The trap's tail in iterations (F4 part 5): what `--trap-tail` and a view file accept; the
+    /// panel's slider is [`TRAP_TAIL_PANEL`].
+    pub(crate) const TRAP_TAIL_LEN: RangeInclusive<u32> =
+        fractadyne_core::coloring::TRAP_TAIL_MIN..=fractadyne_core::coloring::TRAP_TAIL_MAX;
+    pub(crate) const TRAP_TAIL_PANEL: RangeInclusive<u32> = 4..=16_384;
+    /// The band texture's strength (coloring plan E1), palette cycles per unit of its statistic.
+    pub(crate) const BAND_TEXTURE_AMOUNT: RangeInclusive<f32> = 0.0..=fractadyne_core::coloring::BAND_TEXTURE_AMOUNT_MAX;
+    /// The band texture only near the set (E2): output pixels, 0 everywhere.
+    pub(crate) const BAND_TEXTURE_NEAR: RangeInclusive<f32> = 0.0..=64.0;
     /// Equalize colors' share of histogram coloring (`--equalize`, coloring plan C6).
     pub(crate) const EQUALIZE: RangeInclusive<f32> = 0.0..=1.0;
 }
@@ -6928,6 +6939,18 @@ struct ColoringConfig {
     /// Cycle the sine wave trap's phase (the method's and the inside's) over time, at the palette's
     /// Speed (`advance_palette_anim`). Persisted.
     trap_phase_anim: bool,
+    /// The view's trap outline (coloring plan F4, part 4): the drawing an Outline trap, the
+    /// method's or the inside's, measures from ([`ColoringConfig::outline_for`]), the same drawing
+    /// packed for the GPU (built once per drawing), and what it was loaded from. Persisted, as
+    /// its text and name ([`ColoringConfig::set_outline`]).
+    trap_outline: Option<std::sync::Arc<fractadyne_core::outline::Outline>>,
+    trap_outline_gpu: Option<std::sync::Arc<fractadyne_gpu::OutlineGpu>>,
+    trap_outline_name: String,
+    /// The trap's tail (coloring plan F4, part 5): its hits aged by their distance from the orbit's
+    /// end, the method's trap and the inside's alike ([`ColoringConfig::trap`]), and its length in
+    /// iterations. Persisted.
+    trap_tail: bool,
+    trap_tail_len: u32,
     /// What colors the inside of the set (coloring plan B5); `None`: the method's own
     /// (`InteriorMode::of_method`: the orbit trap its trap, every other method one color), so a view
     /// that never chose keeps its look whichever method it takes. Persisted.
@@ -6976,6 +6999,14 @@ struct ColoringConfig {
     /// none), coloring plan C2. Persisted.
     wrap: fractadyne_core::coloring::Wrap,
     steps: u32,
+    /// The Smooth method's band texture and its strength (coloring plan E1): a statistic of each
+    /// orbit moves the band edges along its texture ([`fractadyne_core::coloring::BandTexture`]); the
+    /// frame then accumulates it ([`ColoringConfig::orbit_stats_with`]). Persisted.
+    band_texture: fractadyne_core::coloring::BandTexture,
+    band_texture_amount: f32,
+    /// The band texture only near the set (coloring plan E2): the distance in output pixels over
+    /// which it fades into plain bands, 0 everywhere. Persisted.
+    band_texture_near: f32,
     /// Equalize colors (coloring plan C6): the share of histogram coloring, 0 to 1, mixed into the
     /// fitted map wherever the Smooth palette is normalized ([`FractadyneApp::norm_map_for`]): each
     /// color then takes about the same area of the picture. 0 is the fitted map alone. Persisted.
@@ -6996,10 +7027,36 @@ impl ColoringConfig {
     /// a turn or size the shape ignores re-iterates nothing.
     fn trap(&self) -> Trap {
         let t = Trap::new(self.trap_type, self.trap_place);
-        match self.interior_trap {
+        let t = match self.interior_trap {
             Some(shape) if self.inside_trap_on(self.color_method) => t.with_inside(shape, self.interior_trap_place),
             _ => t,
+        };
+        t.with_outline(self.trap_outline.as_ref().map_or(0, |o| o.key()))
+            .with_tail(if self.trap_tail { self.trap_tail_len } else { 0 })
+    }
+
+    /// The Smooth method's band texture as the GPU draws it (E1, E2).
+    fn band_texturing(&self) -> fractadyne_gpu::BandTexturing {
+        fractadyne_gpu::BandTexturing {
+            texture: self.band_texture,
+            amount: self.band_texture_amount,
+            near_px: self.band_texture_near,
         }
+    }
+
+    /// The view's outline, when `trap` (the method's or the inside's) measures from it.
+    fn outline_for(&self, trap: Trap) -> Option<std::sync::Arc<fractadyne_core::outline::Outline>> {
+        self.trap_outline.clone().filter(|_| trap.uses_outline())
+    }
+    /// [`Self::outline_for`], packed for the GPU.
+    fn outline_gpu_for(&self, trap: Trap) -> Option<std::sync::Arc<fractadyne_gpu::OutlineGpu>> {
+        self.trap_outline_gpu.clone().filter(|_| trap.uses_outline())
+    }
+    /// Make `outline` the view's, under `name` (a file's or a text's); `None` clears it.
+    fn set_outline(&mut self, outline: Option<fractadyne_core::outline::Outline>, name: String) {
+        self.trap_outline_gpu = outline.as_ref().map(|o| std::sync::Arc::new(fractadyne_gpu::OutlineGpu::of(o)));
+        self.trap_outline = outline.map(std::sync::Arc::new);
+        self.trap_outline_name = name;
     }
 
     /// Whether the inside of `method`'s view has a trap of its own: the trap method, its inside
@@ -7035,6 +7092,11 @@ impl ColoringConfig {
         };
         // ...and what a coloring hook reads (B10), whatever the method...
         let set = set.union(self.hook.stats());
+        // ...and what textures the Smooth method's bands (E1)...
+        let set = match self.band_texture.stat().filter(|_| method == ColorMethod::Smooth) {
+            Some(st) => set.with(st),
+            None => set,
+        };
         // ...and what its inside is colored by: an interior colored by the trap needs the trap.
         match inside.reads() {
             Some(st) => set.with(st),
@@ -7251,8 +7313,24 @@ struct DialogState {
 /// `round-trip` takes a coloring through this same reader (2026-11-25). The whole session, for the
 /// trap phase's animation, kept beside the other animations' switches. `args` for `--normalize`
 /// and `--log-palette`.
+/// A band texture's strength as read (a session, a view, the command line): in its range, and the
+/// default for a value that is not a number.
+fn band_texture_amount_of(a: f32) -> f32 {
+    let r = slider_range::BAND_TEXTURE_AMOUNT;
+    if a.is_finite() { a.clamp(*r.start(), *r.end()) } else { fractadyne_core::coloring::BAND_TEXTURE_AMOUNT_DEFAULT }
+}
+
+/// The band texture's distance from the set as read (E2): in its range, and 0 (everywhere) for a
+/// value that is not a number.
+fn band_texture_near_of(d: f32) -> f32 {
+    let r = slider_range::BAND_TEXTURE_NEAR;
+    if d.is_finite() { d.clamp(*r.start(), *r.end()) } else { 0.0 }
+}
+
 fn coloring_from_session(s: &fractadyne_state::SessionState, args: &[String]) -> ColoringConfig {
     let c = &s.coloring;
+    // The view's outline from its saved text (one that is not one is set aside, logged).
+    let outline = crate::trap_outline::outline_from_text(&c.trap_outline, &c.trap_outline_name).map(std::sync::Arc::new);
     ColoringConfig {
         // By id; a session saved before ids (or by a newer build, with a palette this one
         // lacks) falls back to its number, read through the frozen table.
@@ -7301,6 +7379,12 @@ fn coloring_from_session(s: &fractadyne_state::SessionState, args: &[String]) ->
         interior_trap: TrapType::parse_key(&c.interior_trap),
         interior_trap_place: interior_trap_place_of(c),
         trap_phase_anim: s.trap_phase_anim,
+        // The same drawing packed for the GPU, once per drawing.
+        trap_outline_gpu: outline.as_deref().map(|o| std::sync::Arc::new(fractadyne_gpu::OutlineGpu::of(o))),
+        trap_outline: outline,
+        trap_outline_name: c.trap_outline_name.clone(),
+        trap_tail: c.trap_tail,
+        trap_tail_len: c.trap_tail_len.clamp(*slider_range::TRAP_TAIL_LEN.start(), *slider_range::TRAP_TAIL_LEN.end()),
         interior: InteriorMode::parse_key(&c.interior),
         interior_palette: fractadyne_color::preset_by_id(&c.interior_palette),
         interior_color: c.interior_color,
@@ -7335,6 +7419,9 @@ fn coloring_from_session(s: &fractadyne_state::SessionState, args: &[String]) ->
             if asked { fractadyne_core::coloring::Transfer::Log } else { transfer_of_spec(c) }
         },
         wrap: fractadyne_core::coloring::Wrap::parse_key(&c.wrap).unwrap_or_default(),
+        band_texture: fractadyne_core::coloring::BandTexture::parse_key(&c.band_texture).unwrap_or_default(),
+        band_texture_amount: band_texture_amount_of(c.band_texture_amount),
+        band_texture_near: band_texture_near_of(c.band_texture_near),
         steps: c.steps.min(fractadyne_core::coloring::MAX_STEPS),
         equalize: equalize_of(c.equalize),
         orbit_stats_override: None,
@@ -9656,6 +9743,11 @@ impl FractadyneApp {
             self.coloring.stripe_tail = true;
             self.coloring.stripe_tail_len = n.clamp(*slider_range::STRIPE_TAIL_LEN.start(), *slider_range::STRIPE_TAIL_LEN.end());
         }
+        // The trap's tail (F4 part 5): on, at this length.
+        if let Some(n) = val("--trap-tail").map(|s| arg_parse::<u32>("--trap-tail", s, "a number of iterations")) {
+            self.coloring.trap_tail = true;
+            self.coloring.trap_tail_len = n.clamp(*slider_range::TRAP_TAIL_LEN.start(), *slider_range::TRAP_TAIL_LEN.end());
+        }
         if let Some(t) = val("--trap") {
             let picked = TrapType::from_key(t);
             if picked.key() != t.as_str() {
@@ -9697,6 +9789,16 @@ impl FractadyneApp {
         if let Some(n) = val("--trap-sine-harmonics").map(|s| arg_parse::<u32>("--trap-sine-harmonics", s, "a whole number, 1 to 32")) {
             let r = slider_range::TRAP_HARMONICS;
             self.coloring.trap_place.sine_harmonics = n.clamp(*r.start(), *r.end());
+        }
+        // The outline trap's drawing (coloring plan F4, part 4), as Load SVG... reads it.
+        if let Some(path) = val("--trap-outline") {
+            match crate::trap_outline::read_svg_outline(std::path::Path::new(path)) {
+                (name, Ok(o)) => self.coloring.set_outline(Some(o), name),
+                (name, Err(reason)) => {
+                    eprintln!("fractadyne: --trap-outline: {name}: {reason}.");
+                    crate::exit(2)
+                }
+            }
         }
         // The inside's own trap (the trap method's inside colored by a trap of its own).
         if let Some(t) = val("--interior-trap") {
@@ -9743,6 +9845,12 @@ impl FractadyneApp {
         {
             let r = slider_range::TRAP_HARMONICS;
             self.coloring.interior_trap_place.sine_harmonics = n.clamp(*r.start(), *r.end());
+        }
+        // An outline trap needs a drawing: from --trap-outline, or the session's.
+        let wants_outline = self.coloring.trap_type == TrapType::Outline || self.coloring.interior_trap == Some(TrapType::Outline);
+        if wants_outline && self.coloring.trap_outline.is_none() && (val("--trap").is_some() || val("--interior-trap").is_some()) {
+            eprintln!("fractadyne: an outline trap needs its drawing: add --trap-outline FILE.svg.");
+            crate::exit(2)
         }
         // The inside (coloring plan B5, C1): what colors it, the trap's palette, a solid color.
         if let Some(m) = val("--interior") {
@@ -9818,6 +9926,22 @@ impl FractadyneApp {
             {
                 eprintln!("fractadyne: --transfer has no effect without normalization — add --normalize (or enable Color ▸ Normalize deep colors).");
             }
+        }
+        // The Smooth method's band texture (coloring plan E1) and its strength.
+        if let Some(t) = val("--band-texture") {
+            match fractadyne_core::coloring::BandTexture::parse_key(t) {
+                Some(x) => self.coloring.band_texture = x,
+                None => {
+                    eprintln!("fractadyne: --band-texture: unknown texture \"{t}\"; use none, stripe or triangle.");
+                    crate::exit(2)
+                }
+            }
+        }
+        if let Some(a) = val("--band-texture-amount").map(|s| arg_parse::<f32>("--band-texture-amount", s, "a number")) {
+            self.coloring.band_texture_amount = band_texture_amount_of(a);
+        }
+        if let Some(d) = val("--band-texture-near").map(|s| arg_parse::<f32>("--band-texture-near", s, "a number of pixels")) {
+            self.coloring.band_texture_near = band_texture_near_of(d);
         }
         if let Some(w) = val("--wrap") {
             match fractadyne_core::coloring::Wrap::parse_key(w) {
@@ -10062,6 +10186,12 @@ impl FractadyneApp {
             log_palette: self.coloring.transfer == fractadyne_core::coloring::Transfer::Log,
             transfer: if self.coloring.transfer == fractadyne_core::coloring::Transfer::Log { fractadyne_core::coloring::Transfer::Linear.key() } else { self.coloring.transfer.key() }.to_string(),
             wrap: self.coloring.wrap.key().to_string(),
+            band_texture: match self.coloring.band_texture {
+                fractadyne_core::coloring::BandTexture::None => String::new(),
+                t => t.key().to_string(),
+            },
+            band_texture_amount: self.coloring.band_texture_amount,
+            band_texture_near: self.coloring.band_texture_near,
             steps: self.coloring.steps,
             normalize_live: self.coloring.normalize_live,
             normalize_fit: self.coloring.normalize_fit,
@@ -10107,6 +10237,10 @@ impl FractadyneApp {
             interior_trap_phase: self.coloring.interior_trap_place.phase,
             interior_trap_harmonics: self.coloring.interior_trap_place.harmonics,
             interior_trap_sine_harmonics: self.coloring.interior_trap_place.sine_harmonics,
+            trap_outline: self.coloring.trap_outline.as_ref().map_or_else(String::new, |o| o.text().to_string()),
+            trap_outline_name: self.coloring.trap_outline_name.clone(),
+            trap_tail: self.coloring.trap_tail,
+            trap_tail_len: self.coloring.trap_tail_len,
             custom_palette: self.coloring.custom_palette.clone(),
             custom_palette_flat: self.coloring.custom_palette_flat,
             custom_segments: self.coloring.custom_segments.clone(),
@@ -10157,6 +10291,9 @@ impl FractadyneApp {
         c.offset = s.offset;
         c.transfer = transfer_of_spec(s);
         c.wrap = fractadyne_core::coloring::Wrap::parse_key(&s.wrap).unwrap_or_default();
+        c.band_texture = fractadyne_core::coloring::BandTexture::parse_key(&s.band_texture).unwrap_or_default();
+        c.band_texture_amount = band_texture_amount_of(s.band_texture_amount);
+        c.band_texture_near = band_texture_near_of(s.band_texture_near);
         c.steps = s.steps.min(fractadyne_core::coloring::MAX_STEPS);
         c.equalize = equalize_of(s.equalize);
         c.normalize_live = s.normalize_live;
@@ -10169,6 +10306,15 @@ impl FractadyneApp {
         c.trap_place = trap_place_of(s);
         c.interior_trap = TrapType::parse_key(&s.interior_trap);
         c.interior_trap_place = interior_trap_place_of(s);
+        c.trap_tail = s.trap_tail;
+        c.trap_tail_len = s.trap_tail_len.clamp(*slider_range::TRAP_TAIL_LEN.start(), *slider_range::TRAP_TAIL_LEN.end());
+        // The outline, parsed again only when its text changed (that builds its grid).
+        if c.trap_outline.as_ref().map_or("", |o| o.text()) == s.trap_outline {
+            c.trap_outline_name = s.trap_outline_name.clone();
+        } else {
+            let o = crate::trap_outline::outline_from_text(&s.trap_outline, &s.trap_outline_name);
+            c.set_outline(o, s.trap_outline_name.clone());
+        }
         c.custom_palette = s.custom_palette.clone();
         c.custom_palette_flat = s.custom_palette_flat;
         c.custom_segments = s.custom_segments.clone();
@@ -16418,8 +16564,13 @@ impl FractadyneApp {
             s.trap_phase = 0.0;
             s.interior_trap_phase = 0.0;
         }
+        // The trap outline (F4 part 4) by its key, and only when a drawn trap measures from it: its
+        // text runs to thousands of points, and its name draws nothing.
+        s.trap_outline = String::new();
+        s.trap_outline_name = String::new();
         let mut sink = Sink(Default::default());
         let _ = serde_json::to_writer(&mut sink, &s);
+        sink.0.write_u64(self.coloring.outline_for(self.coloring.trap()).map_or(0, |o| o.key()));
         sink.0.finish()
     }
 
@@ -18293,6 +18444,9 @@ impl FractadyneApp {
         c.normalize_fit.hash(&mut h); // or ticking the box would change no pixel until something else did
         c.transfer.hash(&mut h);
         c.wrap.hash(&mut h);
+        c.band_texture.hash(&mut h);
+        c.band_texture_amount.to_bits().hash(&mut h);
+        c.band_texture_near.to_bits().hash(&mut h);
         c.steps.hash(&mut h);
         let e = &self.effects;
         e.light.hash(&mut h);

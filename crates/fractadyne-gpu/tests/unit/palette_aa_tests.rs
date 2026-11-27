@@ -14,7 +14,7 @@ fn each_mode_has_its_own_word_and_off_is_the_default() {
     let wgsl = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/mandelbrot.wgsl"));
     assert!(wgsl.contains("if (cu.aa_palette != 0u) {"), "the color pass's anti-aliasing test changed");
     assert!(
-        wgsl.contains("if (cu.aa_palette == 2u && cu.color_method == METHOD_SMOOTH && c0 < INTERIOR_COORD) {"),
+        wgsl.contains("if (cu.aa_palette == 2u && cu.color_method == METHOD_SMOOTH && cu.band_tex == 0u && c0 < INTERIOR_COORD) {"),
         "the distance footprint's test changed"
     );
 }

@@ -19,6 +19,7 @@ impl crate::FractadyneApp {
     /// The trap's shape (the orbit trap method's, or the inside's when the trap colors it, B5) and
     /// where it sits (F4): drawn with whichever uses it.
     fn trap_shape_row(&mut self, ui: &mut egui::Ui) {
+        let before = self.coloring.trap_type;
         labelled(ui, &tr!(panel_trap_shape), |ui| {
             egui::ComboBox::from_id_salt("panel_trap_shape")
                 .selected_text(self.coloring.trap_type.label())
@@ -28,14 +29,87 @@ impl crate::FractadyneApp {
                     }
                 });
         });
+        // The outline picked with none loaded asks for a drawing (F4 part 4).
+        if self.coloring.trap_type != before {
+            let ctx = ui.ctx().clone();
+            self.coloring.trap_type = self.trap_outline_picked(&ctx, self.coloring.trap_type, before);
+        }
+        if self.coloring.trap_type == TrapType::Outline {
+            self.trap_outline_row(ui);
+        }
         trap_place_rows(ui, self.coloring.trap_type, &mut self.coloring.trap_place, &mut self.coloring.trap_phase_anim);
         self.trap_on_cycle_button(ui, false);
+        self.trap_tail_rows(ui);
+    }
+
+    /// The Smooth method's band texture (coloring plan E1): which statistic moves the band edges,
+    /// and by how much while one does.
+    fn band_texture_rows(&mut self, ui: &mut egui::Ui) {
+        use fractadyne_core::coloring::BandTexture;
+        let label = |t: BandTexture| match t {
+            BandTexture::None => tr!(panel_band_texture_none),
+            BandTexture::Stripe => tr!(color_method_stripe),
+            BandTexture::Triangle => tr!(color_method_triangle),
+        };
+        labelled(ui, &tr!(panel_band_texture), |ui| {
+            egui::ComboBox::from_id_salt("panel_band_texture")
+                .selected_text(label(self.coloring.band_texture))
+                .show_ui(ui, |ui| {
+                    for t in BandTexture::ALL {
+                        ui.selectable_value(&mut self.coloring.band_texture, t, label(t));
+                    }
+                })
+                .response
+                .on_hover_text(tr!(panel_band_texture_hover));
+        });
+        if self.coloring.band_texture != BandTexture::None {
+            let r = labelled(ui, &tr!(panel_band_texture_amount), |ui| {
+                ui.add(egui::Slider::new(&mut self.coloring.band_texture_amount, crate::slider_range::BAND_TEXTURE_AMOUNT))
+            });
+            if slider_double_clicked(&r) {
+                self.coloring.band_texture_amount = fractadyne_core::coloring::BAND_TEXTURE_AMOUNT_DEFAULT;
+            }
+            r.on_hover_text(format!("{}\n\n{}", tr!(panel_band_texture_amount_hover), tr!(panel_double_click_reset)));
+            // E2: only near the set.
+            let r = labelled(ui, &tr!(panel_band_texture_near), |ui| {
+                ui.add(
+                    egui::Slider::new(&mut self.coloring.band_texture_near, crate::slider_range::BAND_TEXTURE_NEAR)
+                        .suffix(" px"),
+                )
+            });
+            if slider_double_clicked(&r) {
+                self.coloring.band_texture_near = 0.0;
+            }
+            r.on_hover_text(format!("{}\n\n{}", tr!(panel_band_texture_near_hover), tr!(panel_double_click_reset)));
+        }
+    }
+
+    /// The trap's tail (F4 part 5), the method's trap and the inside's alike: Tail only, and its
+    /// length while it is on. Under the trap's shape, wherever that is drawn.
+    fn trap_tail_rows(&mut self, ui: &mut egui::Ui) {
+        ui.checkbox(&mut self.coloring.trap_tail, tr!(panel_trap_tail)).on_hover_text(tr!(panel_trap_tail_hover));
+        if self.coloring.trap_tail {
+            let r = labelled(ui, &tr!(panel_tail_length), |ui| {
+                ui.add(
+                    egui::Slider::new(&mut self.coloring.trap_tail_len, crate::slider_range::TRAP_TAIL_PANEL)
+                        .logarithmic(true)
+                        .suffix(format!(" {}", tr!(panel_tail_length_unit)))
+                        .custom_formatter(|n, _| crate::grouped_count(n))
+                        .custom_parser(crate::parse_grouped_number),
+                )
+            });
+            if slider_double_clicked(&r) {
+                self.coloring.trap_tail_len = fractadyne_state::ColoringSpec::default().trap_tail_len;
+            }
+            r.on_hover_text(format!("{}\n\n{}", tr!(panel_trap_tail_length_hover), tr!(panel_double_click_reset)));
+        }
     }
 
     /// The trap method's inside, when the trap colors it: a trap of its own, or the method's (the
     /// default). Its own has the same placement rows as the method's.
     fn inside_trap_rows(&mut self, ui: &mut egui::Ui) {
         let same = tr!(panel_inside_trap_same);
+        let before = self.coloring.interior_trap;
         labelled(ui, &tr!(panel_inside_trap), |ui| {
             egui::ComboBox::from_id_salt("panel_inside_trap")
                 .selected_text(self.coloring.interior_trap.map_or(same.clone(), |t| t.label()))
@@ -51,7 +125,16 @@ impl crate::FractadyneApp {
                 ui.scroll_to_cursor(Some(egui::Align::Min));
             }
         });
+        if self.coloring.interior_trap != before && self.coloring.interior_trap == Some(TrapType::Outline) {
+            let ctx = ui.ctx().clone();
+            if self.trap_outline_picked(&ctx, TrapType::Outline, TrapType::Point) != TrapType::Outline {
+                self.coloring.interior_trap = before;
+            }
+        }
         if let Some(shape) = self.coloring.interior_trap {
+            if shape == TrapType::Outline {
+                self.trap_outline_row(ui);
+            }
             trap_place_rows(ui, shape, &mut self.coloring.interior_trap_place, &mut self.coloring.trap_phase_anim);
             self.trap_on_cycle_button(ui, true);
         }
@@ -580,7 +663,16 @@ impl FractadyneApp {
                         }
                     }
                 }
-                if self.coloring.color_method == ColorMethod::Stripe {
+                // The Smooth method's band texture (E1): a statistic moves the band edges along its
+                // texture. A family with no orbit statistics has nothing to texture them with.
+                if self.coloring.color_method == ColorMethod::Smooth && ColorMethod::Stripe.lacks(caps).is_none() {
+                    self.band_texture_rows(ui);
+                }
+                // The stripe average's density and tail: the stripe method's, or a stripe texture's.
+                let stripe_used = self.coloring.color_method == ColorMethod::Stripe
+                    || (self.coloring.color_method == ColorMethod::Smooth
+                        && self.coloring.band_texture == fractadyne_core::coloring::BandTexture::Stripe);
+                if stripe_used {
                     let r = labelled(ui, &tr!(panel_stripe_density), |ui| {
                         ui.add(
                             egui::Slider::new(&mut self.coloring.stripe_freq, crate::slider_range::STRIPE_FREQ)

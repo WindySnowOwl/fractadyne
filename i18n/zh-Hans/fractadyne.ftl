@@ -2781,6 +2781,16 @@ panel-tail-length = 尾部长度
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = 次
 panel-tail-length-hover = 以迭代次数计的窗口长度。短窗口（8–32）在任何深度下都能产生经典的粗犷色带；更长的窗口会再次趋向于平均成一种纯色，因为长混沌轨道的条纹项会被平均掉。
+panel-trap-tail = 仅尾部（深度缩放）
+panel-trap-tail-hover = 每条轨道越晚接近陷阱，权重越大：在轨道结束前每隔一个尾部长度的迭代，接近的距离按两倍计算。在极深处，每条轨道除最后几次迭代外都沿着参考轨道运行，并在这段共同的部分最接近陷阱，因此整条轨道的最近距离会让整个视图只有一种颜色；使用尾部后陷阱会重新显现。短轨道几乎不变。--render 中为 --trap-tail N。
+panel-trap-tail-length-hover = 接近距离翻倍所需的迭代次数。尾部越短，越能显示每条轨道最后几次迭代，图案更细更繁杂；越长则越接近整条轨道的最近距离。
+panel-band-texture = 色带纹理
+panel-band-texture-hover = 用每条轨道的一个统计量沿其纹理移动色带的边缘：色带保持原有颜色和顺序，每条边缘沿力线散开，条纹平均下如毛发或火焰，三角不等式下成为更长的丝缕。此时视图也要计算该统计量，在深处会更慢。--render 中为 --band-texture NAME。
+panel-band-texture-none = 无
+panel-band-texture-amount = 强度
+panel-band-texture-amount-hover = 纹理移动色带的幅度，以统计量每单位对应的调色板周期数计。0 时色带保持平滑。
+panel-band-texture-near = 仅在集合附近
+panel-band-texture-near-hover = 只在集合附近显示纹理，并在大约这么多像素内淡入平滑色带，使纹理像是从细丝中长出；0 表示处处显示。需要到集合的距离：公式没有距离时，色带保持平滑。
 panel-trap-shape = 陷阱形状
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

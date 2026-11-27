@@ -128,6 +128,76 @@ pub(crate) struct IterUniforms {
     /// inside measures the trap above. The two harmonics words were the row's padding.
     pub(crate) trap_in: TrapU,
     pub(crate) trap_in_row: [u32; 4],
+    /// THE VIEW'S TRAP OUTLINE (the shader's `outline_*`, coloring plan F4 part 4): where its cells,
+    /// segment indices and segments start in the reference buffer, and whether it is there
+    /// ([`outline_row`]); zeros = none, an outline trap measures as the point.
+    pub(crate) outline_row: [u32; 4],
+    /// THE TRAP'S TAIL (the shader's `trap_tail_*`, coloring plan F4 part 5): `[growth per
+    /// iteration, 1 / the tail, 0, 0]` ([`trap_tail_row`]); `[1, 0, 0, 0]` off, every hit as near as
+    /// it came. ⛔Never zeros: a growth of 0 would zero every distance.
+    pub(crate) trap_tail: [f32; 4],
+}
+
+/// The trap's tail for the shader (`trap_tail_g`, `trap_tail_inv`): a tail of `tail` iterations
+/// (`fractadyne_core::coloring::Trap::tail`) while the frame accumulates the trap; else, and for 0,
+/// `[1, 0, 0, 0]`, which leaves every distance as it was.
+pub(crate) fn trap_tail_row(tail: u32, accumulated: bool) -> [f32; 4] {
+    if tail == 0 || !accumulated {
+        return [1.0, 0.0, 0.0, 0.0];
+    }
+    [fractadyne_core::coloring::trap_tail_growth(tail) as f32, (1.0 / f64::from(tail)) as f32, 0.0, 0.0]
+}
+
+/// A trap outline as the iterate shader reads it (coloring plan F4, part 4): its cells, indices and
+/// segments ([`fractadyne_core::outline::Outline::gpu_data`]), appended to the reference buffer
+/// after everything else, and its key, which says when to upload it again.
+#[derive(Debug)]
+pub struct OutlineGpu {
+    pub data: Vec<[f32; 4]>,
+    pub layout: fractadyne_core::outline::GpuLayout,
+    pub key: u64,
+}
+
+impl OutlineGpu {
+    pub fn of(outline: &fractadyne_core::outline::Outline) -> OutlineGpu {
+        let (data, layout) = outline.gpu_data();
+        OutlineGpu { data, layout, key: outline.key() }
+    }
+}
+
+/// The outline's uniform row: its three parts' first vec4s in the reference buffer, from `base`
+/// where it was written, and 1 for on; zeros without one, or when no trap of this frame reads it.
+pub(crate) fn outline_row(base: usize, outline: Option<&OutlineGpu>, read: bool) -> [u32; 4] {
+    match outline {
+        Some(o) if read => {
+            let b = base as u32;
+            [b + o.layout.cells, b + o.layout.idx, b + o.layout.segs, 1]
+        }
+        _ => [0; 4],
+    }
+}
+
+/// The Smooth method's band texture as a frame draws it (coloring plan E1, E2): the statistic, its
+/// strength in palette cycles per unit of it, and how near the set it shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BandTexturing {
+    pub texture: fractadyne_core::coloring::BandTexture,
+    pub amount: f32,
+    /// E2: the texture weighted by exp(-d / near_px), d the pixel's distance to the set in output
+    /// pixels, so it grows out of the filaments and fades into plain bands; 0: everywhere.
+    pub near_px: f32,
+}
+
+/// The color uniform's band texture words (coloring plan E1, E2): `(lane, strength, center, near)`,
+/// the lane 0 (none) but for the Smooth method with a texture at a strength above 0, whose statistic
+/// the frame then accumulates. At strength 0 the color pass is plain Smooth's (its distance-sized
+/// palette footprint included).
+pub(crate) fn band_texture_words(method: u32, tex: BandTexturing) -> (u32, f32, f32, f32) {
+    let BandTexturing { texture: t, amount, near_px } = tex;
+    if method != fractadyne_core::coloring::ColorMethod::Smooth.gpu_id() || t == fractadyne_core::coloring::BandTexture::None || !(amount > 0.0) {
+        return (0, 0.0, 0.0, 0.0);
+    }
+    (t.gpu_id(), amount, t.center(), if near_px > 0.0 { near_px } else { 0.0 })
 }
 
 /// Where the orbit trap sits, turned and sized (the shader's `trap_c` .. `trap_on`; coloring plan
@@ -513,7 +583,9 @@ pub(crate) struct ColorUniforms {
     /// pane's atlas, a second of GPU time when the dual view came back on over a pane last drawn
     /// at 8x (2026-11-15). In what was the first `_pad_aa` word; `ColorU.tap_stride` mirrors it.
     pub(crate) tap_stride: u32,
-    pub(crate) _pad_aa: f32,
+    /// The band texture's center ([`fractadyne_core::coloring::BandTexture::center`], coloring plan
+    /// E1), in what was the second `_pad_aa` word; its lane and strength are in the edge row's two.
+    pub(crate) band_tex_center: f32,
     /// A coloring hook's parameters `p1`..`p4` ([`color_hook`], coloring plan B10), a new 16-byte
     /// row; 0 without a hook, whose module is the only one that reads them. `ColorU.hook_p`.
     pub(crate) hook_p: [f32; 4],
@@ -528,7 +600,11 @@ pub(crate) struct ColorUniforms {
     pub(crate) edge_curve: u32,
     pub(crate) edge_px: f32,
     pub(crate) edge_strength: f32,
-    pub(crate) _pad_edge: [u32; 2],
+    /// The band texture (coloring plan E1, [`band_texture_words`]): which statistic shifts the
+    /// Smooth method's palette position (`BandTexture::gpu_id`, 0 none) and by how much per unit of
+    /// it, in palette cycles; in what were this row's two pad words. `ColorU.band_tex*` mirror them.
+    pub(crate) band_tex: u32,
+    pub(crate) band_tex_amount: f32,
     pub(crate) edge_col: [f32; 4],
     /// Equipotential lines ([`GridLines`], coloring plan C10): a row of on, the spacing, the width
     /// and the strength, then a row of the color. `ColorU.grid_*` mirror them.
@@ -555,6 +631,10 @@ pub(crate) struct ColorUniforms {
     pub(crate) eq: [f32; 4],
     pub(crate) eq_knots: [[f32; 4]; EQ_ROWS],
     pub(crate) fade_eq_knots: [[f32; 4]; EQ_ROWS],
+    /// The band texture only near the set (coloring plan E2, [`BandTexturing::near_px`]): its
+    /// distance in output pixels, 0 everywhere; a new 16-byte row. `ColorU.band_tex_near` mirrors it.
+    pub(crate) band_tex_near: f32,
+    pub(crate) _pad_bt: [f32; 3],
 }
 
 /// [`ColorUniforms::tap_stride`] for a palette-browser thumbnail colored from a texture built at
@@ -842,6 +922,10 @@ struct IterKey {
     trap_place: [u32; 7],
     /// The inside's own trap, while the trap is accumulated.
     trap_in: Option<(u32, [u32; 7])>,
+    /// The trap outline's key (F4 part 4), while the trap is accumulated: a new drawing re-iterates.
+    outline: u64,
+    /// The trap's tail (F4 part 5), while the trap is accumulated.
+    trap_tail: u32,
     sa_skip: u32,
     bla_on: u32,
     /// Sub-pixel jitter (progressive SSAA): a changed jitter is a new sample and must re-iterate,
@@ -1635,6 +1719,8 @@ struct ViewResources {
     last_bla_ptr: usize,
     /// The critical orbit in `orbit_buf` (its `Arc` address; 0 = none), as `last_bla_ptr`.
     last_crit_ptr: usize,
+    /// The outline last written, by key, and where (0: none).
+    last_outline: (u64, usize),
     last_iter_key: Option<IterKey>,
     /// Iteration-range tiling: ping-pong per-pixel state (z / dz / info ×2) + bind groups, created
     /// lazily on the first chunked frame and dropped when a normal frame renders (they are ~96
@@ -1790,10 +1876,13 @@ struct Renderer {
     /// What the iterate pipelines are built from, kept for [`Self::iter_extra`].
     iter_src: std::sync::Arc<IterSrc>,
     /// The pair below with the trap shapes above the base compiled in, one for each tier
-    /// ([`TrapTier`]; `TRAP_EXTRA`, then `TRAP_WAVES` too), for a frame that draws one
-    /// ([`MandelbrotParams::trap_tier`]): the Extra pair built by a worker after start-up
-    /// ([`warm_trap_shapes`]); either built when the app first needs it ([`prepare_trap_shapes_now`]).
-    iter_tiers: [std::sync::Arc<TrapShapePipelines>; 2],
+    /// ([`TrapTier`]; `TRAP_EXTRA`, then `TRAP_WAVES`, then `TRAP_DRAWING` too), for a frame that
+    /// draws one ([`MandelbrotParams::trap_tier`]): all three built by a worker after start-up
+    /// ([`warm_trap_shapes`]), the Outline pair sooner by one of its own when a view has an outline
+    /// first ([`warm_trap_outline`]); any built when the app first needs it ([`prepare_trap_shapes_now`]).
+    iter_tiers: [std::sync::Arc<TrapShapePipelines>; 3],
+    /// [`warm_trap_outline`] has started its worker: it starts one once.
+    outline_warming: std::sync::atomic::AtomicBool,
     /// `fs_iterate`, whole or split by precision mode ([`iter_split`]).
     iter_pipeline: iter_split::ModePipelines,
     /// `fs_iterate` over a split refresh's tile geometry (`vs_split_tiles`; see
@@ -1884,7 +1973,7 @@ struct CustomPipelines {
     /// ([`TrapTier`]), built when a frame first draws one of its shapes.
     module: wgpu::ShaderModule,
     layout: wgpu::PipelineLayout,
-    extra: [std::sync::OnceLock<(wgpu::RenderPipeline, wgpu::RenderPipeline)>; 2],
+    extra: [std::sync::OnceLock<(wgpu::RenderPipeline, wgpu::RenderPipeline)>; 3],
     chunk: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     chunk_fe: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
 }
@@ -1928,12 +2017,13 @@ fn tier_tag(tier: TrapTier) -> &'static str {
         TrapTier::Base => "",
         TrapTier::Extra => ".traps",
         TrapTier::Waves => ".waves",
+        TrapTier::Outline => ".outline",
     }
 }
 
-/// Where a tier above the base keeps its pipelines in `[_; 2]` (the Extra pair first).
+/// Where a tier above the base keeps its pipelines in `[_; 3]`, lowest first (the Extra pair at 0).
 fn tier_slot(tier: TrapTier) -> usize {
-    usize::from(tier == TrapTier::Waves)
+    (tier as usize).saturating_sub(1)
 }
 
 /// Build the live iterate pair with a tier's trap shapes compiled in, and say how long it took and
@@ -1941,7 +2031,11 @@ fn tier_slot(tier: TrapTier) -> usize {
 fn build_trap_shapes(device: &wgpu::Device, src: &IterSrc, on: &str, tier: TrapTier) -> (iter_split::ModePipelines, iter_split::ModePipelines) {
     let t = std::time::Instant::now();
     let p = src.build(device, tier);
-    let what = if tier == TrapTier::Waves { "the trap waves'" } else { "the trap shapes'" };
+    let what = match tier {
+        TrapTier::Waves => "the trap waves'",
+        TrapTier::Outline => "the trap outline's",
+        _ => "the trap shapes'",
+    };
     eprintln!("[fd-gpu] {what} iterate pipelines built on {on} in {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
     p
 }
@@ -1958,24 +2052,54 @@ pub fn warm_trap_shapes(render_state: &egui_wgpu::RenderState) {
     if render_state.adapter.get_info().backend == wgpu::Backend::Gl {
         return;
     }
-    let (src, extra, waves) = {
+    let (src, extra, waves, outline) = {
         let guard = render_state.renderer.read();
         let Some(r) = guard.callback_resources.get::<Renderer>() else { return };
-        (r.iter_src.clone(), r.iter_tiers[tier_slot(TrapTier::Extra)].clone(), r.iter_tiers[tier_slot(TrapTier::Waves)].clone())
+        let tier = |t| r.iter_tiers[tier_slot(t)].clone();
+        (r.iter_src.clone(), tier(TrapTier::Extra), tier(TrapTier::Waves), tier(TrapTier::Outline))
     };
     let device = render_state.device.clone();
     // The Extra pair first, then the waves' (the sinc, the square wave, an overlaid sine wave): left
     // to its first use, the waves' cold build stalled the RX 6800 XT 3.5 s inside the method sheet's
     // Sinc cell, and the walk captured the sheet before a cell had calculated (PLUTO dev.11,
-    // 2026-11-26). Built here it also warms the driver's cache the exports' own builds hit.
+    // 2026-11-26). Built here it also warms the driver's cache the exports' own builds hit. Then the
+    // outline's: left to a view's first outline, its cold build froze the window 27 s on the RTX 3070
+    // (PLUTO dev.18, 2026-11-26). Warm, the three take milliseconds.
     let _ = std::thread::Builder::new().name("fd-trap-shapes".into()).spawn(move || {
         extra.get_or_init(|| build_trap_shapes(&device, &src, "a worker", TrapTier::Extra));
         waves.get_or_init(|| build_trap_shapes(&device, &src, "a worker", TrapTier::Waves));
+        outline.get_or_init(|| build_trap_shapes(&device, &src, "a worker", TrapTier::Outline));
+    });
+}
+
+/// Build the live renderer's pipelines for the trap outline (coloring plan F4, part 4) on a worker,
+/// once, so the frame that first draws a view's outline finds them ready: the app calls this as the
+/// shape Outline is picked (its SVG file dialog opens meanwhile) and whenever a view has an outline;
+/// after the first call it only reads a flag. [`warm_trap_shapes`] builds them too, last, after the
+/// start-up's other two pairs (seconds cold): this worker is for an outline sooner than that, built
+/// beside that worker rather than behind it; whichever reaches them first builds them, once. Not on
+/// OpenGL, for the reason there.
+pub fn warm_trap_outline(render_state: &egui_wgpu::RenderState) {
+    if render_state.adapter.get_info().backend == wgpu::Backend::Gl {
+        return;
+    }
+    let (src, pair) = {
+        let guard = render_state.renderer.read();
+        let Some(r) = guard.callback_resources.get::<Renderer>() else { return };
+        let pair = &r.iter_tiers[tier_slot(TrapTier::Outline)];
+        if pair.get().is_some() || r.outline_warming.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        (r.iter_src.clone(), pair.clone())
+    };
+    let device = render_state.device.clone();
+    let _ = std::thread::Builder::new().name("fd-trap-outline".into()).spawn(move || {
+        pair.get_or_init(|| build_trap_shapes(&device, &src, "a worker", TrapTier::Outline));
     });
 }
 
 /// Have the live renderer's pipelines for the trap shapes of `tier` ready before a frame that draws
-/// one reaches the paint callback: waiting for [`warm_trap_shapes`]'s worker (both tiers), or
+/// one reaches the paint callback: waiting for [`warm_trap_shapes`]'s worker (its three tiers), or
 /// building them here (OpenGL, the first time a frame draws one).
 /// `true` when they were not ready and the caller's thread waited, so the app can leave the time out
 /// of the frame's price, as for a custom formula ([`prepare_custom_now`]). The base tier is always
@@ -2736,12 +2860,13 @@ pub(crate) fn fullscreen_pipeline_c(
 /// BLA in (only for a render whose request carries a tree). Off is the shader's default, so the
 /// empty map — the pipelines every other render builds — is unchanged.
 /// `tier` compiles in the trap shapes above the base up to it ([`TrapTier`]: `TRAP_EXTRA` for the
-/// shapes of F4 part 3, and `TRAP_WAVES` with it for the sinc and the square wave; [`trap_tier`]) for
-/// a frame that draws one; the base, the empty map again.
+/// shapes of F4 part 3, `TRAP_WAVES` with it for the sinc and the square wave, and `TRAP_DRAWING` with
+/// both for a drawing's outline; [`trap_tier`]) for a frame that draws one; the base, the empty map
+/// again.
 pub(crate) fn iter_constants(rn_bla: bool, tier: TrapTier) -> &'static std::collections::HashMap<String, f64> {
     use std::collections::HashMap;
     type Map = std::sync::OnceLock<HashMap<String, f64>>;
-    static MAPS: [Map; 6] = [Map::new(), Map::new(), Map::new(), Map::new(), Map::new(), Map::new()];
+    static MAPS: [Map; 8] = [const { Map::new() }; 8];
     MAPS[usize::from(rn_bla) | (tier as usize) << 1].get_or_init(|| {
         let mut m = HashMap::new();
         if rn_bla {
@@ -2752,6 +2877,9 @@ pub(crate) fn iter_constants(rn_bla: bool, tier: TrapTier) -> &'static std::coll
         }
         if tier >= TrapTier::Waves {
             m.insert("TRAP_WAVES".to_string(), 1.0);
+        }
+        if tier >= TrapTier::Outline {
+            m.insert("TRAP_DRAWING".to_string(), 1.0);
         }
         m
     })
@@ -3361,6 +3489,7 @@ impl Renderer {
         Self {
             iter_src,
             iter_tiers: Default::default(),
+            outline_warming: Default::default(),
             iter_pipeline,
             iter_split_pipeline,
             color_pipeline,
@@ -3446,6 +3575,7 @@ impl ViewResources {
             fold_cache: None,
             last_bla_ptr: 0,
             last_crit_ptr: 0,
+            last_outline: (0, 0),
             last_iter_key: None,
             chunk_state: None,
             last_chunk: None,
@@ -4020,6 +4150,9 @@ pub struct MandelbrotParams {
     /// The palette's Wrap (`Wrap::gpu_id`) and Steps (0: none), coloring plan C2.
     pub wrap: u32,
     pub steps: f32,
+    /// The Smooth method's band texture and its strength (coloring plan E1): the statistic must be
+    /// among the frame's (`orbit_stats`), and is read only under Smooth.
+    pub band_texture: BandTexturing,
     /// Edge shading (coloring plan C3); off by default.
     pub edge: EdgeShade,
     /// Equipotential lines (coloring plan C10); off by default.
@@ -4092,6 +4225,11 @@ pub struct MandelbrotParams {
     /// The inside's own trap (`fractadyne_core::coloring::Trap::inside`): an interior pixel's
     /// trap lane measures from it. `None`: from the trap above.
     pub trap_in: Option<(fractadyne_core::coloring::TrapType, fractadyne_core::coloring::TrapPlace)>,
+    /// The view's trap outline (coloring plan F4, part 4), when a trap of the frame measures from it.
+    pub outline: Option<std::sync::Arc<OutlineGpu>>,
+    /// The trap's tail in iterations (`fractadyne_core::coloring::Trap::tail`, F4 part 5), the trap's
+    /// and the inside's: every hit ages by its distance from the orbit's end. 0: off.
+    pub trap_tail: u32,
     /// Color-pass box-filter taps per axis (≥1). >1 anti-aliases an upscaled iteration
     /// texture (set when the work-budget reduced its resolution below the display).
     pub aa_filter: u32,
@@ -4215,6 +4353,8 @@ impl MandelbrotParams {
             trap_type: if orbit_stats.has(Stat::Trap) { self.trap_type } else { 0 },
             trap_place: if orbit_stats.has(Stat::Trap) { self.trap_place.bits() } else { [0; 7] },
             trap_in: self.trap_in.filter(|_| orbit_stats.has(Stat::Trap)).map(|(s, p)| (s.gpu_id(), p.bits())),
+            outline: self.outline.as_ref().filter(|_| orbit_stats.has(Stat::Trap)).map_or(0, |o| o.key),
+            trap_tail: if orbit_stats.has(Stat::Trap) { self.trap_tail } else { 0 },
             sa_skip: self.sa_skip,
             bla_on: self.bla_on,
             jitter: self.jitter,
@@ -4230,6 +4370,14 @@ impl MandelbrotParams {
 
     /// Where this frame's critical orbit sits in its view's reference buffer ([`crit_span`]), for a
     /// buffer of at most `limit_slots` samples.
+    /// Where the trap outline starts in the reference buffer: after the orbit, its trees and a Julia
+    /// view's critical orbit (only without trees, right after the orbit), all as uploaded.
+    fn outline_base(&self) -> usize {
+        let limit_slots = u64::MAX;
+        let rn_bla = if self.rn_bla_k() > 0 { self.rn_bla.len() } else { 0 };
+        self.orbit.len() + self.bla.len() + rn_bla + self.crit_span(limit_slots)[1] as usize
+    }
+
     fn crit_span(&self, limit_slots: u64) -> [u32; 2] {
         let rn_bla = if self.rn_bla_k() > 0 { self.rn_bla.len() } else { 0 };
         crit_span(self.julia, self.orbit.len(), self.bla.len() + rn_bla, self.crit.len(), limit_slots)
@@ -4342,6 +4490,7 @@ impl Default for MandelbrotParams {
             hook_params: [0.0; 4],
             wrap: 0,
             steps: 0.0,
+            band_texture: Default::default(),
             edge: EdgeShade::default(),
             grid: GridLines::default(),
             relief: ReliefLight::default(),
@@ -4375,6 +4524,8 @@ impl Default for MandelbrotParams {
             trap_type: fractadyne_core::coloring::TrapType::Point.gpu_id(),
             trap_place: fractadyne_core::coloring::TrapPlace::DEFAULT,
             trap_in: None,
+            outline: None,
+            trap_tail: 0,
             aa_filter: 1,
             interior_col: [0.0, 0.0, 0.0, 1.0],
             interior: InteriorShade::default(),
@@ -4845,7 +4996,7 @@ impl CallbackTrait for MandelbrotParams {
             aa_ln_p: aa_ln_p(self.formula),
             aa_scale: aa_scale(self.aa_sample),
             tap_stride: 0,
-            _pad_aa: 0.0,
+            band_tex_center: band_texture_words(self.color_method, self.band_texture).2,
             hook_p: self.hook_params,
             wrap: self.wrap,
             steps: self.steps,
@@ -4853,7 +5004,8 @@ impl CallbackTrait for MandelbrotParams {
             edge_curve: self.edge.curve,
             edge_px: self.edge.width,
             edge_strength: self.edge.strength,
-            _pad_edge: [0; 2],
+            band_tex: band_texture_words(self.color_method, self.band_texture).0,
+            band_tex_amount: band_texture_words(self.color_method, self.band_texture).1,
             edge_col: [self.edge.color[0], self.edge.color[1], self.edge.color[2], 1.0],
             grid_on: self.grid.gpu_on(),
             grid_spacing: self.grid.spacing,
@@ -4868,6 +5020,8 @@ impl CallbackTrait for MandelbrotParams {
             eq: eqw.row,
             eq_knots: eqw.knots,
             fade_eq_knots: eqw.fade_knots,
+            band_tex_near: band_texture_words(self.color_method, self.band_texture).3,
+            _pad_bt: [0.0; 3],
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);
@@ -4892,13 +5046,18 @@ impl CallbackTrait for MandelbrotParams {
         let new_orbit = self.orbit_id != view.last_orbit_id;
         let new_tree = self.bla_on == 1 && bla_ptr != 0 && bla_ptr != view.last_bla_ptr;
         let new_crit = crit_ptr != view.last_crit_ptr;
-        if (new_orbit || new_tree || new_crit) && !self.orbit.is_empty() {
+        // The trap outline goes in after everything else (F4 part 4), also with no orbit at all (a
+        // direct frame): written whenever the block runs, which it does for a new outline alone.
+        let outline_base = self.outline_base();
+        let outline = self.outline.as_deref();
+        let new_outline = outline.map_or((0, 0), |o| (o.key, outline_base)) != view.last_outline;
+        if (new_orbit || new_tree || new_crit || new_outline) && (!self.orbit.is_empty() || outline.is_some()) {
             let rn_bla: &[[f32; 4]] = if self.rn_bla_k() > 0 { self.rn_bla.as_slice() } else { &[] };
-            let total = self.orbit.len() + self.bla.len() + rn_bla.len() + crit[1] as usize;
+            let total = outline_base + outline.map_or(0, |o| o.data.len());
             // A grown buffer is a new, empty one: the orbit goes in again too.
             let grows = total as u32 > view.orbit_cap;
             view.ensure_orbit_capacity(device, iter_bgl, total as u32);
-            if new_orbit || grows {
+            if (new_orbit || grows) && !self.orbit.is_empty() {
                 queue.write_buffer(&view.orbit_buf, 0, bytemuck::cast_slice(self.orbit.as_slice()));
             }
             if !self.bla.is_empty() {
@@ -4913,9 +5072,13 @@ impl CallbackTrait for MandelbrotParams {
                 let off = crit[0] as u64 * 16;
                 queue.write_buffer(&view.orbit_buf, off, bytemuck::cast_slice(&self.crit[..crit[1] as usize]));
             }
+            if let Some(o) = outline {
+                queue.write_buffer(&view.orbit_buf, outline_base as u64 * 16, bytemuck::cast_slice(o.data.as_slice()));
+            }
             view.last_orbit_id = self.orbit_id;
             view.last_bla_ptr = bla_ptr;
             view.last_crit_ptr = crit_ptr;
+            view.last_outline = outline.map_or((0, 0), |o| (o.key, outline_base));
             view.last_iter_key = None; // force re-iterate against the new orbit / tree
         }
 
@@ -5025,6 +5188,8 @@ impl CallbackTrait for MandelbrotParams {
                 trap: trap_uniform(self.trap_place),
                 trap_in: trap_in_uniform(self.trap_type, self.trap_place, self.trap_in, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
                 trap_in_row: trap_in_uniform(self.trap_type, self.trap_place, self.trap_in, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
+                outline_row: outline_row(self.outline_base(), self.outline.as_deref(), true),
+                trap_tail: trap_tail_row(self.trap_tail, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)),
             };
             // A split pass is a single full-frame pass by definition (`MandelbrotParams::split`).
             let split_on = self.split[0] > 1 && self.chunk_range.is_none() && self.tile.is_none();

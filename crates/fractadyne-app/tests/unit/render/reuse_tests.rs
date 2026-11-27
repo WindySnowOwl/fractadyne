@@ -29,6 +29,7 @@ fn inputs_for(cx: &str, cy: &str, log2mag: f64, gpu_iter: u32, reuse: Option<Reu
         stripe_freq: 1.0,
         stripe_tail_alpha: 0.0,
         trap: crate::Trap::of(crate::TrapType::Point),
+        outline: None,
         reuse,
         stop_at: None,
         spawn_orbit_id: 0,

@@ -455,6 +455,8 @@ pub(crate) struct RecomputeInputs {
     /// The orbit trap (shape and placement) to bake into the BLA `agg_trap` lane (the aggregate
     /// is the trap's own). Irrelevant unless orbit-trap rides BLA, but always carried.
     trap: crate::Trap,
+    /// The view's outline, which an Outline trap's lane measures from (F4 part 4).
+    outline: Option<std::sync::Arc<fractadyne_core::outline::Outline>>,
     /// A prior reference the worker may extend instead of rebuilding (deeper zoom, same in-view
     /// point). `None` forces a fresh best-reference pick + full orbit build.
     reuse: Option<ReuseRef>,
@@ -520,6 +522,7 @@ fn aux_agg_from_orbit(
     stripe_freq: f64,
     stripe_tail_alpha: f64,
     trap: crate::Trap,
+    outline: Option<std::sync::Arc<fractadyne_core::outline::Outline>>,
     power: u32,
 ) -> fractadyne_core::AuxAggParams {
     let cmag = orbit
@@ -540,10 +543,12 @@ fn aux_agg_from_orbit(
         trap_type: trap.shape,
         trap_place: trap.place,
         trap_in: trap.inside,
+        outline,
         stripe_freq,
         cmag,
         power: f64::from(power),
         stripe_tail_alpha,
+        trap_tail: trap.tail,
     }
 }
 
@@ -1774,7 +1779,7 @@ fn finish_reference(
                 &orbit,
                 dc_max,
                 crate::tunables::cost().bla_eps,
-                aux_agg_from_orbit(&orbit, inp.stripe_freq, inp.stripe_tail_alpha, inp.trap, power),
+                aux_agg_from_orbit(&orbit, inp.stripe_freq, inp.stripe_tail_alpha, inp.trap, inp.outline.clone(), power),
                 inp.formula,
             );
             (std::sync::Arc::new(tree), dc_max.log2())
@@ -3689,6 +3694,7 @@ impl FractadyneApp {
                 stripe_freq: self.coloring.stripe_freq as f64,
                 stripe_tail_alpha: self.bla_tail_alpha(),
                 trap: self.coloring.trap(),
+                outline: self.coloring.outline_for(self.coloring.trap()),
                 reuse,
                 stop_at: None,
                 spawn_orbit_id: self.ref_cache[0].orbit_id,
@@ -3976,6 +3982,7 @@ impl FractadyneApp {
             stripe_freq: self.coloring.stripe_freq as f64,
             stripe_tail_alpha: self.bla_tail_alpha(),
             trap: self.coloring.trap(),
+                outline: self.coloring.outline_for(self.coloring.trap()),
             reuse,
             stop_at: None,
             spawn_orbit_id: self.ref_cache[0].orbit_id,
@@ -4307,7 +4314,7 @@ impl FractadyneApp {
             orbit,
             dc_max,
             crate::tunables::cost().bla_eps,
-            aux_agg_from_orbit(orbit, self.coloring.stripe_freq as f64, self.bla_tail_alpha(), self.coloring.trap(), power),
+            aux_agg_from_orbit(orbit, self.coloring.stripe_freq as f64, self.bla_tail_alpha(), self.coloring.trap(), self.coloring.outline_for(self.coloring.trap()), power),
             formula,
         );
         if tree.is_empty() {
@@ -4379,6 +4386,7 @@ impl FractadyneApp {
             stripe_freq: aux.stripe_freq,
             stripe_tail_alpha: aux.stripe_tail_alpha,
             trap: aux.trap,
+            outline: self.coloring.outline_for(aux.trap),
             // ⭐⭐**MEASURED, and deliberately left OFF.** A GUI export could hand the worker the
             // live view's resident reference and EXTEND it instead of picking and building a
             // fresh one — `try_reuse_reference` does exactly that for the live path, and the
@@ -4853,6 +4861,7 @@ impl FractadyneApp {
             color_hook: self.color_hook_for(self.fractal),
             hook_params: self.coloring.hook.gpu_params(),
             wrap: self.coloring.wrap.gpu_id(),
+            band_texture: self.coloring.band_texturing(),
             steps: self.coloring.steps as f32,
             edge: self.effects.edge_shade(),
             grid: self.effects.grid_lines(),
@@ -4886,6 +4895,8 @@ impl FractadyneApp {
             trap_type: self.coloring.trap_type.gpu_id(),
             trap_place: self.coloring.trap().place,
             trap_in: self.coloring.trap().inside,
+            outline: self.coloring.outline_gpu_for(self.coloring.trap()),
+            trap_tail: self.coloring.trap().tail,
             aa_filter: 1,
             interior_col: self.interior_color(),
             // The chosen method's interior: an export never shows a preview.
@@ -4944,6 +4955,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         color_hook: None,
         hook_params: [0.0; 4],
         wrap: p.wrap,
+        band_texture: p.band_texture,
         steps: p.steps,
         edge: p.edge,
         grid: p.grid,
@@ -4968,6 +4980,8 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         trap_type: p.trap_type,
         trap_place: p.trap_place,
         trap_in: p.trap_in,
+        outline: p.outline.clone(),
+        trap_tail: p.trap_tail,
         aa_filter: p.aa_filter,
         interior_col: p.interior_col,
         interior: p.interior.clone(),
@@ -4989,6 +5003,7 @@ pub(crate) fn params_to_request_exact(p: &fractadyne_gpu::MandelbrotParams, jitt
         color_hook: p.color_hook.clone(),
         hook_params: p.hook_params,
         wrap: p.wrap,
+        band_texture: p.band_texture,
         steps: p.steps,
         jitter,
         ..params_to_request(p)
@@ -5201,6 +5216,7 @@ impl FractadyneApp {
                             self.coloring.stripe_freq as f64,
                             self.bla_tail_alpha(),
                             self.coloring.trap(),
+                            self.coloring.outline_for(self.coloring.trap()),
                             power,
                         ),
                         req.formula,
@@ -7873,6 +7889,7 @@ impl FractadyneApp {
             color_hook: self.color_hook_for(fractal),
             hook_params: self.coloring.hook.gpu_params(),
             wrap: self.coloring.wrap.gpu_id(),
+            band_texture: self.coloring.band_texturing(),
             steps: self.coloring.steps as f32,
             edge: self.effects.edge_shade(),
             grid: self.effects.grid_lines(),
@@ -7907,6 +7924,8 @@ impl FractadyneApp {
             trap_type: self.coloring.trap_type.gpu_id(),
             trap_place: self.coloring.trap().place,
             trap_in: self.coloring.trap().inside,
+            outline: self.coloring.outline_gpu_for(self.coloring.trap()),
+            trap_tail: self.coloring.trap().tail,
             aa_filter,
             interior_col: self.view_interior_color(),
             // As shown: a method sheet preview shows that method's interior, and the palette
@@ -10110,6 +10129,7 @@ impl FractadyneApp {
                     stripe_freq: self.coloring.stripe_freq as f64,
                     stripe_tail_alpha: self.bla_tail_alpha(),
                     trap: self.coloring.trap(),
+                outline: self.coloring.outline_for(self.coloring.trap()),
                     reuse,
                     stop_at: None,
                     spawn_orbit_id: self.ref_cache[vi].orbit_id,
@@ -10777,11 +10797,12 @@ impl FractadyneApp {
                         self.coloring.stripe_freq as f64,
                         self.bla_tail_alpha(),
                         self.coloring.trap(),
+                        self.coloring.outline_for(self.coloring.trap()),
                         fractadyne_core::formula::power(self.fractal.formula_id()),
                     );
                     let vc = &mut self.ref_cache[vi];
                     let mut buf = (*vc.bla).clone();
-                    fractadyne_core::apply_bla_aux(&mut buf, &orbit, aux);
+                    fractadyne_core::apply_bla_aux(&mut buf, &orbit, aux.clone());
                     vc.bla = std::sync::Arc::new(buf);
                     vc.bla_stripe_freq = self.coloring.stripe_freq as f64;
                     vc.bla_stripe_tail = aux.stripe_tail_alpha;
@@ -10922,6 +10943,13 @@ impl FractadyneApp {
         // cold compile's seconds as a GPU pass (a shot on the RTX 3080, 2026-11-24: 8.4 s, the dead-man
         // and the budget-blind tripwire). A custom formula's own pair is built with it there.
         let tier = params.trap_tier();
+        // A view with an outline (F4 part 4) has its tier's pipelines built on a worker before a frame
+        // draws it; after the first call this reads a flag.
+        if self.coloring.trap_outline.is_some() {
+            if let Some(rs) = self.render_state.as_ref() {
+                fractadyne_gpu::warm_trap_outline(rs);
+            }
+        }
         if tier != fractadyne_gpu::TrapTier::Base && fractal != FractalKind::Custom {
             if let Some(rs) = self.render_state.as_ref() {
                 let t = std::time::Instant::now();

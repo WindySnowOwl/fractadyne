@@ -581,7 +581,7 @@ reason = "The stripe tail is approximate across the series seed: its prefix fold
 [[known]]
 cell = "*-deep-*/trap-*"
 check = "flat"
-reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe. The shapes through the origin or along the real axis (the point, the cross, and since F4 part 3 the line, the sine wave and the S curve) are flat at more of these views than the closed ones: the deep orbits pass near 0 (2026-11-24: Burning Ship, Buffalo 2 to 4 and Celtic 4, the plain render as flat)."
+reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe, and the trap's tail (`trap_tail`, F4 part 5, self-test group `trap-tail`) for the traps, which the matrix draws without. The shapes through the origin or along the real axis (the point, the cross, and since F4 part 3 the line, the sine wave and the S curve) are flat at more of these views than the closed ones: the deep orbits pass near 0 (2026-11-24: Burning Ship, Buffalo 2 to 4 and Celtic 4, the plain render as flat)."
 
 [[known]]
 cell = "*-deep-*/stripe"
@@ -596,7 +596,7 @@ reason = "At depth every pixel's orbit follows the reference for all but its las
 [[known]]
 cell = "mandelbrot-seahorse-1e20/trap-*"
 check = "flat"
-reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe."
+reason = "At depth every pixel's orbit follows the reference for all but its last iterations, so a statistic of the whole orbit (a trap's nearest approach, the stripe and triangle averages) is nearly one value across the view. The plain render is as flat; the stripe tail is the remedy for stripe. The trap's tail is the remedy for the traps: at 256 the line trap's picture here has its structure back (self-test group `trap-tail`, 2026-11-26)."
 
 [[known]]
 cell = "mandelbrot-minibrot-9.3e78/trap-*"

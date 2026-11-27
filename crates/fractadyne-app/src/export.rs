@@ -354,6 +354,8 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "method", "stripe_freq", "stripe_tail", "stripe_tail_len", "interior", "interior_palette", "interior_fit", "trap",
     // The trap's placement (coloring plan F4).
     "trap_x", "trap_y", "trap_rotation", "trap_size", "trap_phase", "trap_harmonics", "trap_sine_harmonics",
+    // The trap's tail (coloring plan F4, part 5), the method's trap and the inside's.
+    "trap_tail", "trap_tail_len",
     // The inside's own trap (the trap method's inside colored by a trap of its own).
     "interior_trap", "interior_trap_x", "interior_trap_y", "interior_trap_rotation", "interior_trap_size", "interior_trap_phase",
     "interior_trap_harmonics", "interior_trap_sine_harmonics",
@@ -364,6 +366,8 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "palette_brightness", "palette_contrast", "palette_saturation", "palette_oklab", "julia_linked",
     // The palette map's curve, its wrap and its steps (coloring plan C2); Equalize colors (C6).
     "transfer", "wrap", "steps", "equalize",
+    // The Smooth method's band texture (coloring plan E1).
+    "band_texture", "band_texture_amount", "band_texture_near",
     // Edge shading (coloring plan C3).
     "edge", "edge_inside", "edge_width", "edge_strength", "edge_curve", "edge_color",
     // Equipotential lines (coloring plan C10).
@@ -374,6 +378,9 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     // A coloring hook (format 5): its WGSL text (one line, `\n`/`\\` escaped) and its parameters
     // p1..p4. Written only for a view colored through one.
     "coloring_hook", "coloring_hook_params",
+    // The trap's outline (coloring plan F4, part 4): its text (`fractadyne_core::outline`) and what
+    // it was loaded from. Written only when a trap the picture uses is the outline.
+    "trap_outline", "trap_outline_name",
 ];
 
 /// Without these a "view" is not a view. Their absence is reported by NAME, so a paste that
@@ -447,6 +454,8 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("trap_phase", ValueKind::Float),
     ("trap_harmonics", ValueKind::Uint),
     ("trap_sine_harmonics", ValueKind::Uint),
+    ("trap_tail", ValueKind::Flag),
+    ("trap_tail_len", ValueKind::Uint),
     ("interior_trap", ValueKind::Trap),
     ("interior_trap_x", ValueKind::Float),
     ("interior_trap_y", ValueKind::Float),
@@ -481,6 +490,9 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("julia_linked", ValueKind::Flag),
     ("transfer", ValueKind::Transfer),
     ("wrap", ValueKind::Wrap),
+    ("band_texture", ValueKind::BandTexture),
+    ("band_texture_amount", ValueKind::Float),
+    ("band_texture_near", ValueKind::Float),
     ("steps", ValueKind::Uint),
     ("equalize", ValueKind::Float),
     ("edge", ValueKind::Flag),
@@ -528,6 +540,8 @@ enum ValueKind {
     /// A palette map curve's key (`Transfer::key`, C2).
     Transfer,
     /// A wrap's key (`Wrap::key`, C2).
+    /// The Smooth method's band texture (`BandTexture::key`, coloring plan E1).
+    BandTexture,
     Wrap,
     /// An edge shading curve's key (`EdgeCurve::key`, C3).
     EdgeCurve,
@@ -551,6 +565,7 @@ impl ValueKind {
             ValueKind::PaletteMode => crate::view_coloring::TwoColor::from_key(v).is_some(),
             ValueKind::Transfer => fractadyne_core::coloring::Transfer::parse_key(v).is_some(),
             ValueKind::Wrap => fractadyne_core::coloring::Wrap::parse_key(v).is_some(),
+            ValueKind::BandTexture => fractadyne_core::coloring::BandTexture::parse_key(v).is_some(),
             ValueKind::EdgeCurve => fractadyne_core::coloring::EdgeCurve::parse_key(v).is_some(),
             ValueKind::Rgb => {
                 let parts: Vec<&str> = v.split(',').collect();
@@ -574,6 +589,7 @@ impl ValueKind {
             ValueKind::Trap => one_of(crate::TrapType::ALL.iter().map(|t| t.key()).collect()),
             ValueKind::Transfer => one_of(fractadyne_core::coloring::Transfer::ALL.iter().map(|t| t.key()).collect()),
             ValueKind::Wrap => one_of(fractadyne_core::coloring::Wrap::ALL.iter().map(|w| w.key()).collect()),
+            ValueKind::BandTexture => one_of(fractadyne_core::coloring::BandTexture::ALL.iter().map(|b| b.key()).collect()),
             ValueKind::EdgeCurve => one_of(fractadyne_core::coloring::EdgeCurve::ALL.iter().map(|c| c.key()).collect()),
             ValueKind::Interior => one_of(crate::InteriorMode::ALL.iter().map(|m| m.key()).collect()),
             ValueKind::PaletteMode => {
@@ -1145,7 +1161,13 @@ impl FractadyneApp {
             // differs from the default and changes this picture (`coloring_fields`), so an ordinary
             // view's metadata is byte-identical to what it was before these keys existed. Not for a
             // Life or L-system view, which these settings do not color.
-            if self.fractal.is_escape_time() { crate::coloring_fields::view_lines(&self.coloring_spec()) } else { String::new() },
+            // With the trap's outline, when a trap the picture uses is one (`trap_outline`).
+            if self.fractal.is_escape_time() {
+                let spec = self.coloring_spec();
+                format!("{}{}", crate::coloring_fields::view_lines(&spec), crate::trap_outline::outline_view_lines(&spec))
+            } else {
+                String::new()
+            },
             // The custom gradient, when there is one. Empty otherwise, so a preset view's
             // metadata is byte-identical to what it was before this field existed.
             if self.coloring.use_custom_palette
@@ -1544,6 +1566,7 @@ impl FractadyneApp {
             let states = get("cycle").is_some();
             let mut spec = self.coloring_spec();
             crate::coloring_fields::apply_view(&mut spec, &get, states, &mut report.clamped);
+            crate::trap_outline::apply_outline_view(&mut spec, &get, states, &mut report.problems);
             // The coloring hook (B10): a view that states its coloring and names none was colored
             // without one. One that does not build is said, and the view shows the method's colors.
             match get("coloring_hook").filter(|t| !t.trim().is_empty()) {

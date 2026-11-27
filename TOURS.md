@@ -56,13 +56,16 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `method` | string: smooth \| stripe \| triangle \| trap \| distance \| fringe \| decomposition | "smooth" | The coloring method: smooth, stripe, triangle, trap, distance, fringe or decomposition. |
+| `band_texture` | string: none \| stripe \| triangle | (left out) | The Smooth method's band texture: a statistic of each orbit moves the band edges along its texture, "stripe" (the stripe average, at the stripe density: fur or flame) or "triangle" (the triangle inequality average: longer strands); "none" or left out: plain bands (method "smooth"). |
+| `band_texture_amount` | float, 0 to 8 | 2 | How far the band texture moves the bands: palette cycles per unit of the statistic, 0 to 8 (with `band_texture`). |
+| `band_texture_near` | float, 0 to 64 | 0 | The band texture only near the set: the distance in output pixels over which it fades into plain bands, 0 to 64 (0 or left out: everywhere; with `band_texture`). |
 | `stripe_freq` | float, 1 to 24 | 6 | Stripe average: the stripes' density (method "stripe"). |
 | `stripe_tail` | bool | false | Stripe average over the last `stripe_tail_len` iterations only, which keeps its contrast at depth (method "stripe"). |
 | `stripe_tail_len` | int, 4 to 1048576 | 16 | The tail's length in iterations (with `stripe_tail`). |
 | `interior` | string: solid \| trap | (left out) | What colors the inside of the set: "solid" (one color) or "trap" (how near each orbit came to the orbit trap, through `interior_palette`). Left out: the method's own (method "trap" colors it by its trap, every other method one color). |
 | `interior_palette` | string: a palette id, such as "ember" | (left out) | The palette the trap colors the inside with, a preset's id (when the inside is colored by the trap). Left out: the outside palette. |
 | `interior_fit` | bool | false | Fit the inside's palette to the trap values measured inside the set (when the inside is colored by the trap): on screen for the live view and its exports, each frame's own for a tour render. Other offline renders keep the fixed rate. |
-| `trap` | string: point \| cross \| circle \| line \| square \| hexagon \| star \| sine \| s-curve \| sinc \| square-wave | "point" | The orbit trap's shape: point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc or square-wave (method "trap", or an inside colored by the trap). |
+| `trap` | string: point \| cross \| circle \| line \| square \| hexagon \| star \| sine \| s-curve \| sinc \| square-wave \| outline | "point" | The orbit trap's shape: point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc, square-wave or outline (a drawing's, which the view carries as `trap_outline`; method "trap", or an inside colored by the trap). |
 | `trap_x` | float, -4 to 4 | 0 | Where the orbit trap sits in the orbit's plane, its real coordinate (with the trap). |
 | `trap_y` | float, -4 to 4 | 0 | Where the orbit trap sits in the orbit's plane, its imaginary coordinate (with the trap). |
 | `trap_rotation` | float, -180 to 180 | 0 | The trap's turn, in degrees counterclockwise (the shapes that turn: not the point or the circle). |
@@ -70,7 +73,9 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `trap_phase` | float, -180 to 180 | 0 | A wave trap's phase, in degrees: the wave shifted along itself, a full wave every 360 (the shapes with a phase: the sine wave and the square wave). |
 | `trap_harmonics` | int, 1 to 32 | 5 | How many odd harmonics the square wave trap sums, 1 (a sine wave) to 32: more make its corners sharper and its sides steeper (the shapes with harmonics: the square wave). |
 | `trap_sine_harmonics` | int, 1 to 32 | 1 | How many of the sine wave trap's harmonics are drawn over it at its height, 1 (the wave alone) to 32: the waves of two, three, ... times its frequency (the shapes with overlaid harmonics: the sine wave). |
-| `interior_trap` | string: point \| cross \| circle \| line \| square \| hexagon \| star \| sine \| s-curve \| sinc \| square-wave | (left out) | The inside's own trap shape, point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc or square-wave, when the trap method colors the inside by a trap (the inside's own placement in the keys after). Left out: the method's trap. |
+| `trap_tail` | bool | false | The trap's hits aged by their distance from the orbit's end, each counting as twice as far for every `trap_tail_len` iterations before it, the trap's and the inside's own: draws the trap again at depth, where every orbit comes nearest it in the stretch all of them share (method "trap", or an inside colored by the trap). |
+| `trap_tail_len` | int, 4 to 1048576 | 256 | The trap tail's length in iterations (with `trap_tail`): over how many a hit's distance doubles. |
+| `interior_trap` | string: point \| cross \| circle \| line \| square \| hexagon \| star \| sine \| s-curve \| sinc \| square-wave \| outline | (left out) | The inside's own trap shape, point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc, square-wave or outline, when the trap method colors the inside by a trap (the inside's own placement in the keys after). Left out: the method's trap. |
 | `interior_trap_x` | float, -4 to 4 | 0 | The inside's own trap's center, its real coordinate (with `interior_trap`). |
 | `interior_trap_y` | float, -4 to 4 | 0 | The inside's own trap's center, its imaginary coordinate (with `interior_trap`). |
 | `interior_trap_rotation` | float, -180 to 180 | 0 | The inside's own trap's turn, as `trap_rotation`. |

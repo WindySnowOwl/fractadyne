@@ -267,6 +267,8 @@ pub struct ExportRequest {
     /// The palette's Wrap (`Wrap::gpu_id`) and Steps (0: none), coloring plan C2.
     pub wrap: u32,
     pub steps: f32,
+    /// The band texture — see `MandelbrotParams::band_texture`.
+    pub band_texture: crate::BandTexturing,
     /// Edge shading (coloring plan C3).
     pub edge: crate::EdgeShade,
     /// Equipotential lines (coloring plan C10).
@@ -315,6 +317,10 @@ pub struct ExportRequest {
     pub trap_place: fractadyne_core::coloring::TrapPlace,
     /// The inside's own trap — see `MandelbrotParams::trap_in`.
     pub trap_in: Option<(fractadyne_core::coloring::TrapType, fractadyne_core::coloring::TrapPlace)>,
+    /// The view's trap outline (coloring plan F4, part 4), when a trap of the render measures from it.
+    pub outline: Option<std::sync::Arc<crate::OutlineGpu>>,
+    /// The trap's tail — see `MandelbrotParams::trap_tail`.
+    pub trap_tail: u32,
     pub aa_filter: u32,
     pub interior_col: [f32; 4],
     /// What else may color the inside (coloring plan B5); the default, the method's own interior.
@@ -356,13 +362,25 @@ impl ExportRequest {
         crate::trap_tier(self.iter_stats(), self.trap_type, self.trap_place, self.trap_in)
     }
 
+    /// Where the trap outline starts in the reference buffer ([`Self::upload_reference`]): last.
+    fn outline_base(&self) -> usize {
+        let rn_bla = if self.rn_bla_k() > 0 { self.rn_bla.len() } else { 0 };
+        self.orbit.len() + self.bla.len() + rn_bla + self.crit_span()[1] as usize
+    }
+
+    /// The outline's uniform row ([`crate::outline_row`]).
+    fn outline_row(&self) -> [u32; 4] {
+        crate::outline_row(self.outline_base(), self.outline.as_deref(), true)
+    }
+
     /// The reference storage buffer: the orbit, its BLA tree from index `orbit.len()`, then the
     /// u-space tree ([`Self::rn_uniform`] points the shader at it), then a Julia view's critical
     /// orbit ([`Self::crit_span`]; neither tree exists for one).
     fn upload_reference(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<wgpu::Buffer, GpuError> {
         let rn_bla: &[[f32; 4]] = if self.rn_bla_k() > 0 { self.rn_bla.as_slice() } else { &[] };
         let crit = self.crit_span();
-        let tail = self.bla.len() + rn_bla.len() + crit[1] as usize;
+        let outline = self.outline.as_deref().map_or(&[][..], |o| o.data.as_slice());
+        let tail = self.bla.len() + rn_bla.len() + crit[1] as usize + outline.len();
         check_orbit_binding(device, self.orbit.len(), tail)?;
         let orbit_buf = make_orbit_buffer(device, (self.orbit.len() + tail).max(1) as u32);
         if !self.orbit.is_empty() {
@@ -379,6 +397,9 @@ impl ExportRequest {
         if crit[1] > 0 {
             let off = crit[0] as u64 * 16;
             queue.write_buffer(&orbit_buf, off, bytemuck::cast_slice(&self.crit[..crit[1] as usize]));
+        }
+        if !outline.is_empty() {
+            queue.write_buffer(&orbit_buf, self.outline_base() as u64 * 16, bytemuck::cast_slice(outline));
         }
         Ok(orbit_buf)
     }
@@ -2011,7 +2032,7 @@ impl<'a> TileRenderer<'a> {
             aa_ln_p: crate::aa_ln_p(req.formula),
             aa_scale: crate::aa_scale(req.aa_sample),
             tap_stride: 0,
-            _pad_aa: 0.0,
+            band_tex_center: crate::band_texture_words(req.color_method, req.band_texture).2,
             hook_p: req.hook_params,
             wrap: req.wrap,
             steps: req.steps,
@@ -2019,7 +2040,8 @@ impl<'a> TileRenderer<'a> {
             edge_curve: req.edge.curve,
             edge_px: req.edge.width,
             edge_strength: req.edge.strength,
-            _pad_edge: [0; 2],
+            band_tex: crate::band_texture_words(req.color_method, req.band_texture).0,
+            band_tex_amount: crate::band_texture_words(req.color_method, req.band_texture).1,
             edge_col: [req.edge.color[0], req.edge.color[1], req.edge.color[2], 1.0],
             grid_on: req.grid.gpu_on(),
             grid_spacing: req.grid.spacing,
@@ -2034,6 +2056,8 @@ impl<'a> TileRenderer<'a> {
             eq: eqw.row,
             eq_knots: eqw.knots,
             fade_eq_knots: eqw.fade_knots,
+            band_tex_near: crate::band_texture_words(req.color_method, req.band_texture).3,
+            _pad_bt: [0.0; 3],
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -2137,6 +2161,8 @@ impl<'a> TileRenderer<'a> {
             trap: crate::trap_uniform(req.trap_place),
             trap_in: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
             trap_in_row: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
+            outline_row: req.outline_row(),
+            trap_tail: crate::trap_tail_row(req.trap_tail, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)),
         };
         queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3229,6 +3255,8 @@ fn render_iter_tiled_impl(
                 trap: if accum { crate::trap_uniform(req.trap_place) } else { crate::TrapU::default() },
                 trap_in: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).0,
                 trap_in_row: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
+                outline_row: req.outline_row(),
+                trap_tail: crate::trap_tail_row(req.trap_tail, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)),
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3789,6 +3817,8 @@ impl GatherPass {
                 trap: crate::TrapU::default(),
                 trap_in: crate::TrapU::default(),
                 trap_in_row: [0; 4],
+                outline_row: [0; 4],
+                trap_tail: crate::trap_tail_row(0, false),
             };
             queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -4129,6 +4159,8 @@ fn render_iter_passes(
         trap: crate::TrapU::default(),
         trap_in: crate::TrapU::default(),
         trap_in_row: [0; 4],
+        outline_row: [0; 4],
+        trap_tail: crate::trap_tail_row(0, false),
     };
     // The speed probe's passes (`render_iter_probe`) run the exact-repeat check OFF (bit 1).
     if live.is_some() {
@@ -4459,7 +4491,7 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         aa_ln_p: crate::aa_ln_p(req.formula),
         aa_scale: crate::aa_scale(req.aa_sample),
         tap_stride: 0,
-        _pad_aa: 0.0,
+        band_tex_center: crate::band_texture_words(req.color_method, req.band_texture).2,
         hook_p: req.hook_params,
         wrap: req.wrap,
         steps: req.steps,
@@ -4467,7 +4499,8 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         edge_curve: req.edge.curve,
         edge_px: req.edge.width,
         edge_strength: req.edge.strength,
-        _pad_edge: [0; 2],
+        band_tex: crate::band_texture_words(req.color_method, req.band_texture).0,
+        band_tex_amount: crate::band_texture_words(req.color_method, req.band_texture).1,
         edge_col: [req.edge.color[0], req.edge.color[1], req.edge.color[2], 1.0],
         grid_on: req.grid.gpu_on(),
         grid_spacing: req.grid.spacing,
@@ -4482,6 +4515,8 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         eq: eqw.row,
         eq_knots: eqw.knots,
         fade_eq_knots: eqw.fade_knots,
+        band_tex_near: crate::band_texture_words(req.color_method, req.band_texture).3,
+        _pad_bt: [0.0; 3],
     }
 }
 

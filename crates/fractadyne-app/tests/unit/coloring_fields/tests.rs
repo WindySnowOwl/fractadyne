@@ -39,6 +39,7 @@ fn other_value(f: &Field) -> &'static str {
             "transfer" => "sqrt",
             "wrap" => "mirror",
             "edge_curve" => "smooth",
+            "band_texture" => "stripe",
             k => panic!("no other value for the choice {k}"),
         },
         Access::Rgb(..) => "0.25,0.5,0.75",
@@ -61,6 +62,9 @@ const CARRIED_ELSEWHERE: &[&str] = &[
     "use_custom_palette",
     "coloring_hook",
     "coloring_hook_params",
+    // The trap's outline: its own lines (`trap_outline::outline_view_lines`).
+    "trap_outline",
+    "trap_outline_name",
 ];
 
 /// ⭐**Every coloring setting the session saves is accounted for in a view** (coloring plan B4): it

@@ -136,6 +136,7 @@ fn the_palette_fade_fields_line_up() {
         // The thumbnails' sample stride: swapped with the pad word it would read 0 (every texel)
         // and the palette browser would cost 16x more at 8x again.
         ("tap_stride", std::mem::offset_of!(ColorUniforms, tap_stride)),
+        ("band_tex_center", std::mem::offset_of!(ColorUniforms, band_tex_center)),
         // The palette's wrap and steps (C2), and the edge shading (C3): swapped, the shader would
         // read a curve as a mode, the strength as the width, or the color from a pad row.
         ("hook_p", std::mem::offset_of!(ColorUniforms, hook_p)),
@@ -145,6 +146,8 @@ fn the_palette_fade_fields_line_up() {
         ("edge_curve", std::mem::offset_of!(ColorUniforms, edge_curve)),
         ("edge_px", std::mem::offset_of!(ColorUniforms, edge_px)),
         ("edge_strength", std::mem::offset_of!(ColorUniforms, edge_strength)),
+        ("band_tex", std::mem::offset_of!(ColorUniforms, band_tex)),
+        ("band_tex_amount", std::mem::offset_of!(ColorUniforms, band_tex_amount)),
         ("edge_col", std::mem::offset_of!(ColorUniforms, edge_col)),
         // The equipotential lines (C10): swapped, the width would be read as the spacing.
         ("grid_on", std::mem::offset_of!(ColorUniforms, grid_on)),
@@ -161,6 +164,7 @@ fn the_palette_fade_fields_line_up() {
         ("eq", std::mem::offset_of!(ColorUniforms, eq)),
         ("eq_knots", std::mem::offset_of!(ColorUniforms, eq_knots)),
         ("fade_eq_knots", std::mem::offset_of!(ColorUniforms, fade_eq_knots)),
+        ("band_tex_near", std::mem::offset_of!(ColorUniforms, band_tex_near)),
     ] {
         assert_eq!(wgsl_field_offset(&fields, wgsl), rust, "`{wgsl}` is at another offset in ColorU than in ColorUniforms");
     }
@@ -272,6 +276,11 @@ fn iter_uniform_matches_the_shader() {
     // The square wave's harmonics, the trap's and the inside's, in the row's last two words.
     assert_eq!(wgsl_field_offset(&fields, "trap_harm"), row + 8);
     assert_eq!(wgsl_field_offset(&fields, "trap_in_harm"), row + 12);
+    // The trap outline's row (F4 part 4): where its parts start, and whether it is there.
+    let outline = std::mem::offset_of!(super::IterUniforms, outline_row);
+    for (i, wgsl) in ["outline_cells", "outline_idx", "outline_segs", "outline_on"].into_iter().enumerate() {
+        assert_eq!(wgsl_field_offset(&fields, wgsl), outline + 4 * i, "IterU.{wgsl}");
+    }
 }
 
 /// The renderer module survives the pipeline-constant step wgpu runs when it builds a pipeline with
@@ -297,10 +306,10 @@ fn the_renderer_module_survives_its_pipeline_constants() {
 
 /// A frame needs a tier's trap shapes compiled in exactly when it accumulates the trap and its trap
 /// or the inside's own is of that tier, the higher of the two; the constants then carry
-/// `TRAP_EXTRA`, and for the waves `TRAP_WAVES` with it.
+/// `TRAP_EXTRA`, for the waves `TRAP_WAVES` with it, and for the outline `TRAP_DRAWING` with both.
 #[test]
 fn a_frame_needs_the_gated_shapes_exactly_when_it_draws_one() {
-    use super::TrapTier::{Base, Extra, Waves};
+    use super::TrapTier::{Base, Extra, Outline, Waves};
     use fractadyne_core::coloring::{Stat, StatSet, TrapPlace, TrapType};
     let trap = StatSet::of(Stat::Trap);
     for t in TrapType::ALL {
@@ -308,10 +317,13 @@ fn a_frame_needs_the_gated_shapes_exactly_when_it_draws_one() {
         assert_eq!(super::trap_tier(trap, t.gpu_id(), d, None), t.spec().tier, "{t:?}");
         assert_eq!(super::trap_tier(StatSet::of(Stat::Stripe), t.gpu_id(), d, None), Base, "{t:?}: the trap is not accumulated");
         assert_eq!(super::trap_tier(trap, TrapType::Point.gpu_id(), d, Some((t, d))), t.spec().tier, "the inside's {t:?}");
-        // The higher of the two: a wave inside lifts a star's frame, and the other way round.
+        // The higher of the two: a wave inside lifts a star's frame, and the other way round; an
+        // outline's lifts a wave's.
         let wave = Some((TrapType::Sinc, d));
-        assert_eq!(super::trap_tier(trap, t.gpu_id(), d, wave), Waves, "{t:?} with a sinc inside");
-        assert_eq!(super::trap_tier(trap, TrapType::SquareWave.gpu_id(), d, Some((t, d))), Waves, "a square wave with {t:?} inside");
+        let high = t.spec().tier.max(Waves);
+        assert_eq!(super::trap_tier(trap, t.gpu_id(), d, wave), high, "{t:?} with a sinc inside");
+        assert_eq!(super::trap_tier(trap, TrapType::SquareWave.gpu_id(), d, Some((t, d))), high, "a square wave with {t:?} inside");
+        assert_eq!(super::trap_tier(trap, t.gpu_id(), d, Some((TrapType::Outline, d))), Outline, "{t:?} with an outline inside");
     }
     // The sine wave with harmonics overlaid is the waves' (its loop is kept out of the Extra
     // pipelines), the trap's or the inside's; alone it stays Extra's.
@@ -325,6 +337,7 @@ fn a_frame_needs_the_gated_shapes_exactly_when_it_draws_one() {
     let of = |tier| TrapType::ALL.iter().filter(|t| t.spec().tier == tier).map(|t| t.key()).collect::<Vec<_>>();
     assert_eq!(of(Extra), ["line", "square", "hexagon", "star", "sine", "s-curve"]);
     assert_eq!(of(Waves), ["sinc", "square-wave"]);
+    assert_eq!(of(Outline), ["outline"]);
     assert!(super::iter_constants(false, Base).is_empty(), "every other pipeline as before");
     assert_eq!(super::iter_constants(false, Extra).get("TRAP_EXTRA"), Some(&1.0));
     assert_eq!(super::iter_constants(false, Extra).get("TRAP_WAVES"), None, "the six shapes' pipelines as before");
@@ -332,6 +345,14 @@ fn a_frame_needs_the_gated_shapes_exactly_when_it_draws_one() {
     assert_eq!((waves.get("TRAP_EXTRA"), waves.get("TRAP_WAVES"), waves.len()), (Some(&1.0), Some(&1.0), 2));
     assert_eq!(super::iter_constants(true, Extra).len(), 2);
     assert_eq!(super::iter_constants(true, Waves).len(), 3);
+    // The outline's (F4 part 4) carry every switch; the waves' and the six shapes' none of it.
+    let outline = super::iter_constants(false, Outline);
+    assert_eq!(
+        (outline.get("TRAP_EXTRA"), outline.get("TRAP_WAVES"), outline.get("TRAP_DRAWING"), outline.len()),
+        (Some(&1.0), Some(&1.0), Some(&1.0), 3)
+    );
+    assert_eq!(super::iter_constants(false, Waves).get("TRAP_DRAWING"), None, "the waves' pipelines as before");
+    assert_eq!(super::iter_constants(true, Outline).len(), 4);
     assert_eq!(super::iter_constants(true, Base).get("RN_BLA"), Some(&1.0));
 }
 
@@ -436,4 +457,19 @@ fn the_remap_knots_pack_four_a_row() {
     let off = crate::eq_words(Some(&crate::Equalize { share: 0.0, ..cur }), None);
     assert_eq!(off.row, [0.0; 4]);
     assert!(off.knots.iter().all(|r| *r == [0.0; 4]));
+}
+
+/// The outline's row points at its three parts from where it was written, only when a frame reads it.
+#[test]
+fn the_outline_row_points_at_its_parts_from_its_base() {
+    let ring: Vec<[f64; 2]> = (0..=40).map(|i| {
+        let t = std::f64::consts::TAU * i as f64 / 40.0;
+        [t.cos(), t.sin()]
+    }).collect();
+    let o = super::OutlineGpu::of(&fractadyne_core::outline::Outline::from_paths(&[ring]).unwrap());
+    let l = o.layout;
+    assert_eq!(super::outline_row(1000, Some(&o), true), [1000 + l.cells, 1000 + l.idx, 1000 + l.segs, 1]);
+    assert_eq!(super::outline_row(1000, Some(&o), false), [0; 4]);
+    assert_eq!(super::outline_row(1000, None, true), [0; 4]);
+    assert_eq!(l.len as usize, o.data.len());
 }

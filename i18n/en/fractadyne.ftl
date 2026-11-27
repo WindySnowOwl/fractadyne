@@ -3059,6 +3059,16 @@ panel-tail-length = Tail length
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = it
 panel-tail-length-hover = Window length in iterations. Short windows (8–32) give the classic bold banding at any depth; longer ones average toward a flat color again, since the stripe term of a long chaotic orbit averages out.
+panel-trap-tail = Tail only (deep zoom)
+panel-trap-tail-hover = Count each orbit's late approaches to the trap more than its early ones: a hit's distance counts as twice as far for every tail length of iterations before the orbit's end. At extreme depth every orbit follows the reference for all but its last iterations and comes nearest the trap in that shared stretch, so the whole orbit's nearest approach is one color for the whole view; the tail draws the trap again. Short orbits barely change. Also --trap-tail N for --render.
+panel-trap-tail-length-hover = Iterations over which a hit's distance doubles. Shorter tails show more of each orbit's last iterations, finer and busier; longer ones come back toward the whole orbit's nearest approach.
+panel-band-texture = Band texture
+panel-band-texture-hover = Let a statistic of each orbit move the band edges along its texture: the bands keep their colors and order, and every edge feathers along the field lines, into fur or flame with the stripe average, into longer strands with the triangle inequality. The view then calculates the statistic too, slower at depth. Also --band-texture NAME for --render.
+panel-band-texture-none = None
+panel-band-texture-amount = Strength
+panel-band-texture-amount-hover = How far the texture moves the bands, in palette cycles per unit of the statistic. 0 leaves the bands plain.
+panel-band-texture-near = Near the set
+panel-band-texture-near-hover = Show the texture only near the set, fading into plain bands over about this many pixels, so it grows out of the filaments; 0 shows it everywhere. It needs the distance to the set: where a formula has none, the bands stay plain.
 panel-trap-shape = Trap shape
 # Where the orbit trap sits (coloring plan F4): its two coordinates in the plane the orbits move in.
 panel-trap-center-x = Trap center x
@@ -3086,6 +3096,18 @@ panel-inside-trap-hover = Color the inside of the set by a trap of its own, with
 # The button that moves the orbit trap onto the attracting cycle at the view's center (coloring plan F4).
 panel-trap-on-cycle = Place on the cycle
 panel-trap-on-cycle-hover = Move the trap onto the cycle that orbits inside the set settle on, at the view's center, so the inside of the set shows the trap's structure instead of one color. A point or a cross is centered on a point of the cycle; a circle keeps its center and passes through one. Press again for the cycle's next point.
+# The trap shape Outline's row (coloring plan F4, part 4): the drawing it measures from.
+panel-trap-outline = Drawing
+panel-trap-outline-load = Load SVG…
+panel-trap-outline-load-hover = Use a drawing's outline as the trap: the paths and shapes of an SVG file, scaled to fit the trap. The view saves the outline itself, so it opens the same without the file.
+# The file dialog's filter for Load SVG….
+trap-outline-filter = SVG drawings
+# The Drawing row before any is loaded.
+trap-outline-none = none loaded
+# $name: the file's name. $segments: how many straight lines its outline became.
+trap-outline-loaded = The outline of { $name }: { $segments } lines
+# $name: the file's name. $reason: why, in English.
+trap-outline-failed = { $name } cannot be used as an outline: { $reason }
 # After the button: the cycle's period and which of its points the trap is on (from 1).
 trap-on-cycle-done = The trap is on the cycle: period { $period }, point { $point } of { $period }.
 trap-on-cycle-outside = No cycle to place the trap on: the view's center is outside the set, or at the very edge of its part of the set.
@@ -4116,6 +4138,7 @@ trap-sine = Sine wave
 trap-s-curve = S curve
 trap-sinc = Sinc
 trap-square-wave = Square wave
+trap-outline = Outline
 # Palette animation: none.
 palette-anim-off = Off
 palette-anim-forward = Forward

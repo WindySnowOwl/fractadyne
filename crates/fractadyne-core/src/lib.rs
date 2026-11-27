@@ -60,6 +60,9 @@ pub mod coloring;
 /// The attracting cycle an orbit trap can be placed on (coloring plan F4, part 2).
 pub mod cycle;
 
+/// A custom orbit-trap outline and its exact distance (coloring plan F4, part 4).
+pub mod outline;
+
 /// The formula intermediate representation and its interpreters (design/custom-formulas.md).
 pub mod ir;
 

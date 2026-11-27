@@ -113,8 +113,8 @@ impl RenderSettings {
         if self.max_iter == 0 || self.max_iter > 10_000_000 {
             return Err(format!("iteration base {} is out of range", self.max_iter));
         }
-        if self.coloring.palette_idx > 1024 || self.coloring.stripe_tail_len > 1 << 20 {
-            return Err("palette index or stripe tail out of range".into());
+        if self.coloring.palette_idx > 1024 || self.coloring.stripe_tail_len > 1 << 20 || self.coloring.trap_tail_len > 1 << 20 {
+            return Err("palette index, stripe tail or trap tail out of range".into());
         }
         if !(1..=fractadyne_state::ITER_DIV_MAX).contains(&self.coloring.iter_div) {
             return Err(format!("iteration divisor {} is out of range", self.coloring.iter_div));

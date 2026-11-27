@@ -30,6 +30,14 @@ fn mandel_smooth_f64(cx: f64, cy: f64, max: u32) -> Option<f32> {
 
 /// FNV-1a 64-bit checksum (no deps) — a content fingerprint for golden images so a
 /// third party can confirm they're looking at the same reference bytes.
+/// The outline trap's drawing in the self-tests (coloring plan F4, part 4): a closed triangle and an
+/// open zigzag across it, a shape none of the built-in ones is.
+fn selftest_outline() -> fractadyne_core::outline::Outline {
+    let tri = vec![[0.0, 1.0], [0.866, -0.5], [-0.866, -0.5], [0.0, 1.0]];
+    let zig = vec![[-0.6, 0.2], [-0.2, -0.1], [0.2, 0.2], [0.6, -0.1]];
+    fractadyne_core::outline::Outline::from_paths(&[tri, zig]).expect("the self-test's outline")
+}
+
 fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
     for &b in bytes {
@@ -74,7 +82,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "colour-box", "cycle-check", "export-contain", "honest-step", "julia-critical", "palette-fade", "retreat", "view-thumb",
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe", "round-trip",
     "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize", "palette-oklab",
-    "tour-equalize", "video-equalize", "trap-equalize", "lossy-formats", "tour-trap-fit",
+    "tour-equalize", "video-equalize", "trap-equalize", "lossy-formats", "tour-trap-fit", "trap-tail", "band-texture",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -7417,6 +7425,9 @@ impl FractadyneApp {
             self.coloring.use_custom_palette = false;
             let saved_stripe_freq = self.coloring.stripe_freq;
             let saved_trap_type = self.coloring.trap_type;
+            let saved_tail = (self.coloring.trap_tail, self.coloring.trap_tail_len);
+            let saved_outline = (self.coloring.trap_outline.clone(), self.coloring.trap_outline_gpu.clone(), self.coloring.trap_outline_name.clone());
+            self.coloring.set_outline(Some(selftest_outline()), "self-test".into());
             self.render_cfg.auto_iter = false;
             self.render_cfg.max_iter = 5000;
             self.render_cfg.series_approx = false; // isolate BLA
@@ -7450,7 +7461,7 @@ impl FractadyneApp {
             // shadows the reference), so these compare the two at that approach only; `trap-place`
             // judges a picture with structure.
             let at = P::DEFAULT;
-            for (m, tt, freq, place, label) in [
+            for (m, tt, freq, place, label, tail) in [
                 (M::OrbitTrap, T::Point, 1.0f32, at, "orbit-trap-point"),
                 (M::OrbitTrap, T::Cross, 1.0, at, "orbit-trap-cross"),
                 (M::OrbitTrap, T::Circle, 1.0, at, "orbit-trap-circle"),
@@ -7474,12 +7485,28 @@ impl FractadyneApp {
                 (M::OrbitTrap, T::SquareWave, 1.0, P { harmonics: 12, phase: 40.0, ..at }, "orbit-trap-square-wave-12-phased"),
                 // The sine wave with four harmonics overlaid (the waves' pipelines), shifted.
                 (M::OrbitTrap, T::Sine, 1.0, P { sine_harmonics: 4, phase: 30.0, ..at }, "orbit-trap-sine-4-overlaid"),
+                // F4 part 4: the outline's grid on the GPU against core's, which the aggregates fold.
+                (M::OrbitTrap, T::Outline, 1.0, at, "orbit-trap-outline"),
                 (M::TriangleIneq, T::Point, 1.0, at, "triangle-ineq"),
                 (M::Stripe, T::Point, 5.0, at, "stripe"),
-            ] {
+            ]
+            .into_iter()
+            .map(|(m, t, f, p, l)| (m, t, f, p, l, 0u32))
+            .chain([
+                // The trap's tail (F4 part 5): the nodes' aged lanes (`.z`, `.w`) against every
+                // iteration aging its hits. The tail must also change the picture (the same frame
+                // without it, BLA off): a tail that never reached the GPU would pass on an untailed one.
+                (M::OrbitTrap, T::Point, 1.0f32, at, "orbit-trap-point-tail-64", 64u32),
+                (M::OrbitTrap, T::Cross, 1.0, at, "orbit-trap-cross-tail-16", 16),
+                (M::OrbitTrap, T::Circle, 1.0, P { center: [0.1, 0.4], size: 0.3, ..at }, "orbit-trap-circle-placed-tail-256", 256),
+            ]) {
                 self.coloring.trap_type = tt;
                 self.coloring.trap_place = place;
                 self.coloring.stripe_freq = freq;
+                self.coloring.trap_tail = tail > 0;
+                if tail > 0 {
+                    self.coloring.trap_tail_len = tail;
+                }
                 let mut on = self.current_export_request_for(&vp, false);
                 on.width = N;
                 on.height = N;
@@ -7490,9 +7517,15 @@ impl FractadyneApp {
                 let (bla_on, mode) = (on.bla_on, on.mode);
                 let mut off = on.clone();
                 off.bla_on = 0;
-                let placed = !place.is_default();
+                // A placed case is judged against the same frame unmoved; a tail case against it
+                // without the tail.
+                let placed = !place.is_default() || tail > 0;
                 let mut unmoved = off.clone();
-                unmoved.trap_place = P::DEFAULT;
+                if tail > 0 {
+                    unmoved.trap_tail = 0;
+                } else {
+                    unmoved.trap_place = P::DEFAULT;
+                }
                 let chans = (nn * nn * 4) as u64;
                 let share = |a: &[f32], b: &[f32]| a.iter().zip(b).filter(|(x, y)| (*x - *y).abs() > 0.02).count() as u64;
                 match (rex(&on), rex(&off)) {
@@ -7508,13 +7541,16 @@ impl FractadyneApp {
                         // The placed cases' anti-vacuity: how much the move changed the picture.
                         let moved = if placed { rex(&unmoved).map(|u| share(&b, &u)) } else { None };
                         let moved_ok = !placed || moved.is_some_and(|n| n >= chans / 20);
-                        let moved_txt = moved.map_or(String::new(), |n| format!("; the move changed {n}/{chans} channels >2%"));
+                        let what = if tail > 0 { "the tail" } else { "the move" };
+                        let moved_txt = moved.map_or(String::new(), |n| format!("; {what} changed {n}/{chans} channels >2%"));
                         push_check(&mut checks, &mut last_check_t, SelfCheck {
                             category: "BLA",
                             name: format!("{label}: BLA-fold == non-BLA @1e30×"),
                             params: format!("bla_on {bla_on}, maxΔ {maxd:.4}{moved_txt}"),
                             result: format!("{nd}/{chans} channels >2%"),
-                            threshold: if placed {
+                            threshold: if tail > 0 {
+                                "bla engaged, maxΔ<0.1, <1% differ; the tail changes ≥5% of the picture"
+                            } else if placed {
                                 "bla engaged, maxΔ<0.1, <1% differ; the move changes ≥5% of the picture"
                             } else {
                                 "bla engaged, maxΔ<0.1, <1% differ"
@@ -7538,6 +7574,8 @@ impl FractadyneApp {
             self.coloring.stripe_freq = saved_stripe_freq;
             self.coloring.trap_type = saved_trap_type;
             self.coloring.trap_place = crate::TrapPlace::DEFAULT;
+            (self.coloring.trap_tail, self.coloring.trap_tail_len) = saved_tail;
+            (self.coloring.trap_outline, self.coloring.trap_outline_gpu, self.coloring.trap_outline_name) = saved_outline;
         }
 
         // ---- aux-series: the series prefix must not drop the coloring statistics (A5a) ----
@@ -7935,6 +7973,206 @@ impl FractadyneApp {
         // smooth field, not the angle group's chaotic one: > 50 colors and a nudge that moves >= 0.25%
         // (measured 2026-11-24: 78 to 176 colors, the nudge 0.7% (the square) to 6.5% (the hexagon),
         // BLA 0.4% to 3.4%; a flat picture, as at the aux-bla view, is 3 or 4 colors and 0%).
+        // ---- the Smooth method's band texture (coloring plan E1) ----
+        // A statistic of each orbit moves the band edges along its texture. At the study's view (the
+        // seahorse valley, 0.008 wide): each texture changes the picture; at strength 0 the frame is
+        // Smooth's to the bit with the same statistic accumulated (accumulating one changes the
+        // iteration's route, the series off, so against plain Smooth it is not), the color pass
+        // adding nothing; and
+        // at 1e30x the stripe texture through BLA is every iteration's (the stripe lane's fold).
+        if want("band-texture") {
+            use fractadyne_core::coloring::BandTexture as B;
+            let saved = (
+                (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.interior),
+                (self.coloring.band_texture, self.coloring.band_texture_amount, self.coloring.stripe_freq, self.coloring.use_custom_palette),
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
+            );
+            let saved_near = self.coloring.band_texture_near;
+            self.coloring.band_texture_near = 0.0;
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.interior = None;
+            self.coloring.use_custom_palette = false;
+            self.coloring.stripe_freq = 5.0;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 6_000;
+            self.render_cfg.series_approx = true;
+            self.render_cfg.use_bla = true;
+            let (w, h) = (320u32, 200u32);
+            let progress = std::sync::atomic::AtomicU32::new(0);
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 128).expect("the view's coordinate");
+            let mut vp = Viewport::new(w as f64, h as f64);
+            // The study's view B: 0.008 wide, so its 200 rows span 0.005 (zoom 4 / 0.005).
+            vp.set_center_mag(at("-0.7435"), at("0.1315"), 800.0);
+            let shot = |app: &mut Self, vp: &Viewport, tex: B, amount: f32, bla: bool| -> Option<Vec<f32>> {
+                app.coloring.band_texture = tex;
+                app.coloring.band_texture_amount = amount;
+                let mut r = app.current_export_request_for(vp, false);
+                r.width = vp.width_px as u32;
+                r.height = vp.height_px as u32;
+                r.ss = 1;
+                if !bla {
+                    r.bla_on = 0;
+                    r.sa_skip = 0;
+                }
+                match fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel) {
+                    Ok(x) => Some(x.pixels),
+                    Err(e) => {
+                        eprintln!("[selftest] GPU ERROR (render_export): {e}");
+                        None
+                    }
+                }
+            };
+            let bytes = |p: &[f32]| p.iter().map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect::<Vec<u8>>();
+            let plain = shot(self, &vp, B::None, 2.0, true);
+            for (tex, name) in [(B::Stripe, "stripe"), (B::Triangle, "triangle inequality")] {
+                let on = shot(self, &vp, tex, 2.0, true);
+                let zero = shot(self, &vp, tex, 0.0, true);
+                // Plain Smooth with the texture's statistic accumulated beside the count.
+                self.coloring.orbit_stats_override = tex.stat().map(crate::StatSet::of);
+                let alike = shot(self, &vp, B::None, 2.0, true);
+                self.coloring.orbit_stats_override = None;
+                let moved = plain.as_ref().zip(on.as_ref()).map(|(a, b)| frame::distance(&bytes(a), &bytes(b)));
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "consistency",
+                    name: format!("the {name} band texture moves Smooth's bands"),
+                    params: "the seahorse valley, 0.008 wide, 320x200, strength 2".into(),
+                    result: format!("the mean difference from plain Smooth: {moved:.2?} levels"),
+                    threshold: "at least 2 levels",
+                    pass: moved.is_some_and(|d| d >= 2.0),
+                });
+                let same = alike.as_ref().zip(zero.as_ref()).map(|(a, b)| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits()));
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "consistency",
+                    name: format!("the {name} band texture at strength 0 is plain Smooth to the bit"),
+                    params: "the same view; plain Smooth with the same statistic accumulated beside the count".into(),
+                    result: format!("identical: {same:?}"),
+                    threshold: "every channel the same bits",
+                    pass: same == Some(true),
+                });
+            }
+            // E2: only near the set, the texture moves less of the picture than everywhere, and still
+            // some: near the filaments it is there, far from them the bands are plain.
+            let everywhere = shot(self, &vp, B::Stripe, 2.0, true);
+            self.coloring.band_texture_near = 8.0;
+            let near = shot(self, &vp, B::Stripe, 2.0, true);
+            self.coloring.band_texture_near = 0.0;
+            let d = |x: &Option<Vec<f32>>| plain.as_ref().zip(x.as_ref()).map(|(a, b)| frame::distance(&bytes(a), &bytes(b)));
+            let (d_all, d_near) = (d(&everywhere), d(&near));
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "consistency",
+                name: "the stripe band texture near the set moves less of the picture than everywhere".into(),
+                params: "the same view, strength 2; near: 8 px".into(),
+                result: format!("the mean difference from plain Smooth: everywhere {d_all:.2?}, near the set {d_near:.2?}"),
+                threshold: "near the set at least 0.5 and at most 3/4 of everywhere",
+                pass: matches!((d_all, d_near), (Some(a), Some(n)) if n >= 0.5 && n <= 0.75 * a),
+            });
+            // Through BLA at 1e30x (the aux-bla view): the stripe texture's frame against every
+            // iteration's.
+            let mut deep = Viewport::new(N as f64, N as f64);
+            deep.center_x = fractadyne_core::parse_bf(SX).unwrap();
+            deep.center_y = fractadyne_core::parse_bf(SY).unwrap();
+            deep.units_per_pixel = fractadyne_core::FloatExp::from_f64(3.0 / (N as f64 * 1.0e30));
+            deep.precision = fractadyne_core::precision_for_magnification(1.0e30);
+            self.render_cfg.series_approx = false;
+            let (a, b) = (shot(self, &deep, B::Stripe, 2.0, true), shot(self, &deep, B::Stripe, 2.0, false));
+            let (maxd, nd, chans) = match (&a, &b) {
+                (Some(a), Some(b)) if a.len() == b.len() => {
+                    let maxd = a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0f32, f32::max);
+                    (maxd, a.iter().zip(b).filter(|(x, y)| (*x - *y).abs() > 0.02).count(), a.len())
+                }
+                _ => (f32::INFINITY, usize::MAX, 0),
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "BLA",
+                name: "the stripe band texture through BLA == every iteration @1e30×".into(),
+                params: format!("{N}x{N}, strength 2, series off; maxΔ {maxd:.4}"),
+                result: format!("{nd}/{chans} channels >2%"),
+                threshold: "maxΔ<0.1, <1% differ",
+                pass: maxd < 0.1 && nd < chans / 100,
+            });
+            (
+                (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.interior),
+                (self.coloring.band_texture, self.coloring.band_texture_amount, self.coloring.stripe_freq, self.coloring.use_custom_palette),
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
+            ) = saved;
+            self.coloring.band_texture_near = saved_near;
+        }
+
+        // ---- the trap's tail draws a deep view again (coloring plan F4, part 5) ----
+        // The coloring matrix's known-flat trap cells: at the seahorse at 1e20x every pixel's orbit
+        // follows the reference for all but its last iterations and comes nearest the trap in that
+        // shared stretch, so the whole orbit's nearest approach is nearly one value (the study,
+        // 2026-11-26: the line trap's spread 0.000 whole, 8.1 at a tail of 256). With the tail the
+        // picture has its structure back. This view runs the df32 loop, every iteration aging its
+        // hits; `aux-bla` holds the BLA fold of the aged lanes to it at 1e30x.
+        if want("trap-tail") {
+            use crate::TrapType as T;
+            let saved = (
+                (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.trap_type, self.coloring.trap_place),
+                (self.coloring.trap_tail, self.coloring.trap_tail_len, self.coloring.use_custom_palette, self.coloring.interior),
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
+            );
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.coloring.color_method = crate::ColorMethod::OrbitTrap;
+            self.coloring.interior = None;
+            self.coloring.use_custom_palette = false;
+            self.coloring.trap_place = crate::TrapPlace::DEFAULT;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 12_000;
+            self.render_cfg.series_approx = true;
+            self.render_cfg.use_bla = true;
+            let (w, h) = (320u32, 200u32);
+            let progress = std::sync::atomic::AtomicU32::new(0);
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 256).expect("the view's coordinate");
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.set_center_mag(at("-0.7436438870371587047521915061147707"), at("0.131825904205311970493132056385139"), 1.0e20);
+            for (shape, name) in [(T::Line, "line"), (T::Point, "point")] {
+                self.coloring.trap_type = shape;
+                let mut shots = Vec::new();
+                for tail in [false, true] {
+                    self.coloring.trap_tail = tail;
+                    self.coloring.trap_tail_len = 256;
+                    let mut r = self.current_export_request_for(&vp, false);
+                    r.width = w;
+                    r.height = h;
+                    r.ss = 1;
+                    shots.push(match fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel) {
+                        Ok(x) => {
+                            let bytes: Vec<u8> = x.pixels.iter().map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect();
+                            Some((frame::coherence(&bytes).0, bytes))
+                        }
+                        Err(e) => {
+                            eprintln!("[selftest] GPU ERROR (render_export): {e}");
+                            None
+                        }
+                    });
+                }
+                let (off, on) = (shots[0].as_ref().map(|s| s.0), shots[1].as_ref().map(|s| s.0));
+                // Twice `frame::coherent`'s bar for a picture rather than a fill, and four times the
+                // frame without the tail (the palette's fixed rate here, not fitted: on the RTX 3080 the
+                // line 0.39 to 10.8, the point 0.02 to 4.1).
+                let pass = matches!((off, on), (Some(a), Some(b)) if b >= 2.0 && b >= 4.0 * a.max(0.5));
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "consistency",
+                    name: format!("the trap's tail draws the {name} trap at the seahorse at 1e20x, flat without it"),
+                    params: "320x200, 12,000 iterations, the tail 256; the frame's luminance spread".into(),
+                    result: format!("spread without the tail {off:.2?}, with it {on:.2?}"),
+                    threshold: "with the tail at least 2 (twice a picture's bar), and four times without it",
+                    pass,
+                });
+            }
+            (
+                (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.trap_type, self.coloring.trap_place),
+                (self.coloring.trap_tail, self.coloring.trap_tail_len, self.coloring.use_custom_palette, self.coloring.interior),
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
+            ) = saved;
+        }
+
         if want("trap-place") {
             use crate::{TrapPlace as P, TrapType as T};
             let saved = (
@@ -7956,6 +8194,8 @@ impl FractadyneApp {
             self.render_cfg.max_iter = 25_000;
             self.render_cfg.series_approx = true;
             self.render_cfg.use_bla = true;
+            let saved_outline = (self.coloring.trap_outline.clone(), self.coloring.trap_outline_gpu.clone(), self.coloring.trap_outline_name.clone());
+            self.coloring.set_outline(Some(selftest_outline()), "self-test".into());
             let (w, h) = (320u32, 200u32);
             let progress = std::sync::atomic::AtomicU32::new(0);
             let cancel = std::sync::atomic::AtomicBool::new(false);
@@ -8002,6 +8242,7 @@ impl FractadyneApp {
                 // The sine wave with its harmonics overlaid (user 2026-11-25): the count through the
                 // uniform, the waves' pipelines and the aggregates.
                 (T::Sine, P { sine_harmonics: 4, phase: 30.0, ..d }, "sine wave with 4 harmonics overlaid at phase 30"),
+                (T::Outline, d, "outline (a triangle and a zigzag)"),
             ] {
                 self.coloring.trap_type = shape;
                 self.coloring.trap_place = place;
@@ -8317,6 +8558,7 @@ impl FractadyneApp {
                 self.render_cfg.use_bla,
             ) = saved;
             self.coloring.trap_place = P::DEFAULT;
+            (self.coloring.trap_outline, self.coloring.trap_outline_gpu, self.coloring.trap_outline_name) = saved_outline;
         }
 
         // ---- invariance & consistency (Phase 3) — oracle-free, targets the tier crossovers ----
@@ -11508,6 +11750,11 @@ zoom = \"1e94\"
                 trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6, phase: 0.0, ..crate::TrapPlace::DEFAULT },
                 interior_trap: Some(TrapType::Cross),
                 interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5, phase: 0.0, ..crate::TrapPlace::DEFAULT },
+                trap_tail: true,
+                trap_tail_len: 900,
+                band_texture: fractadyne_core::coloring::BandTexture::Triangle,
+                band_texture_amount: 5.0,
+                band_texture_near: 40.0,
                 light: true,
                 light_angle: -1.25,
                 light_height: 3.5,
@@ -11783,6 +12030,16 @@ zoom = \"1e94\"
                 interior_trap_harmonics: 3,
                 trap_sine_harmonics: 4,
                 interior_trap_sine_harmonics: 2,
+                // A drawing's outline (F4 part 4), its canonical text, and the file it came from.
+                trap_outline: "M -1 0 L 1 0 L 0 1 L -1 0".into(),
+                trap_outline_name: "triangle.svg".into(),
+                // The trap's tail (F4 part 5).
+                trap_tail: true,
+                trap_tail_len: 64,
+                // The Smooth method's band texture (E1).
+                band_texture: "triangle".into(),
+                band_texture_amount: 3.0,
+                band_texture_near: 12.0,
                 custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
                 custom_palette_flat: true,
                 custom_segments: vec![fractadyne_state::PaletteSegment {
@@ -12248,6 +12505,23 @@ zoom = \"1e94\"
             self.coloring.color_method = M::OrbitTrap;
             self.coloring.interior = None;
             moved(self, "the method's trap shape (Orbit trap)", &|a| a.coloring.trap_type = T::Star);
+            // Another drawing under the outline trap (F4 part 4): the key holds the outline by its own key.
+            let was_outline =
+                (self.coloring.trap_outline.clone(), self.coloring.trap_outline_gpu.clone(), self.coloring.trap_outline_name.clone());
+            let drawing = |text: &str| fractadyne_core::outline::Outline::from_text(text).ok();
+            self.coloring.set_outline(drawing("M -1 0 L 1 0 L 0 1"), "a.svg".into());
+            self.coloring.trap_type = T::Outline;
+            moved(self, "the outline's drawing (Orbit trap, Outline)", &|a| {
+                a.coloring.set_outline(drawing("M -1 -1 L 1 1"), "b.svg".into())
+            });
+            (self.coloring.trap_outline, self.coloring.trap_outline_gpu, self.coloring.trap_outline_name) = was_outline;
+            // The trap's tail (F4 part 5): its key is the trap's.
+            let was_tail = (self.coloring.trap_tail, self.coloring.trap_tail_len);
+            moved(self, "the trap's tail (Orbit trap)", &|a| {
+                a.coloring.trap_tail = !a.coloring.trap_tail;
+                a.coloring.trap_tail_len = 64;
+            });
+            (self.coloring.trap_tail, self.coloring.trap_tail_len) = was_tail;
             self.coloring.color_method = M::Stripe;
             moved(self, "the stripe density", &|a| a.coloring.stripe_freq += 1.5);
             moved(self, "the cycle", &|a| a.coloring.cycle *= 1.5);

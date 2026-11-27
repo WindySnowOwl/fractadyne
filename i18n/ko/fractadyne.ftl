@@ -2780,6 +2780,16 @@ panel-tail-length = 꼬리 길이
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = 회
 panel-tail-length-hover = 반복 횟수로 나타낸 창 길이입니다. 짧은 창(8–32)은 어느 깊이에서나 고전적인 굵은 띠를 만들고, 긴 창은 다시 평평한 색으로 평균되는데, 길고 혼돈적인 궤도의 스트라이프 항은 평균하면 상쇄되기 때문입니다.
+panel-trap-tail = 꼬리만(딥 줌)
+panel-trap-tail-hover = 각 궤도가 트랩에 늦게 다가간 것을 이른 것보다 더 중요하게 셉니다. 궤도 끝보다 꼬리 길이만큼의 반복 이전에 있는 접근은 거리가 두 배로 계산됩니다. 극단적인 깊이에서는 모든 궤도가 마지막 반복을 제외하고 기준 궤도를 따라가며 그 공통 구간에서 트랩에 가장 가까워지므로, 궤도 전체의 최근접 거리로는 화면 전체가 한 가지 색이 됩니다. 꼬리를 쓰면 트랩이 다시 그려집니다. 짧은 궤도는 거의 바뀌지 않습니다. --render에서는 --trap-tail N.
+panel-trap-tail-length-hover = 접근 거리가 두 배가 되는 반복 수입니다. 꼬리가 짧을수록 각 궤도의 마지막 반복이 더 많이 드러나 더 세밀하고 복잡해지며, 길수록 궤도 전체의 최근접 거리로 돌아갑니다.
+panel-band-texture = 띠 텍스처
+panel-band-texture-hover = 각 궤도의 통계값이 띠의 경계를 그 텍스처를 따라 옮깁니다. 띠의 색과 순서는 그대로이고, 모든 경계가 역선을 따라 풀어져 스트라이프 평균으로는 털이나 불꽃처럼, 삼각 부등식으로는 더 긴 가닥이 됩니다. 화면이 그 통계값도 계산하므로 깊은 곳에서는 느려집니다. --render에서는 --band-texture NAME.
+panel-band-texture-none = 없음
+panel-band-texture-amount = 세기
+panel-band-texture-amount-hover = 텍스처가 띠를 옮기는 정도(통계값 1당 팔레트 주기 수). 0이면 띠가 그대로입니다.
+panel-band-texture-near = 집합 근처만
+panel-band-texture-near-hover = 텍스처를 집합 근처에만 보이고 대략 이 픽셀 수에 걸쳐 무늬 없는 띠로 녹아들게 하여, 필라멘트에서 자라난 것처럼 보이게 합니다. 0이면 어디에나 보입니다. 집합까지의 거리가 필요하며, 거리가 없는 식에서는 띠가 그대로 유지됩니다.
 panel-trap-shape = 트랩 모양
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

@@ -115,6 +115,17 @@ pub struct ColoringSpec {
     /// the palette is normalized). 0, the default: the fitted map alone.
     #[serde(default)]
     pub equalize: f32,
+    /// The Smooth method's band texture (coloring plan E1, `BandTexture` by key: "stripe",
+    /// "triangle"; empty or "none" for none, and absent from every session from before it) and its
+    /// strength in palette cycles per unit of the statistic.
+    #[serde(default)]
+    pub band_texture: String,
+    #[serde(default = "default_band_texture_amount")]
+    pub band_texture_amount: f32,
+    /// The band texture only near the set (coloring plan E2): its distance in output pixels over
+    /// which it fades into plain bands; 0, and absent from every session from before it: everywhere.
+    #[serde(default)]
+    pub band_texture_near: f32,
     /// Blend in OKLab (coloring plan C7): a palette's RGB segments blended in OKLab, a perceptual
     /// space, rather than between their display (sRGB-encoded) values. Off by default.
     #[serde(default)]
@@ -259,6 +270,22 @@ pub struct ColoringSpec {
     pub trap_sine_harmonics: u32,
     #[serde(default = "default_sine_harmonics")]
     pub interior_trap_sine_harmonics: u32,
+    /// The view's trap outline (coloring plan F4, part 4), which an Outline trap measures from: its
+    /// text (`fractadyne_core::outline::Outline::text`), empty for none, and what it was loaded from.
+    #[serde(default)]
+    pub trap_outline: String,
+    #[serde(default)]
+    pub trap_outline_name: String,
+    /// The orbit trap's TAIL (coloring plan F4, part 5), the method's trap and the inside's alike:
+    /// every hit's distance doubles each `trap_tail_len` iterations it lies before the orbit's end
+    /// (`fractadyne_core::coloring::Trap::tail`), so a deep view, where every orbit shares its
+    /// nearest approach with the reference's, draws again. Off, and absent from every session from
+    /// before it: the nearest approach of the whole orbit.
+    #[serde(default)]
+    pub trap_tail: bool,
+    /// The tail's length in iterations, 4 to 2^20 (`fractadyne_core::coloring::TRAP_TAIL_*`).
+    #[serde(default = "default_trap_tail_len")]
+    pub trap_tail_len: u32,
     /// Custom gradient stops `[pos, r, g, b]` (DISPLAY-space RGB) from the gradient editor.
     #[serde(default)]
     pub custom_palette: Vec<[f32; 4]>,
@@ -932,6 +959,22 @@ fn default_sine_harmonics() -> u32 {
     1
 }
 
+/// `fractadyne_core::coloring::BAND_TEXTURE_AMOUNT_DEFAULT` (the app's tests hold the two equal).
+pub const DEFAULT_BAND_TEXTURE_AMOUNT: f32 = 2.0;
+
+fn default_band_texture_amount() -> f32 {
+    DEFAULT_BAND_TEXTURE_AMOUNT
+}
+
+/// `fractadyne_core::coloring::TRAP_TAIL_DEFAULT` (the app's tests hold the two equal): at the
+/// seahorse at 1e20x the line trap's bands thread the valley at 256 (spread 8.1, against 0.000 for
+/// the whole orbit; 2026-11-26).
+pub const DEFAULT_TRAP_TAIL_LEN: u32 = 256;
+
+fn default_trap_tail_len() -> u32 {
+    DEFAULT_TRAP_TAIL_LEN
+}
+
 impl Default for ColoringSpec {
     fn default() -> Self {
         Self {
@@ -988,6 +1031,10 @@ impl Default for ColoringSpec {
             interior_trap_harmonics: DEFAULT_TRAP_HARMONICS,
             trap_sine_harmonics: 1,
             interior_trap_sine_harmonics: 1,
+            trap_outline: String::new(),
+            trap_outline_name: String::new(),
+            trap_tail: false,
+            trap_tail_len: DEFAULT_TRAP_TAIL_LEN,
             custom_palette: Vec::new(),
             custom_palette_flat: false,
             custom_segments: Vec::new(),
@@ -1006,6 +1053,9 @@ impl Default for ColoringSpec {
             palette_saturation: 1.0,
             julia_linked: false,
             equalize: 0.0,
+            band_texture: String::new(),
+            band_texture_amount: DEFAULT_BAND_TEXTURE_AMOUNT,
+            band_texture_near: 0.0,
             palette_oklab: false,
             coloring_hook: String::new(),
             coloring_hook_params: Vec::new(),

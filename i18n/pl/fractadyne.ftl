@@ -2952,6 +2952,16 @@ panel-tail-length = Długość ogona
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = it.
 panel-tail-length-hover = Długość okna w iteracjach. Krótkie okna (8–32) dają klasyczne wyraźne pasma na każdej głębokości; dłuższe znów uśredniają się do płaskiego koloru, bo człon pasków długiej chaotycznej orbity się uśrednia.
+panel-trap-tail = Tylko ogon (głęboki zoom)
+panel-trap-tail-hover = Późne zbliżenia każdej orbity do pułapki liczą się bardziej niż wczesne: odległość zbliżenia liczy się jako dwa razy większa za każdą długość ogona iteracji przed końcem orbity. Na skrajnych głębokościach każda orbita podąża za orbitą odniesienia z wyjątkiem ostatnich iteracji i najbliżej pułapki jest w tym wspólnym odcinku, więc najbliższe zbliżenie całej orbity daje jeden kolor w całym widoku; ogon znów rysuje pułapkę. Krótkie orbity prawie się nie zmieniają. Także --trap-tail N dla --render.
+panel-trap-tail-length-hover = Liczba iteracji, po której odległość zbliżenia się podwaja. Krótszy ogon pokazuje więcej ostatnich iteracji każdej orbity, drobniej i gęściej; dłuższy wraca do najbliższego zbliżenia całej orbity.
+panel-band-texture = Tekstura pasm
+panel-band-texture-hover = Statystyka każdej orbity przesuwa krawędzie pasm zgodnie ze swoją teksturą: pasma zachowują kolory i kolejność, a każda krawędź strzępi się wzdłuż linii pola, w futro lub płomienie ze średnią pasków, w dłuższe pasma z nierównością trójkąta. Widok liczy wtedy także statystykę, wolniej w głębi. Także --band-texture NAZWA dla --render.
+panel-band-texture-none = Brak
+panel-band-texture-amount = Siła
+panel-band-texture-amount-hover = Jak daleko tekstura przesuwa pasma, w cyklach palety na jednostkę statystyki. 0 zostawia pasma gładkie.
+panel-band-texture-near = Blisko zbioru
+panel-band-texture-near-hover = Pokazuje teksturę tylko blisko zbioru i przechodzi w gładkie pasma na mniej więcej tylu pikselach, więc wyrasta z włókien; 0 pokazuje ją wszędzie. Potrzebuje odległości od zbioru: tam, gdzie formuła jej nie ma, pasma zostają gładkie.
 panel-trap-shape = Kształt pułapki
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

@@ -75,6 +75,39 @@ detail is in the git history.
   now fitted to its own values, as the live view fits the screen, so the video looks like the
   view. Fitting a frame costs about a quarter more time at 2x2 supersampling. A frame depends on
   nothing but its own view, so one full turn of the trap's phase rendered once loops seamlessly.
+- **Band texture: Smooth's bands feathered by a statistic.** Under Smooth iteration, Band
+  texture lets a statistic of each orbit move the band edges along its texture: the bands keep
+  their colors and order, and every edge feathers along the field lines, into fur or flame with
+  the stripe average, into longer strands with the triangle inequality. Strength sets how far it
+  moves them, and the stripe's density and tail apply as they do for the stripe method. The view
+  then calculates the statistic too, which is slower at depth. Near the set keeps the texture
+  close to the set, fading into plain bands over about that many pixels, so the fur grows out of
+  the filaments. A view file keeps it (`band_texture`, `band_texture_amount`,
+  `band_texture_near`), a tour's keyframes can state it, and on the command line it is
+  `--band-texture stripe` or `triangle`, with `--band-texture-amount X` and
+  `--band-texture-near PX`.
+- **The orbit trap's tail: a trap that draws at any depth.** Under Trap shape, Tail only (deep
+  zoom) counts each orbit's late approaches to the trap more than its early ones: a hit counts as
+  twice as far for every Tail length of iterations before the orbit's end. At extreme depth every
+  orbit follows the reference for all but its last iterations and comes nearest the trap in that
+  shared stretch, so a deep view colored by the trap came out one color; with the tail the trap
+  draws again, its bands threading the seahorse valley at 1e20x where the view was one flat red.
+  Shorter tails show more of each orbit's last iterations, finer and busier; longer ones come back
+  toward the whole orbit's nearest approach, and short orbits change little. It applies to the
+  method's trap and the inside's own, and keeps the deep-zoom acceleration. A view file keeps it
+  (`trap_tail` and `trap_tail_len`), a tour's keyframes can state it, and on the command line it
+  is `--trap-tail N`.
+- **An orbit trap in the shape of your own drawing.** The trap shape Outline takes its shape from
+  an SVG file: Load SVG... under Trap shape reads the drawing's paths and shapes (rectangles,
+  circles, ellipses, lines, polylines and polygons, with their transforms; text and images are left
+  out) and makes their outline the trap, fitted to the trap's size as the star is. So a logo, a
+  letter or a curve you drew threads through the filaments the way the built-in shapes do. It turns,
+  sizes and moves like them, works at every depth, and Place on the cycle centers it on the cycle
+  point. A drawing with a great many lines is simplified to at most 4096. A view file keeps the
+  outline itself (`trap_outline`, with the file's name), so a shared view opens the same without
+  the SVG; on the command line it is `--trap outline --trap-outline FILE.svg`. Frames that draw no
+  outline keep the speed they had: its code is compiled only into pipelines of its own, built in
+  the background once a view has a drawing.
 - **Move, turn and size the orbit trap.** Under Trap shape the panel now has the trap's center, x
   and y, and a rotation for the cross and a size, its radius, for the circle. Where the trap sits
   decides which orbits come near it, so moving it rearranges the bands and rings it draws, inside the

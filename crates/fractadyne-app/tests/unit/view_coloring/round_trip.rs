@@ -34,6 +34,11 @@ fn scrambled() -> ViewColoring {
         trap_place: crate::TrapPlace { center: [0.3, -0.45], rotation: 25.0, size: 0.6, phase: 0.0, harmonics: 20, sine_harmonics: 9 },
         interior_trap: Some(TrapType::Cross),
         interior_trap_place: crate::TrapPlace { center: [-0.15, 0.35], rotation: -20.0, size: 1.5, phase: 0.0, harmonics: 7, sine_harmonics: 11 },
+        trap_tail: true,
+        trap_tail_len: 900,
+        band_texture: fractadyne_core::coloring::BandTexture::Triangle,
+        band_texture_amount: 5.0,
+        band_texture_near: 40.0,
         light: true,
         light_angle: -1.25,
         light_height: 3.5,
@@ -112,6 +117,18 @@ fn variants() -> Vec<ViewColoring> {
     // The inside's own square wave, of three harmonics (its harmonics key).
     let three = crate::TrapPlace { harmonics: 3, ..crate::TrapPlace::DEFAULT };
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, interior_trap: Some(TrapType::SquareWave), interior_trap_place: three, ..d.clone() });
+    // The Smooth method's band texture (E1): the stripe at its default strength, then the triangle
+    // inequality at another; the stripe texture writes the stripe's density too.
+    v.push(ViewColoring { band_texture: fractadyne_core::coloring::BandTexture::Stripe, ..d.clone() });
+    v.push(ViewColoring { band_texture: fractadyne_core::coloring::BandTexture::Stripe, stripe_freq: 11.0, ..d.clone() });
+    v.push(ViewColoring { band_texture: fractadyne_core::coloring::BandTexture::Triangle, band_texture_amount: 0.75, ..d.clone() });
+    // ...only near the set (E2).
+    v.push(ViewColoring { band_texture: fractadyne_core::coloring::BandTexture::Stripe, band_texture_near: 6.0, ..d.clone() });
+    // The trap's tail (F4 part 5): on at its default length, then at another; and on with only the
+    // inside colored by the trap (Smooth outside).
+    v.push(ViewColoring { method: ColorMethod::OrbitTrap, trap_tail: true, ..d.clone() });
+    v.push(ViewColoring { method: ColorMethod::OrbitTrap, trap_tail: true, trap_tail_len: 48, ..d.clone() });
+    v.push(ViewColoring { interior: Some(InteriorMode::Trap), trap_tail: true, trap_tail_len: 2000, ..d.clone() });
     v.push(ViewColoring { light: true, ..d.clone() });
     v.push(ViewColoring { light: true, light_angle: 0.3, light_height: 0.2, ..d.clone() });
     v.push(ViewColoring { light: true, light_steep: true, ..d.clone() });

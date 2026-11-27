@@ -17,6 +17,7 @@
 //! - A value out of range is clamped and named; an unreadable one keeps the current setting.
 
 use crate::{slider_range, ColorMethod, InteriorMode, TrapType};
+use fractadyne_core::coloring::BandTexture;
 use fractadyne_state::ColoringSpec;
 
 /// How a row reads and writes its setting on a [`ColoringSpec`], by kind.
@@ -57,6 +58,10 @@ fn transfer_keys() -> Vec<&'static str> {
 }
 
 /// The wraps' keys (C2).
+fn band_texture_keys() -> Vec<&'static str> {
+    BandTexture::ALL.iter().map(|b| b.key()).collect()
+}
+
 fn wrap_keys() -> Vec<&'static str> {
     fractadyne_core::coloring::Wrap::ALL.iter().map(|w| w.key()).collect()
 }
@@ -68,6 +73,17 @@ fn edge_curve_keys() -> Vec<&'static str> {
 
 fn method(s: &ColoringSpec) -> ColorMethod {
     ColorMethod::from_key(&s.color_method)
+}
+
+/// The Smooth method's band texture (E1), by its key; none for an empty or unknown one.
+fn band_texture(s: &ColoringSpec) -> BandTexture {
+    BandTexture::parse_key(&s.band_texture).unwrap_or_default()
+}
+
+/// The stripe average is drawn: the stripe method, or Smooth's bands textured by it (E1). Its density
+/// and tail then matter.
+fn stripe_used(s: &ColoringSpec) -> bool {
+    method(s) == ColorMethod::Stripe || (method(s) == ColorMethod::Smooth && band_texture(s) == BandTexture::Stripe)
 }
 
 fn always(_: &ColoringSpec) -> bool {
@@ -103,6 +119,14 @@ fn trap_drawn(s: &ColoringSpec) -> bool {
     method(s) == ColorMethod::OrbitTrap || interior_trap(s)
 }
 
+/// A trap the picture depends on measures from the view's outline (coloring plan F4, part 4): the
+/// method's trap while it is drawn, or the inside's own, is the outline. A view then carries the
+/// outline (`trap_outline::outline_view_lines`).
+pub(crate) fn outline_in_view(s: &ColoringSpec) -> bool {
+    let outline = TrapType::Outline.key();
+    (trap_drawn(s) && s.trap_type == outline) || (inside_own_trap(s) && s.interior_trap == outline)
+}
+
 /// The trap method's inside has a trap of its own (`interior_trap`).
 fn inside_own_trap(s: &ColoringSpec) -> bool {
     method(s) == ColorMethod::OrbitTrap && interior_trap(s) && TrapType::parse_key(&s.interior_trap).is_some()
@@ -123,7 +147,7 @@ pub(crate) fn inside_color_used(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 62] = [
+pub(crate) const FIELDS: [Field; 67] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -133,6 +157,40 @@ pub(crate) const FIELDS: [Field; 62] = [
         }),
         parents: &[],
         shows: always,
+    },
+    Field {
+        key: "band_texture",
+        name: "band texture",
+        doc: "The Smooth method's band texture: a statistic of each orbit moves the band edges along its texture, \"stripe\" (the stripe average, at the stripe density: fur or flame) or \"triangle\" (the triangle inequality average: longer strands); \"none\" or left out: plain bands (method \"smooth\").",
+        access: Access::Choice(|s| s.band_texture.as_str(), |s, v| s.band_texture = v.to_string(), band_texture_keys),
+        parents: &["method"],
+        shows: |s| method(s) == ColorMethod::Smooth,
+    },
+    Field {
+        key: "band_texture_amount",
+        name: "band texture strength",
+        doc: "How far the band texture moves the bands: palette cycles per unit of the statistic, 0 to 8 (with `band_texture`).",
+        access: Access::Real(
+            |s| s.band_texture_amount,
+            |s, v| s.band_texture_amount = v,
+            *slider_range::BAND_TEXTURE_AMOUNT.start(),
+            *slider_range::BAND_TEXTURE_AMOUNT.end(),
+        ),
+        parents: &["method", "band_texture"],
+        shows: |s| method(s) == ColorMethod::Smooth && band_texture(s) != BandTexture::None,
+    },
+    Field {
+        key: "band_texture_near",
+        name: "band texture near the set",
+        doc: "The band texture only near the set: the distance in output pixels over which it fades into plain bands, 0 to 64 (0 or left out: everywhere; with `band_texture`).",
+        access: Access::Real(
+            |s| s.band_texture_near,
+            |s, v| s.band_texture_near = v,
+            *slider_range::BAND_TEXTURE_NEAR.start(),
+            *slider_range::BAND_TEXTURE_NEAR.end(),
+        ),
+        parents: &["method", "band_texture"],
+        shows: |s| method(s) == ColorMethod::Smooth && band_texture(s) != BandTexture::None,
     },
     Field {
         key: "stripe_freq",
@@ -145,7 +203,7 @@ pub(crate) const FIELDS: [Field; 62] = [
             *slider_range::STRIPE_FREQ.end(),
         ),
         parents: &["method"],
-        shows: |s| method(s) == ColorMethod::Stripe,
+        shows: stripe_used,
     },
     Field {
         key: "stripe_tail",
@@ -153,7 +211,7 @@ pub(crate) const FIELDS: [Field; 62] = [
         doc: "Stripe average over the last `stripe_tail_len` iterations only, which keeps its contrast at depth (method \"stripe\").",
         access: Access::Flag(|s| s.stripe_tail, |s, v| s.stripe_tail = v),
         parents: &["method"],
-        shows: |s| method(s) == ColorMethod::Stripe,
+        shows: stripe_used,
     },
     Field {
         key: "stripe_tail_len",
@@ -166,7 +224,7 @@ pub(crate) const FIELDS: [Field; 62] = [
             *slider_range::STRIPE_TAIL_LEN.end(),
         ),
         parents: &["method", "stripe_tail"],
-        shows: |s| method(s) == ColorMethod::Stripe && s.stripe_tail,
+        shows: |s| stripe_used(s) && s.stripe_tail,
     },
     Field {
         key: "interior",
@@ -199,7 +257,7 @@ pub(crate) const FIELDS: [Field; 62] = [
     Field {
         key: "trap",
         name: "orbit trap",
-        doc: "The orbit trap's shape: point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc or square-wave (method \"trap\", or an inside colored by the trap).",
+        doc: "The orbit trap's shape: point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc, square-wave or outline (a drawing's, which the view carries as `trap_outline`; method \"trap\", or an inside colored by the trap).",
         access: Access::Choice(|s| &s.trap_type, |s, v| s.trap_type = v.to_string(), || {
             TrapType::ALL.iter().map(|t| t.key()).collect()
         }),
@@ -293,9 +351,30 @@ pub(crate) const FIELDS: [Field; 62] = [
         shows: |s| trap_drawn(s) && TrapType::from_key(&s.trap_type).spec().overlaid,
     },
     Field {
+        key: "trap_tail",
+        name: "trap tail",
+        doc: "The trap's hits aged by their distance from the orbit's end, each counting as twice as far for every `trap_tail_len` iterations before it, the trap's and the inside's own: draws the trap again at depth, where every orbit comes nearest it in the stretch all of them share (method \"trap\", or an inside colored by the trap).",
+        access: Access::Flag(|s| s.trap_tail, |s, v| s.trap_tail = v),
+        parents: &["method", "interior"],
+        shows: trap_drawn,
+    },
+    Field {
+        key: "trap_tail_len",
+        name: "trap tail length",
+        doc: "The trap tail's length in iterations (with `trap_tail`): over how many a hit's distance doubles.",
+        access: Access::Count(
+            |s| s.trap_tail_len,
+            |s, v| s.trap_tail_len = v,
+            *slider_range::TRAP_TAIL_LEN.start(),
+            *slider_range::TRAP_TAIL_LEN.end(),
+        ),
+        parents: &["method", "interior", "trap_tail"],
+        shows: |s| trap_drawn(s) && s.trap_tail,
+    },
+    Field {
         key: "interior_trap",
         name: "inside trap",
-        doc: "The inside's own trap shape, point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc or square-wave, when the trap method colors the inside by a trap (the inside's own placement in the keys after). Left out: the method's trap.",
+        doc: "The inside's own trap shape, point, cross, circle, line, square, hexagon, star, sine, s-curve, sinc, square-wave or outline, when the trap method colors the inside by a trap (the inside's own placement in the keys after). Left out: the method's trap.",
         access: Access::Choice(|s| &s.interior_trap, |s, v| s.interior_trap = v.to_string(), || {
             TrapType::ALL.iter().map(|t| t.key()).collect()
         }),

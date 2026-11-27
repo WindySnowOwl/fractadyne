@@ -2852,6 +2852,16 @@ panel-tail-length = Kuyruk uzunluğu
 # The unit after the tail length's number: short for "iterations" (the slider reads "64 it").
 panel-tail-length-unit = yin.
 panel-tail-length-hover = Yineleme cinsinden pencere uzunluğu. Kısa pencereler (8–32) her derinlikte klasik kalın bantları verir; daha uzun olanlar yeniden düz bir renge doğru ortalanır, çünkü uzun, kaotik bir yörüngenin şerit terimi ortalamada birbirini götürür.
+panel-trap-tail = Yalnızca kuyruk (derin yakınlaştırma)
+panel-trap-tail-hover = Her yörüngenin tuzağa geç yaklaşmaları erken olanlardan daha çok sayılır: bir yaklaşmanın uzaklığı, yörüngenin sonundan önceki her kuyruk uzunluğu kadar yineleme için iki kat sayılır. Aşırı derinlikte her yörünge son yinelemeleri dışında referans yörüngeyi izler ve tuzağa en çok bu ortak kesimde yaklaşır; bu yüzden tüm yörüngenin en yakın yaklaşması tüm görünümü tek renk yapar, kuyruk tuzağı yeniden çizer. Kısa yörüngeler pek değişmez. --render için de --trap-tail N.
+panel-trap-tail-length-hover = Bir yaklaşmanın uzaklığının iki katına çıktığı yineleme sayısı. Daha kısa kuyruk her yörüngenin son yinelemelerini daha çok gösterir, daha ince ve daha kalabalık; daha uzunu tüm yörüngenin en yakın yaklaşmasına geri döner.
+panel-band-texture = Bant dokusu
+panel-band-texture-hover = Her yörüngenin bir istatistiği bant kenarlarını kendi dokusu boyunca kaydırır: bantlar renklerini ve sıralarını korur, her kenar alan çizgileri boyunca saçaklanır; şerit ortalamasıyla kürk ya da alev, üçgen eşitsizliğiyle daha uzun lifler olur. Görünüm o zaman istatistiği de hesaplar, derinde daha yavaştır. --render için de --band-texture AD.
+panel-band-texture-none = Yok
+panel-band-texture-amount = Güç
+panel-band-texture-amount-hover = Dokunun bantları ne kadar kaydırdığı, istatistiğin birimi başına palet döngüsü olarak. 0 bantları düz bırakır.
+panel-band-texture-near = Kümeye yakın
+panel-band-texture-near-hover = Dokuyu yalnızca kümenin yakınında gösterir ve yaklaşık bu kadar pikselde düz bantlara karıştırır, böylece filamentlerden büyür; 0 her yerde gösterir. Kümeye uzaklık gerekir: bir formülde yoksa bantlar düz kalır.
 panel-trap-shape = Tuzak şekli
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.
