@@ -60,6 +60,11 @@ param(
     [switch]$Quick,
     # Force one wgpu backend (vulkan | dx12 | gl). Default: whatever the app picks.
     [string]$Backend = "",
+    # Which graphics card the app runs every windowed step on (its --adapter: a number from
+    # --list-adapters or part of a card's name, such as 6800). Default: the one the app picks. The
+    # headless gputest step picks its own. A machine with two cards adopts each one's goldens from
+    # a battery on that card (2026-11-26: PLUTO's default became its RTX 3070).
+    [string]$Adapter = "",
     # Where to deliver the bundle when it is done. Default: the share if reachable, else beside
     # this script. The battery itself always runs on this machine's disk (see LOCAL BY DESIGN).
     [string]$Out = "",
@@ -114,6 +119,7 @@ Write-Host "  binary : $exe"
 Write-Host "  runs in: $dir ($workNote)"
 Write-Host "  bundle : $final (copied there when the battery is done)"
 if ($Backend) { Write-Host "  backend: $Backend (pinned)" }
+if ($Adapter) { Write-Host "  adapter: $Adapter (pinned; gputest picks its own)" }
 Write-Host ""
 
 # Private config dir: hermetic, and leaves the user's real settings untouched.
@@ -138,6 +144,7 @@ try {
 $appVersion = ((& $exe --version 2>$null | Where-Object { $_ -match '^fractadyne ' } | Select-Object -Last 1) -replace '\s+$', '')
 $lines += "App     : " + $appVersion
 if ($Backend) { $lines += "Backend : pinned to $Backend" }
+if ($Adapter) { $lines += "Adapter : pinned to $Adapter (every step but gputest)" }
 $lines | Out-File $sys -Encoding utf8
 
 # --- the battery ------------------------------------------------------------------------------
@@ -148,6 +155,9 @@ $lines | Out-File $sys -Encoding utf8
 $results = @()
 function Invoke-Step {
     param([string]$Name, [string]$File, [string[]]$Arguments, [string]$Why)
+    # The pinned card, for every step the app runs in its window; gputest is headless and picks its
+    # own (`request_adapter`).
+    if ($Adapter -and $Name -ne "gputest") { $Arguments = @($Arguments) + @("--adapter", $Adapter) }
     Write-Host ("-> {0}" -f $Name) -ForegroundColor Yellow
     if ($Why) { Write-Host ("   {0}" -f $Why) -ForegroundColor DarkGray }
     $path = Join-Path $dir $File
