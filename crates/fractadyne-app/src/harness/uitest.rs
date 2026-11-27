@@ -486,6 +486,12 @@ enum Screen {
     /// off): another picture than `band-texture-off`, the bump reaching the live color pass; the
     /// panel's Bump row with its Height.
     StatBump,
+    /// ...then no bump and the relief light on with its slope from the distance and the highlight at
+    /// their defaults, no gloss (coloring plan E5, the base)...
+    StatGlossOff,
+    /// ...then the stripe gloss at its default amount: another picture than `stat-gloss-off`, the
+    /// gloss reaching the live color pass; the panel's Gloss row with its Amount.
+    StatGloss,
     /// Edge shading (coloring plan C3): the Julia-link point in Smooth, point sampled, the shading
     /// off (the base)...
     EdgeShadeOff,
@@ -1523,6 +1529,8 @@ fn build_steps() -> Vec<Step> {
         screen("stat-layer", Screen::StatLayer),
         screen("stat-layer-blend", Screen::StatLayerBlend),
         screen("stat-bump", Screen::StatBump),
+        screen("stat-gloss-off", Screen::StatGlossOff),
+        screen("stat-gloss", Screen::StatGloss),
         screen("edge-shade-off", Screen::EdgeShadeOff),
         screen("edge-shade", Screen::EdgeShade),
         screen("edge-shade-inside", Screen::EdgeShadeInside),
@@ -2213,6 +2221,31 @@ impl FractadyneApp {
                 Verdict::Fail
             },
             detail: format!("against {before}, the mean difference in levels: {d:?}; the bump {bump:?}, the relief light {}", self.effects.light),
+        });
+    }
+
+    /// The gloss (coloring plan E5): the stripe gloss draws another picture live than the highlight
+    /// without it at the same view (`stat-gloss-off`; a mean difference of 1 level or more), with the
+    /// highlight drawn, and the coloring carries it.
+    fn uitest_stat_gloss_checks(&self, ut: &UiTest, view: Option<&(Vec<u8>, [u32; 2])>, checks: &mut Vec<Check>) {
+        let before = "stat-gloss-off";
+        let b = ut.results.iter().rev().find(|r| r.name == before);
+        let d = view.zip(b).and_then(|((px, _), b)| {
+            let (prev, _) = b.inside_view.as_ref().filter(|p| p.0.len() == px.len())?;
+            let s: f64 = px.chunks_exact(4).zip(prev.chunks_exact(4)).map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>()).sum();
+            Some(s / (3 * (px.len() / 4)).max(1) as f64)
+        });
+        let gloss = self.coloring.stat_glossing();
+        let e = &self.effects;
+        let drawn = e.light && e.light_steep && e.light_highlight > 0.0;
+        checks.push(Check {
+            name: "stat-gloss-drawn-live".into(),
+            verdict: if d.is_some_and(|d| d >= 1.0) && gloss.statistic == fractadyne_core::coloring::BandTexture::Stripe && drawn {
+                Verdict::Pass
+            } else {
+                Verdict::Fail
+            },
+            detail: format!("against {before}, the mean difference in levels: {d:?}; the gloss {gloss:?}, the highlight drawn {drawn}"),
         });
     }
 
@@ -3893,6 +3926,27 @@ impl FractadyneApp {
                 self.effects.light = false;
                 self.dialogs.right_panel_open = true;
             }
+            // E5: the same view, no bump, the relief light with its slope from the distance and the
+            // highlight at their defaults; no gloss, then the stripe gloss. (The slope is set by each
+            // step: `uitest_close_all` turns it off before every step.)
+            Screen::StatGlossOff | Screen::StatGloss => {
+                self.coloring.band_texture = fractadyne_core::coloring::BandTexture::None;
+                self.coloring.stat_layer = fractadyne_core::coloring::BandTexture::None;
+                self.coloring.stat_bump = fractadyne_core::coloring::BandTexture::None;
+                let d = fractadyne_state::ColoringSpec::default();
+                self.effects.light = true;
+                self.effects.light_anim = false;
+                self.effects.light_angle = d.light_angle;
+                self.effects.light_height = d.light_height;
+                self.effects.light_steep = true;
+                self.effects.light_steep_px = d.light_steep_px;
+                self.effects.light_highlight = d.light_highlight;
+                self.effects.light_shininess = d.light_shininess;
+                self.effects.light_highlight_color = d.light_highlight_color;
+                self.coloring.stat_gloss = if matches!(s, Screen::StatGloss) { fractadyne_core::coloring::BandTexture::Stripe } else { fractadyne_core::coloring::BandTexture::None };
+                self.coloring.stat_gloss_amount = fractadyne_core::coloring::GLOSS_AMOUNT_DEFAULT;
+                self.dialogs.right_panel_open = true;
+            }
             // E3: the same view, no band texture, the stripe layer in hard light, then in Multiply.
             Screen::StatLayer | Screen::StatLayerBlend => {
                 self.coloring.band_texture = fractadyne_core::coloring::BandTexture::None;
@@ -3913,10 +3967,13 @@ impl FractadyneApp {
                 if let Some(aa) = self.harness.uitest_held_aa.take() {
                     self.render_cfg.aa = aa;
                 }
-                // The band texture `band-texture` turned on, off again.
+                // The band texture `band-texture` turned on, off again; and the relief light and
+                // gloss `stat-gloss` turned on (E5), off again.
                 self.coloring.band_texture = fractadyne_core::coloring::BandTexture::None;
                 self.coloring.stat_layer = fractadyne_core::coloring::BandTexture::None;
                 self.coloring.stat_bump = fractadyne_core::coloring::BandTexture::None;
+                self.coloring.stat_gloss = fractadyne_core::coloring::BandTexture::None;
+                self.effects.light = false;
                 if matches!(s, Screen::EdgeShadeOff) {
                     let (cx, cy) = UITEST_JULIA_LINK_C;
                     self.set_show_mode(crate::ShowMode::Set);
@@ -4687,6 +4744,8 @@ impl FractadyneApp {
                     | Screen::StatLayer
                     | Screen::StatLayerBlend
                     | Screen::StatBump
+                    | Screen::StatGlossOff
+                    | Screen::StatGloss
                     | Screen::EdgeShadeOff
                     | Screen::EdgeShade
                     | Screen::EdgeShadeInside
@@ -5666,6 +5725,9 @@ impl FractadyneApp {
         }
         if let StepKind::Screen(Screen::StatBump) = step.kind {
             self.uitest_stat_bump_checks(ut, inside_view.as_ref(), &mut checks);
+        }
+        if let StepKind::Screen(Screen::StatGloss) = step.kind {
+            self.uitest_stat_gloss_checks(ut, inside_view.as_ref(), &mut checks);
         }
 
         // ---- edge shading (coloring plan C3) ----

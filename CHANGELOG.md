@@ -75,6 +75,15 @@ detail is in the git history.
   now fitted to its own values, as the live view fits the screen, so the video looks like the
   view. Fitting a frame costs about a quarter more time at 2x2 supersampling. A frame depends on
   nothing but its own view, so one full turn of the trap's phase rendered once loops seamlessly.
+- **Gloss: a statistic shapes the highlight.** Under Smooth iteration, Gloss lets a statistic of
+  each orbit set how strong the relief light's highlight is, so its sheen breaks into strands
+  along the field lines, like brushed metal: finer with the stripe average, longer with the
+  triangle inequality. Amount sets how much: 0 leaves the highlight as it was, 1 (the default)
+  makes it follow the statistic fully. It needs the highlight (Relief lighting with Slope from
+  the distance and a Highlight above 0); without one the row is grayed out and says so. The view
+  then calculates the statistic too, which is slower at depth. A view file keeps it
+  (`stat_gloss`, `stat_gloss_amount`), a tour's keyframes can state it, and on the command line
+  it is `--stat-gloss stripe` or `triangle`, with `--stat-gloss-amount X`.
 - **Bump: a statistic as a surface.** Under Smooth iteration, Bump reads a statistic of each
   orbit as a height and lights its slope with the relief light's angle: engraved strands along
   the field lines, finer with the stripe average, longer with the triangle inequality. With Relief

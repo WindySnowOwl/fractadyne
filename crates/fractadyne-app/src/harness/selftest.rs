@@ -83,7 +83,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe", "round-trip",
     "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize", "palette-oklab",
     "tour-equalize", "video-equalize", "trap-equalize", "lossy-formats", "tour-trap-fit", "trap-tail", "band-texture",
-    "stat-layer", "stat-bump",
+    "stat-layer", "stat-bump", "stat-gloss",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -797,6 +797,7 @@ impl FractadyneApp {
         self.coloring.band_texture_near = 0.0;
         self.coloring.stat_layer = fractadyne_core::coloring::BandTexture::None;
         self.coloring.stat_bump = fractadyne_core::coloring::BandTexture::None;
+        self.coloring.stat_gloss = fractadyne_core::coloring::BandTexture::None;
         self.effects.de = false;
         self.effects.light = false;
         // D2.2: echo the effective config so any residual leak is visible in the report
@@ -8381,6 +8382,215 @@ impl FractadyneApp {
             ) = saved;
         }
 
+        // ---- the Smooth method's gloss (coloring plan E5) ----
+        // A statistic's gray scaling the relief light's highlight. At the study's view with the
+        // highlight drawn (the relief light, its slope from the distance, the highlight at its
+        // default): at amount 0, and with the highlight at 0, the frame is the one without a gloss to
+        // the bit, the same statistic accumulated; each statistic's gloss changes the highlight; every
+        // pixel lies between the frame with no highlight and the one with the whole highlight (the
+        // weight is in 0..1); amount 0.5 lies halfway between amounts 0 and 1 (the weight is linear in
+        // the amount, `gloss_weight`); an export with a gloss is the same picture however it is tiled.
+        if want("stat-gloss") {
+            use fractadyne_core::coloring::BandTexture as B;
+            let saved = (
+                (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.interior),
+                (self.coloring.stat_gloss, self.coloring.stat_gloss_amount, self.coloring.stat_bump, self.coloring.stat_layer, self.coloring.band_texture),
+                (self.coloring.stripe_freq, self.coloring.use_custom_palette),
+                (self.effects.light, self.effects.light_angle, self.effects.light_height, self.effects.light_steep, self.effects.light_steep_px),
+                (self.effects.light_highlight, self.effects.light_shininess, self.effects.light_highlight_color, self.effects.de),
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
+            );
+            let d = fractadyne_state::ColoringSpec::default();
+            self.fractal = FractalKind::Mandelbrot;
+            self.julia_mode = false;
+            self.coloring.color_method = crate::ColorMethod::Smooth;
+            self.coloring.interior = None;
+            self.coloring.stat_bump = B::None;
+            self.coloring.stat_layer = B::None;
+            self.coloring.band_texture = B::None;
+            self.coloring.use_custom_palette = false;
+            self.coloring.stripe_freq = 5.0;
+            self.effects.light = true;
+            self.effects.light_angle = d.light_angle;
+            self.effects.light_height = d.light_height;
+            self.effects.light_steep = true;
+            self.effects.light_steep_px = d.light_steep_px;
+            self.effects.light_shininess = d.light_shininess;
+            self.effects.light_highlight_color = d.light_highlight_color;
+            self.effects.de = false;
+            self.render_cfg.auto_iter = false;
+            self.render_cfg.max_iter = 6_000;
+            self.render_cfg.series_approx = true;
+            self.render_cfg.use_bla = true;
+            let (w, h) = (320u32, 200u32);
+            let progress = std::sync::atomic::AtomicU32::new(0);
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let at = |s: &str| fractadyne_core::parse_bf_prec(s, 128).expect("the view's coordinate");
+            let mut vp = Viewport::new(w as f64, h as f64);
+            vp.set_center_mag(at("-0.7435"), at("0.1315"), 800.0);
+            let shot = |app: &mut Self, vp: &Viewport, gloss: B, amount: f32, highlight: f32, tile: Option<u32>| -> Option<Vec<f32>> {
+                app.coloring.stat_gloss = gloss;
+                app.coloring.stat_gloss_amount = amount;
+                app.effects.light_highlight = highlight;
+                let mut r = app.current_export_request_for(vp, false);
+                r.width = vp.width_px as u32;
+                r.height = vp.height_px as u32;
+                r.ss = 1;
+                r.tile_px_max = tile;
+                match fractadyne_gpu::render_export(device, queue, &r, &progress, &cancel) {
+                    Ok(x) => Some(x.pixels),
+                    Err(e) => {
+                        eprintln!("[selftest] GPU ERROR (render_export): {e}");
+                        None
+                    }
+                }
+            };
+            let bytes = |p: &[f32]| p.iter().map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect::<Vec<u8>>();
+            let dist = |a: &Option<Vec<f32>>, b: &Option<Vec<f32>>| a.as_ref().zip(b.as_ref()).map(|(a, b)| frame::distance(&bytes(a), &bytes(b)));
+            let bits = |a: &Option<Vec<f32>>, b: &Option<Vec<f32>>| a.as_ref().zip(b.as_ref()).map(|(a, b)| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits()));
+            let hl = d.light_highlight;
+            // The frames without a gloss, the stripe accumulated as a gloss's frame accumulates it:
+            // the whole highlight, and none.
+            self.coloring.orbit_stats_override = Some(crate::StatSet::of(fractadyne_core::coloring::Stat::Stripe));
+            let full = shot(self, &vp, B::None, 1.0, hl, None);
+            let none = shot(self, &vp, B::None, 1.0, 0.0, None);
+            self.coloring.orbit_stats_override = None;
+            let zero = shot(self, &vp, B::Stripe, 0.0, hl, None);
+            let unlit = shot(self, &vp, B::Stripe, 1.0, 0.0, None);
+            let same = [("amount 0", bits(&zero, &full)), ("highlight 0", bits(&unlit, &none))];
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "consistency",
+                name: "the stripe gloss at amount 0, or on no highlight, is the frame without it to the bit".into(),
+                params: "the seahorse valley, 0.008 wide, 320x200, the relief light with its slope from the distance; the frames without a gloss with the stripe accumulated".into(),
+                result: format!("identical: {same:?}"),
+                threshold: "every channel the same bits, both",
+                pass: same.iter().all(|(_, s)| *s == Some(true)),
+            });
+            let stripe = shot(self, &vp, B::Stripe, 1.0, hl, None);
+            for (gloss, name) in [(B::Stripe, "stripe"), (B::Triangle, "triangle inequality")] {
+                let on = if gloss == B::Stripe { stripe.clone() } else { shot(self, &vp, gloss, 1.0, hl, None) };
+                let moved = dist(&full, &on);
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "consistency",
+                    name: format!("the {name} gloss changes the highlight"),
+                    params: format!("the same view, amount 1, the highlight at {hl}"),
+                    result: format!("the mean difference from the whole highlight: {moved:.2?} levels"),
+                    threshold: "at least 1 level",
+                    pass: moved.is_some_and(|d| d >= 1.0),
+                });
+            }
+            // Between: none <= gloss <= full in every channel (the weight in 0..1, the highlight
+            // added last and clamped); and amount 0.5 halfway, where the whole highlight is unclamped.
+            let half = shot(self, &vp, B::Stripe, 0.5, hl, None);
+            let between = match (&none, &stripe, &full, &half) {
+                (Some(n), Some(g), Some(f), Some(hf)) if n.len() == g.len() && g.len() == f.len() && f.len() == hf.len() => {
+                    // Compared as shown, clamped to 1: the highlight's sum is clamped (`min(col + hl, 1)`),
+                    // the frame without one is not, and its color can stand a hair above 1 (2026-11-27:
+                    // 1.0000085 at two pixels' red).
+                    let tol = 1.0e-6;
+                    let (n, g, f) = (
+                        n.iter().map(|v| v.min(1.0)).collect::<Vec<f32>>(),
+                        g.iter().map(|v| v.min(1.0)).collect::<Vec<f32>>(),
+                        f.iter().map(|v| v.min(1.0)).collect::<Vec<f32>>(),
+                    );
+                    let outside: Vec<usize> = (0..f.len()).filter(|&i| g[i] < n[i] - tol || g[i] > f[i] + tol).collect();
+                    let out = outside.len();
+                    // The first few, to read a failure by: (pixel x, y, channel, none, gloss, whole).
+                    let shown: Vec<(usize, usize, usize, f32, f32, f32)> =
+                        outside.iter().take(4).map(|&i| ((i / 4) % w as usize, (i / 4) / w as usize, i % 4, n[i], g[i], f[i])).collect();
+                    if out > 0 {
+                        eprintln!("[selftest] gloss outside none..whole: {shown:?}");
+                    }
+                    let mut dev = 0.0f32;
+                    let mut lit = 0usize;
+                    for i in 0..f.len() {
+                        if i % 4 == 3 || f[i] >= 1.0 || f[i] - n[i] < 1.0 / 255.0 {
+                            continue;
+                        }
+                        lit += 1;
+                        dev = dev.max(((hf[i] - n[i]) - ((f[i] - n[i]) + (g[i] - n[i])) / 2.0).abs());
+                    }
+                    Some((out, dev, lit))
+                }
+                _ => None,
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "consistency",
+                name: "the gloss weighs the highlight between none and all, linearly in the amount".into(),
+                params: "the same view, the stripe gloss at amounts 1 and 0.5 against the frames with no highlight and the whole one, channel by channel (halfway: channels the whole highlight lifts by a level or more, unclamped)".into(),
+                result: format!("(channels outside none..whole, the largest step off halfway, channels the halfway check read): {between:?}"),
+                threshold: "none outside; off halfway by 1e-4 at most; at least 1000 channels read",
+                pass: between.is_some_and(|(out, dev, lit)| out == 0 && dev <= 1.0e-4 && lit >= 1000),
+            });
+            // Each pixel's highlight weighed by its OWN statistic: the weight read back, (gloss −
+            // none) / (whole − none) on the channel the whole highlight lifts most (8 levels or more,
+            // unclamped), against `gloss_weight` of the pixel's stripe gray from the frame's lanes
+            // (ss 1: a pixel is one sample). A gloss read from the wrong lane, center or pixel fails
+            // here; the checks above do not see it.
+            self.coloring.stat_gloss = B::Stripe;
+            self.coloring.stat_gloss_amount = 1.0;
+            self.effects.light_highlight = hl;
+            let mut req = self.current_export_request_for(&vp, false);
+            req.width = w;
+            req.height = h;
+            req.ss = 1;
+            let lanes = fractadyne_gpu::render_lanes(device, queue, &req, crate::tunables::CORRECT_WORK_BUDGET).ok();
+            let follows = match (&lanes, &none, &stripe, &full) {
+                (Some(l), Some(n), Some(g), Some(f)) if l.aux.len() == f.len() && l.pixels.len() == f.len() && n.len() == f.len() && g.len() == f.len() => {
+                    use fractadyne_core::coloring::{gloss_weight, layer_gray, LAYER_CONTRAST_DEFAULT};
+                    let center = B::Stripe.center();
+                    let (mut worst, mut read) = (0.0f32, 0usize);
+                    for p in 0..f.len() / 4 {
+                        if !(l.pixels[p * 4] >= 0.0) {
+                            continue;
+                        }
+                        let lift = |c: usize| f[p * 4 + c] - n[p * 4 + c];
+                        let Some(c) = (0..3).filter(|&c| f[p * 4 + c] < 1.0).max_by(|&a, &b| lift(a).total_cmp(&lift(b))) else {
+                            continue;
+                        };
+                        if lift(c) < 8.0 / 255.0 {
+                            continue;
+                        }
+                        let w_gpu = (g[p * 4 + c] - n[p * 4 + c]) / lift(c);
+                        let w_cpu = gloss_weight(layer_gray(l.aux[p * 4], center, LAYER_CONTRAST_DEFAULT), 1.0);
+                        worst = worst.max((w_gpu - w_cpu).abs());
+                        read += 1;
+                    }
+                    Some((worst, read))
+                }
+                _ => None,
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "consistency",
+                name: "the gloss weighs each pixel's highlight by its own statistic's gray".into(),
+                params: "the same view, the stripe gloss at 1: the weight read back from the frames with no, the glossed and the whole highlight, against gloss_weight of the pixel's stripe gray from the frame's lanes, where the whole highlight lifts a channel 8 levels or more".into(),
+                result: format!("(the largest difference, pixels read): {follows:?}"),
+                threshold: "at most 0.001; at least 500 pixels read",
+                pass: follows.is_some_and(|(d, n)| d <= 1.0e-3 && n >= 500),
+            });
+            let (a, b) = (shot(self, &vp, B::Stripe, 1.0, hl, Some(16)), shot(self, &vp, B::Stripe, 1.0, hl, Some(40)));
+            let seams = match (&a, &b) {
+                (Some(a), Some(b)) if a.len() == b.len() => Some(a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(p, q)| p.iter().zip(q.iter()).any(|(x, y)| (x - y).abs() * 255.0 > 0.01)).count()),
+                _ => None,
+            };
+            push_check(&mut checks, &mut last_check_t, SelfCheck {
+                category: "export",
+                name: "an export with a gloss is the same picture however it is tiled".into(),
+                params: format!("the same view, {w}x{h}, ss 1, the stripe gloss at 1: tiles of at most 16 and of at most 40 px, pixel by pixel"),
+                result: format!("pixels more than 0.01 levels apart: {seams:?}"),
+                threshold: "none",
+                pass: seams == Some(0),
+            });
+            (
+                (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.interior),
+                (self.coloring.stat_gloss, self.coloring.stat_gloss_amount, self.coloring.stat_bump, self.coloring.stat_layer, self.coloring.band_texture),
+                (self.coloring.stripe_freq, self.coloring.use_custom_palette),
+                (self.effects.light, self.effects.light_angle, self.effects.light_height, self.effects.light_steep, self.effects.light_steep_px),
+                (self.effects.light_highlight, self.effects.light_shininess, self.effects.light_highlight_color, self.effects.de),
+                (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.render_cfg.series_approx, self.render_cfg.use_bla),
+            ) = saved;
+        }
+
         // ---- the trap's tail draws a deep view again (coloring plan F4, part 5) ----
         // The coloring matrix's known-flat trap cells: at the seahorse at 1e20x every pixel's orbit
         // follows the reference for all but its last iterations and comes nearest the trap in that
@@ -12041,6 +12251,8 @@ zoom = \"1e94\"
                 stat_layer_opacity: 0.3,
                 stat_bump: fractadyne_core::coloring::BandTexture::Triangle,
                 stat_bump_height: 11.0,
+                stat_gloss: fractadyne_core::coloring::BandTexture::Stripe,
+                stat_gloss_amount: 0.45,
                 light: true,
                 light_angle: -1.25,
                 light_height: 3.5,
@@ -12334,6 +12546,9 @@ zoom = \"1e94\"
                 // Its statistic bump (E4).
                 stat_bump: "triangle".into(),
                 stat_bump_height: 3.5,
+                // Its gloss (E5).
+                stat_gloss: "stripe".into(),
+                stat_gloss_amount: 0.55,
                 custom_palette: vec![[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
                 custom_palette_flat: true,
                 custom_segments: vec![fractadyne_state::PaletteSegment {

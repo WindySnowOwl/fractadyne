@@ -2807,6 +2807,11 @@ panel-stat-bump = Timbul
 panel-stat-bump-hover = Membaca statistik setiap orbit sebagai ketinggian dan menerangi kemiringannya dengan sudut cahaya relief: untaian terukir sepanjang garis medan, lebih halus dengan rata-rata garis, lebih panjang dengan ketaksamaan segitiga. Dengan cahaya relief menyala, ia ditambahkan ke permukaan relief, emboss satin tersisir; saat mati, ia diterangi sendiri. Tampilan lalu ikut menghitung statistiknya, lebih lambat di kedalaman. Juga --stat-bump NAMA untuk --render.
 panel-stat-bump-height = Tinggi
 panel-stat-bump-height-hover = Seberapa tinggi statistik berdiri, dalam piksel per satuan abu-abunya: lebih tinggi mengukir untaian lebih dalam. 0 membiarkan permukaan datar.
+panel-stat-gloss = Pola kilau
+panel-stat-gloss-hover = Biarkan statistik setiap orbit menentukan seberapa kuat kilau cahaya relief, sehingga kilapnya pecah menjadi helai di sepanjang garis medan, seperti logam yang disikat: lebih halus dengan rata-rata garis, lebih panjang dengan ketaksamaan segitiga. Tampilan lalu ikut menghitung statistik itu, lebih lambat di kedalaman. Juga --stat-gloss NAMA untuk --render.
+panel-stat-gloss-amount = Takaran
+panel-stat-gloss-amount-hover = Seberapa besar statistik menentukan kekuatan kilau: 1 membuatnya sepenuhnya mengikuti statistik, 0 membiarkan kilau apa adanya.
+panel-stat-gloss-off = Pola kilau membentuk kilau cahaya relief: di Efek, nyalakan "Pencahayaan relief 3D" dan "Kemiringan dari jarak", lalu atur Kilau di atas 0.
 panel-trap-shape = Bentuk perangkap
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

@@ -3086,6 +3086,12 @@ panel-stat-bump = Bump
 panel-stat-bump-hover = Read a statistic of each orbit as a height and light its slope with the relief light's angle: engraved strands along the field lines, finer with the stripe average, longer with the triangle inequality. With Relief light on it is added to the relief's surface, a combed satin emboss; with it off it is lit alone. The view then calculates the statistic too, slower at depth. Also --stat-bump NAME for --render.
 panel-stat-bump-height = Height
 panel-stat-bump-height-hover = How high the statistic stands, in pixels per unit of its gray: higher cuts the strands deeper. 0 leaves the surface flat.
+# The Smooth method's gloss (coloring plan E5): a statistic choice and an Amount slider under Bump. The "-off" text shows when the pointer rests on the grayed-out rows (no highlight is drawn).
+panel-stat-gloss = Gloss
+panel-stat-gloss-hover = Let a statistic of each orbit set how strong the relief light's highlight is, so its sheen breaks into strands along the field lines, like brushed metal: finer with the stripe average, longer with the triangle inequality. The view then calculates the statistic too, slower at depth. Also --stat-gloss NAME for --render.
+panel-stat-gloss-amount = Amount
+panel-stat-gloss-amount-hover = How much the statistic sets the highlight's strength: 1 makes it follow the statistic fully, 0 leaves the highlight as it is.
+panel-stat-gloss-off = Gloss shapes the relief light's highlight: in Effects, turn on 3D relief lighting and "Slope from the distance", and set Highlight above 0.
 panel-trap-shape = Trap shape
 # Where the orbit trap sits (coloring plan F4): its two coordinates in the plane the orbits move in.
 panel-trap-center-x = Trap center x

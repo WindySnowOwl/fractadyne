@@ -2979,6 +2979,11 @@ panel-stat-bump = Wypukłość
 panel-stat-bump-hover = Czyta statystykę każdej orbity jako wysokość i oświetla jej nachylenie pod kątem światła reliefu: wygrawerowane pasemka wzdłuż linii pola, drobniejsze ze średnią pasków, dłuższe z nierównością trójkąta. Z włączonym światłem reliefu dodaje się do jego powierzchni, czesany satynowy tłok; z wyłączonym jest oświetlana sama. Widok liczy wtedy także statystykę, wolniej w głębi. Także --stat-bump NAZWA dla --render.
 panel-stat-bump-height = Wysokość
 panel-stat-bump-height-hover = Jak wysoko stoi statystyka, w pikselach na jednostkę jej szarości: wyżej rzeźbi pasemka głębiej. 0 zostawia powierzchnię płaską.
+panel-stat-gloss = Wzór połysku
+panel-stat-gloss-hover = Pozwala statystyce każdej orbity ustalać, jak silny jest połysk światła reliefu, tak że jego blask rozpada się na pasma wzdłuż linii pola, jak szczotkowany metal: drobniejsze przy średniej pasków, dłuższe przy nierówności trójkąta. Widok liczy wtedy także tę statystykę, wolniej w głębi. Także --stat-gloss NAZWA dla --render.
+panel-stat-gloss-amount = Udział
+panel-stat-gloss-amount-hover = Na ile statystyka ustala siłę połysku: 1 sprawia, że całkiem za nią podąża, 0 zostawia połysk bez zmian.
+panel-stat-gloss-off = Wzór połysku kształtuje połysk światła reliefu: w Efektach włącz „Oświetlenie reliefu 3D” i „Nachylenie z odległości” i ustaw Połysk powyżej 0.
 panel-trap-shape = Kształt pułapki
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

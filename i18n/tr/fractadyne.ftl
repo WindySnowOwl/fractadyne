@@ -2879,6 +2879,11 @@ panel-stat-bump = Kabartma
 panel-stat-bump-hover = Her yörüngenin bir istatistiğini yükseklik olarak okur ve eğimini kabartma ışığının açısıyla aydınlatır: alan çizgileri boyunca oyulmuş lifler, şerit ortalamasıyla daha ince, üçgen eşitsizliğiyle daha uzun. Kabartma ışığı açıkken kabartmanın yüzeyine eklenir, taranmış saten bir baskı; kapalıyken tek başına aydınlatılır. Görünüm o zaman istatistiği de hesaplar, derinde daha yavaştır. --render için de --stat-bump AD.
 panel-stat-bump-height = Yükseklik
 panel-stat-bump-height-hover = İstatistiğin ne kadar yüksek durduğu, grisinin birimi başına piksel olarak: daha yüksek lifleri daha derin oyar. 0 yüzeyi düz bırakır.
+panel-stat-gloss = Parlaklık deseni
+panel-stat-gloss-hover = Her yörüngenin bir istatistiğinin kabartma ışığının yansımasının ne kadar güçlü olduğunu belirlemesini sağlar; böylece parıltısı alan çizgileri boyunca tellere ayrılır, fırçalanmış metal gibi: şerit ortalamasıyla daha ince, üçgen eşitsizliğiyle daha uzun. Görünüm o zaman istatistiği de hesaplar, derinlikte daha yavaş. --render için --stat-gloss AD da var.
+panel-stat-gloss-amount = Oran
+panel-stat-gloss-amount-hover = İstatistiğin yansımanın gücünü ne kadar belirlediği: 1 onu tamamen istatistiğe uydurur, 0 yansımayı olduğu gibi bırakır.
+panel-stat-gloss-off = Parlaklık deseni kabartma ışığının yansımasını biçimlendirir: Efektler'de "3B kabartma aydınlatması" ile "Uzaklıktan eğim"i açın ve Yansıma'yı 0'ın üstüne getirin.
 panel-trap-shape = Tuzak şekli
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

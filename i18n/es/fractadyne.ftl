@@ -2888,6 +2888,11 @@ panel-stat-bump = Relieve
 panel-stat-bump-hover = Lee una estadística de cada órbita como una altura e ilumina su pendiente con el ángulo de la luz de relieve: hebras grabadas a lo largo de las líneas de campo, más finas con el promedio de franjas, más largas con la desigualdad triangular. Con la luz de relieve encendida se suma a la superficie del relieve, un repujado satinado y peinado; apagada, se ilumina sola. La vista calcula entonces también la estadística, más lenta en profundidad. También --stat-bump NOMBRE para --render.
 panel-stat-bump-height = Altura
 panel-stat-bump-height-hover = Qué tan alta se alza la estadística, en píxeles por unidad de su gris: más alta graba las hebras más hondo. 0 deja la superficie plana.
+panel-stat-gloss = Brillo
+panel-stat-gloss-hover = Deja que una estadística de cada órbita fije la intensidad del reflejo de la luz de relieve, de modo que su lustre se rompe en hebras a lo largo de las líneas de campo, como metal cepillado: más finas con el promedio de franjas, más largas con la desigualdad triangular. La vista calcula entonces también la estadística, más lenta en profundidad. También --stat-gloss NOMBRE para --render.
+panel-stat-gloss-amount = Cantidad
+panel-stat-gloss-amount-hover = Cuánto fija la estadística la intensidad del reflejo: 1 hace que la siga por completo, 0 deja el reflejo como está.
+panel-stat-gloss-off = Brillo da forma al reflejo de la luz de relieve: en Efectos, activa «Iluminación de relieve 3D» y «Pendiente según la distancia», y pon Reflejo por encima de 0.
 panel-trap-shape = Forma de trampa
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

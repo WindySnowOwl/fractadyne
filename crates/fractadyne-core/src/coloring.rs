@@ -1689,6 +1689,20 @@ pub const LAYER_CONTRAST_MAX: f32 = 16.0;
 pub const BUMP_HEIGHT_DEFAULT: f32 = 6.0;
 pub const BUMP_HEIGHT_MAX: f32 = 32.0;
 
+/// The gloss's amount (coloring plan E5) by default: the relief light's highlight scaled by the
+/// statistic's gray alone. At the seahorse valley the prototype's highlight at 1 broke the C5
+/// highlight's even sheen into strands along the field lines (2026-11-27,
+/// `local/research_notes/.../combos/proto/e5_shine.py`); at 0.5 they were faint.
+pub const GLOSS_AMOUNT_DEFAULT: f32 = 1.0;
+
+/// The weight on the relief light's highlight under the gloss (coloring plan E5), for a pixel's
+/// mean `gray` of the statistic ([`layer_gray`] at the default contrast): `1 − amount + amount ·
+/// gray`, so amount 0 leaves the highlight as it is and 1 makes it the gray's. The shader's.
+pub fn gloss_weight(gray: f32, amount: f32) -> f32 {
+    let a = amount.clamp(0.0, 1.0);
+    1.0 - a + a * gray.clamp(0.0, 1.0)
+}
+
 /// The gray of the statistic layer for a statistic value `s` (coloring plan E3): the shader's.
 pub fn layer_gray(s: f32, center: f32, contrast: f32) -> f32 {
     (0.5 + contrast * (s - center)).clamp(0.0, 1.0)

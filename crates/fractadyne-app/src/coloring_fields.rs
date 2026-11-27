@@ -96,18 +96,23 @@ fn stat_bump(s: &ColoringSpec) -> BandTexture {
     BandTexture::parse_key(&s.stat_bump).unwrap_or_default()
 }
 
+/// The Smooth method's gloss (E5), by its key; none for an empty or unknown one.
+fn stat_gloss(s: &ColoringSpec) -> BandTexture {
+    BandTexture::parse_key(&s.stat_gloss).unwrap_or_default()
+}
+
 /// A statistic layer is drawn over the Smooth method's colors (E3).
 fn layer_on(s: &ColoringSpec) -> bool {
     method(s) == ColorMethod::Smooth && stat_layer(s) != BandTexture::None
 }
 
-/// The stripe average is drawn: the stripe method, or Smooth's bands textured (E1), layered (E3) or
-/// bumped (E4) by it. Its density and tail then matter.
+/// The stripe average is drawn: the stripe method, or Smooth's bands textured (E1), layered (E3),
+/// bumped (E4) or glossed (E5) by it. Its density and tail then matter.
 fn stripe_used(s: &ColoringSpec) -> bool {
     let stripe = BandTexture::Stripe;
     method(s) == ColorMethod::Stripe
         || (method(s) == ColorMethod::Smooth
-            && (band_texture(s) == stripe || stat_layer(s) == stripe || stat_bump(s) == stripe))
+            && (band_texture(s) == stripe || stat_layer(s) == stripe || stat_bump(s) == stripe || stat_gloss(s) == stripe))
 }
 
 fn always(_: &ColoringSpec) -> bool {
@@ -171,7 +176,7 @@ pub(crate) fn inside_color_used(s: &ColoringSpec) -> bool {
 }
 
 /// The table, in the order a view writes its keys. A row's parents come before it.
-pub(crate) const FIELDS: [Field; 73] = [
+pub(crate) const FIELDS: [Field; 75] = [
     Field {
         key: "method",
         name: "coloring method",
@@ -278,6 +283,27 @@ pub(crate) const FIELDS: [Field; 73] = [
         ),
         parents: &["method", "stat_bump"],
         shows: |s| method(s) == ColorMethod::Smooth && stat_bump(s) != BandTexture::None,
+    },
+    Field {
+        key: "stat_gloss",
+        name: "gloss",
+        doc: "The Smooth method's gloss: a statistic of each orbit whose gray sets how strong the relief light's highlight is (with `light`, `light_steep` and `light_highlight` above 0), \"stripe\" (the stripe average, at the stripe density) or \"triangle\" (the triangle inequality average); \"none\" or left out: no gloss (method \"smooth\").",
+        access: Access::Choice(|s| s.stat_gloss.as_str(), |s, v| s.stat_gloss = v.to_string(), band_texture_keys),
+        parents: &["method"],
+        shows: |s| method(s) == ColorMethod::Smooth,
+    },
+    Field {
+        key: "stat_gloss_amount",
+        name: "gloss amount",
+        doc: "How much the statistic sets the highlight's strength: 0 leaves the highlight as it is, 1 makes it the statistic's gray, 0 to 1 (1 when left out; with `stat_gloss`).",
+        access: Access::Real(
+            |s| s.stat_gloss_amount,
+            |s, v| s.stat_gloss_amount = v,
+            *slider_range::STAT_GLOSS_AMOUNT.start(),
+            *slider_range::STAT_GLOSS_AMOUNT.end(),
+        ),
+        parents: &["method", "stat_gloss"],
+        shows: |s| method(s) == ColorMethod::Smooth && stat_gloss(s) != BandTexture::None,
     },
     Field {
         key: "stripe_freq",

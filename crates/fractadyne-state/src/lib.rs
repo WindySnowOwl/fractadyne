@@ -143,6 +143,13 @@ pub struct ColoringSpec {
     pub stat_bump: String,
     #[serde(default = "default_stat_bump_height")]
     pub stat_bump_height: f32,
+    /// The Smooth method's gloss (coloring plan E5): the statistic whose gray scales the relief
+    /// light's highlight (`BandTexture` by key; empty or "none" for none, and absent from every
+    /// session from before it) and how much.
+    #[serde(default)]
+    pub stat_gloss: String,
+    #[serde(default = "default_stat_gloss_amount")]
+    pub stat_gloss_amount: f32,
     /// Blend in OKLab (coloring plan C7): a palette's RGB segments blended in OKLab, a perceptual
     /// space, rather than between their display (sRGB-encoded) values. Off by default.
     #[serde(default)]
@@ -1001,6 +1008,13 @@ fn default_stat_bump_height() -> f32 {
     DEFAULT_STAT_BUMP_HEIGHT
 }
 
+/// `fractadyne_core::coloring::GLOSS_AMOUNT_DEFAULT` (the app's tests hold the two equal).
+pub const DEFAULT_STAT_GLOSS_AMOUNT: f32 = 1.0;
+
+fn default_stat_gloss_amount() -> f32 {
+    DEFAULT_STAT_GLOSS_AMOUNT
+}
+
 /// `fractadyne_core::coloring::TRAP_TAIL_DEFAULT` (the app's tests hold the two equal): at the
 /// seahorse at 1e20x the line trap's bands thread the valley at 256 (spread 8.1, against 0.000 for
 /// the whole orbit; 2026-11-26).
@@ -1097,6 +1111,8 @@ impl Default for ColoringSpec {
             stat_layer_opacity: 1.0,
             stat_bump: String::new(),
             stat_bump_height: DEFAULT_STAT_BUMP_HEIGHT,
+            stat_gloss: String::new(),
+            stat_gloss_amount: DEFAULT_STAT_GLOSS_AMOUNT,
             palette_oklab: false,
             coloring_hook: String::new(),
             coloring_hook_params: Vec::new(),

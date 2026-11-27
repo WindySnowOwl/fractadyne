@@ -245,6 +245,27 @@ pub(crate) fn stat_bump_words(method: u32, b: StatBump) -> (u32, f32, f32) {
     (t.gpu_id(), height.min(fractadyne_core::coloring::BUMP_HEIGHT_MAX), t.center())
 }
 
+/// The Smooth method's gloss as a frame draws it (coloring plan E5): the relief light's highlight
+/// scaled by a statistic's gray (as the layer makes it, at the default contrast; the pixel's mean),
+/// [`fractadyne_core::coloring::gloss_weight`]. Seen only where the highlight is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct StatGloss {
+    /// Which statistic: the same choice as the band texture's (`BandTexture::None`: no gloss).
+    pub statistic: fractadyne_core::coloring::BandTexture,
+    pub amount: f32,
+}
+
+/// The color uniform's gloss words (coloring plan E5): `(lane, amount, center)`, the lane 0 (none)
+/// but for the Smooth method with a gloss of an amount above 0, whose statistic the frame then
+/// accumulates. Off, the highlight is as before to the bit.
+pub(crate) fn stat_gloss_words(method: u32, g: StatGloss) -> (u32, f32, f32) {
+    let StatGloss { statistic: t, amount } = g;
+    if method != fractadyne_core::coloring::ColorMethod::Smooth.gpu_id() || t == fractadyne_core::coloring::BandTexture::None || !(amount > 0.0) {
+        return (0, 0.0, 0.0);
+    }
+    (t.gpu_id(), amount.min(1.0), t.center())
+}
+
 /// Where the orbit trap sits, turned and sized (the shader's `trap_c` .. `trap_on`; coloring plan
 /// F4): the shape's coordinates are `w = R(−θ)·(z − center)·inv_size` and its distance is
 /// `size · shape(w)`, as [`fractadyne_core::coloring::TrapPlace::dist`] computes it in f64.
@@ -694,6 +715,12 @@ pub(crate) struct ColorUniforms {
     pub(crate) bump_height: f32,
     pub(crate) bump_center: f32,
     pub(crate) _pad_bp: f32,
+    /// The gloss (coloring plan E5, [`stat_gloss_words`]): its lane (`BandTexture::gpu_id`, 0 none),
+    /// its amount and the statistic's center; a new 16-byte row. `ColorU.gloss_*` mirror them.
+    pub(crate) gloss_stat: u32,
+    pub(crate) gloss_amount: f32,
+    pub(crate) gloss_center: f32,
+    pub(crate) _pad_gl: f32,
 }
 
 /// [`ColorUniforms::tap_stride`] for a palette-browser thumbnail colored from a texture built at
@@ -4218,6 +4245,9 @@ pub struct MandelbrotParams {
     /// The Smooth method's statistic bump (coloring plan E4): its statistic must be among the
     /// frame's (`orbit_stats`), and is read only under Smooth.
     pub stat_bump: StatBump,
+    /// The Smooth method's gloss (coloring plan E5): its statistic must be among the frame's
+    /// (`orbit_stats`), and is read only under Smooth, where the relief light draws its highlight.
+    pub stat_gloss: StatGloss,
     /// Edge shading (coloring plan C3); off by default.
     pub edge: EdgeShade,
     /// Equipotential lines (coloring plan C10); off by default.
@@ -4558,6 +4588,7 @@ impl Default for MandelbrotParams {
             band_texture: Default::default(),
             stat_layer: Default::default(),
             stat_bump: Default::default(),
+            stat_gloss: Default::default(),
             edge: EdgeShade::default(),
             grid: GridLines::default(),
             relief: ReliefLight::default(),
@@ -5098,6 +5129,10 @@ impl CallbackTrait for MandelbrotParams {
             bump_height: stat_bump_words(self.color_method, self.stat_bump).1,
             bump_center: stat_bump_words(self.color_method, self.stat_bump).2,
             _pad_bp: 0.0,
+            gloss_stat: stat_gloss_words(self.color_method, self.stat_gloss).0,
+            gloss_amount: stat_gloss_words(self.color_method, self.stat_gloss).1,
+            gloss_center: stat_gloss_words(self.color_method, self.stat_gloss).2,
+            _pad_gl: 0.0,
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);

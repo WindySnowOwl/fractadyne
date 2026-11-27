@@ -2887,6 +2887,11 @@ panel-stat-bump = Relevo
 panel-stat-bump-hover = Lê uma estatística de cada órbita como uma altura e ilumina sua inclinação com o ângulo da luz de relevo: fios gravados ao longo das linhas de campo, mais finos com a média de listras, mais longos com a desigualdade triangular. Com a luz de relevo ligada, soma-se à superfície do relevo, um gofrado acetinado e penteado; desligada, é iluminado sozinho. A vista passa a calcular também a estatística, mais lenta em profundidade. Também --stat-bump NOME para --render.
 panel-stat-bump-height = Altura
 panel-stat-bump-height-hover = Quão alto a estatística se ergue, em pixels por unidade do seu cinza: mais alto grava os fios mais fundo. 0 deixa a superfície plana.
+panel-stat-gloss = Brilho
+panel-stat-gloss-hover = Deixa uma estatística de cada órbita definir a força do reflexo da luz de relevo, de modo que o lustro se parte em fios ao longo das linhas de campo, como metal escovado: mais finos com a média de listras, mais longos com a desigualdade triangular. A visualização então calcula também a estatística, mais lenta em profundidade. Também --stat-gloss NOME para --render.
+panel-stat-gloss-amount = Quantidade
+panel-stat-gloss-amount-hover = Quanto a estatística define a força do reflexo: 1 faz o reflexo segui-la por completo, 0 deixa o reflexo como está.
+panel-stat-gloss-off = O brilho molda o reflexo da luz de relevo: em Efeitos, ative "Iluminação de relevo 3D" e "Inclinação pela distância", e ponha Reflexo acima de 0.
 panel-trap-shape = Forma da armadilha
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.
