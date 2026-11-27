@@ -33,6 +33,19 @@
 //! (design/live-render-robustness.md §5.2): the worst case is a bound for safety, and the learned
 //! budget never reads it.
 //!
+//! **Confirmed by a second lap** ([`confirm`], 2026-11-27). A cold start compiles the renderer's
+//! pipelines for ~12 s with nothing for the GPU to do, and the probe then timed a card whose clock
+//! had not come up: PLUTO's RTX 3070 read direct 9.3e-8 ms/step where it reads under 1.1e-8 warm
+//! (df32 5x slow too; floatexp, probed last, the same both ways), and the RTX 3080 here 2.1e-8
+//! against 6.8e-9. The ceiling, lowered 4.8x on that, held for the session, and, saved, for the
+//! next one too (the re-check never raises it), and every cold walk on PLUTO (dev.18, 20, 21, 23)
+//! ran its tiled minimap steps into their 30 s caps. The clock comes up in a step, once the card
+//! has been busy for a while (~0.45 s on the RTX 3070, under 0.2 s on the RTX 3080), so two
+//! passes before the step agree and a retry at once cannot see it. So the first lap through the
+//! modes is also the warm-up: then each mode it MEASURED (a fast bound changes nothing) is timed
+//! again at the same iterations, and one that now reads more than [`CONFIRM_FASTER`] faster is
+//! measured again from the start. A warm card pays one pass set per measured mode.
+//!
 //! **Saved, then re-checked** ([`saved`]): a reading is kept per card, driver, build and power
 //! state. A later launch in the same state uses it at once and measures the first frame's mode
 //! again LATER, at the iterations it was saved at, once the picture is up and the view is still:
@@ -73,6 +86,14 @@ pub(crate) const PASS_TARGET_MS: f64 = 12.0;
 pub(crate) const PASS_WALL_MAX_MS: f64 = 50.0;
 /// Timed passes per ramp step (after one untimed warm-up, `render_iter_probe`); the slowest counts.
 pub(crate) const REPS: u32 = 2;
+
+/// A measurement from the first lap stands where the second lap's re-measure at its iterations is
+/// not faster than this many times (the module header: a pass-to-pass jitter is a few percent;
+/// a clock still coming up read 3-9x slow).
+pub(crate) const CONFIRM_FASTER: f64 = 1.15;
+/// The most times the second lap measures one mode again (a clock that comes up in more than one
+/// step). Each round is a re-measure, and where it reads faster, a ramp from the start.
+pub(crate) const CONFIRM_ROUNDS: u32 = 3;
 
 /// The modes probed, in order.
 const MODES: [RenderMode; 3] = [RenderMode::Direct, RenderMode::Df32Pert, RenderMode::Floatexp];
@@ -127,6 +148,70 @@ pub(crate) fn tell_export_card_costs(floatexp: Option<Finding>) {
     if let Some(f) = floatexp {
         fractadyne_gpu::set_card_step_ms(RenderMode::Floatexp.to_u32(), f.ms_per_step());
     }
+}
+
+/// The second lap's verdict on a mode's finding, given its re-measure at the same iterations
+/// (`fresh`, ms a step).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Confirm {
+    /// It stands, as the slower of the two readings (a fast bound, or a re-measure that could not
+    /// be used, as it was).
+    Stands(Finding),
+    /// The re-measure read more than [`CONFIRM_FASTER`] faster: the first was taken on a clock that
+    /// was still coming up. Measure the mode again from the start.
+    Again,
+}
+
+/// [`Confirm`] for `first` against its re-measure `fresh`. A re-measure that reads slower stands in
+/// its place (the slower of two readings counts, as of a pass's timed reps); the first's wall is
+/// kept for the log.
+pub(crate) fn confirm(first: Finding, fresh: f64) -> Confirm {
+    let Finding::Measured { iters, wall_ms, ms_per_step, .. } = first else {
+        return Confirm::Stands(first);
+    };
+    if !(fresh.is_finite() && fresh > 0.0) {
+        return Confirm::Stands(first);
+    }
+    if fresh > ms_per_step {
+        let px = f64::from(SIDE) * f64::from(SIDE);
+        return Confirm::Stands(Finding::Measured { iters, ms: fresh * px * f64::from(iters), wall_ms, ms_per_step: fresh });
+    }
+    if fresh * CONFIRM_FASTER >= ms_per_step {
+        Confirm::Stands(first)
+    } else {
+        Confirm::Again
+    }
+}
+
+/// The second lap for one mode: `remeasure` times a finding's iterations again ([`remeasure_at`]),
+/// `measure` ramps the mode from the start ([`ramp`]), both on `s` (the mode's request). Returns
+/// the finding that stands and how many times the mode was measured again (0: the first stood).
+/// A re-measure or a ramp that fails leaves the finding before it, the slower one.
+pub(crate) fn confirmed<S>(
+    first: Finding,
+    s: &mut S,
+    mut remeasure: impl FnMut(&mut S, Finding) -> Result<f64, String>,
+    mut measure: impl FnMut(&mut S) -> Result<Finding, String>,
+) -> (Finding, u32) {
+    let mut f = first;
+    let mut again = 0;
+    for _ in 0..CONFIRM_ROUNDS {
+        if matches!(f, Finding::Fast { .. }) {
+            break;
+        }
+        let Ok(fresh) = remeasure(s, f) else { break };
+        match confirm(f, fresh) {
+            Confirm::Stands(g) => return (g, again),
+            Confirm::Again => match measure(s) {
+                Ok(g) => {
+                    f = g;
+                    again += 1;
+                }
+                Err(_) => break,
+            },
+        }
+    }
+    (f, again)
 }
 
 /// The ramp's next move after a timed pass.
@@ -500,18 +585,46 @@ impl FractadyneApp {
             }
             None => {
                 let mut out = Vec::new();
+                let mut reqs = Vec::new();
                 for (k, mode) in MODES.into_iter().enumerate() {
                     let tm = Instant::now();
-                    let found = match &live[k] {
+                    let (found, req) = match &live[k] {
                         Some(l) => {
                             let mut req = plan_request(self.speed_probe_plan(mode));
-                            ramp(&rs.device, &rs.queue, l, &mut req, below[k])
+                            (ramp(&rs.device, &rs.queue, l, &mut req, below[k]), Some(req))
                         }
-                        None => Err("the renderer is not installed".to_string()),
+                        None => (Err("the renderer is not installed".to_string()), None),
                     };
-                    out.push((found, format!("{:.0} ms", tm.elapsed().as_secs_f64() * 1000.0)));
+                    out.push((found, tm.elapsed().as_secs_f64() * 1000.0));
+                    reqs.push(req);
                 }
-                out.try_into().expect("one per mode")
+                // The second lap (the module header): the first was the warm-up.
+                let mut done = Vec::new();
+                for (k, ((found, lap1_ms), req)) in out.into_iter().zip(reqs).enumerate() {
+                    let first = found.as_ref().ok().copied();
+                    let (Some(first), Some(mut req), Some(l)) = (first, req, live[k].as_ref()) else {
+                        done.push((found, format!("{lap1_ms:.0} ms")));
+                        continue;
+                    };
+                    let tm = Instant::now();
+                    let (f, again) = confirmed(
+                        first,
+                        &mut req,
+                        |req, f| remeasure_at(&rs.device, &rs.queue, l, req, f),
+                        |req| ramp(&rs.device, &rs.queue, l, req, below[k]),
+                    );
+                    let lap2_ms = tm.elapsed().as_secs_f64() * 1000.0;
+                    let took = match (first, again) {
+                        (Finding::Fast { .. }, _) => format!("{lap1_ms:.0} ms"),
+                        (_, 0) => format!("{lap1_ms:.0} ms, confirmed in {lap2_ms:.0} ms"),
+                        (first, _) => format!(
+                            "{lap1_ms:.0} ms, then {lap2_ms:.0} ms: the first lap read {:.3e} ms/step, on a clock still coming up",
+                            first.ms_per_step()
+                        ),
+                    };
+                    done.push((Ok(f), took));
+                }
+                done.try_into().expect("one per mode")
             }
         };
         let parts = self.speed_probe_apply(&found, opening_floor);
