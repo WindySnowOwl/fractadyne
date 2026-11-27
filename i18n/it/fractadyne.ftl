@@ -2887,6 +2887,11 @@ panel-stat-bump = Rilievo
 panel-stat-bump-hover = Legge una statistica di ogni orbita come un’altezza e ne illumina la pendenza con l’angolo della luce di rilievo: filamenti incisi lungo le linee di campo, più fini con la media delle strisce, più lunghi con la disuguaglianza triangolare. Con la luce di rilievo accesa si somma alla superficie del rilievo, una goffratura satinata e pettinata; spenta, è illuminato da solo. La vista calcola allora anche la statistica, più lenta in profondità. Anche --stat-bump NOME per --render.
 panel-stat-bump-height = Altezza
 panel-stat-bump-height-hover = Quanto si alza la statistica, in pixel per unità del suo grigio: più alta incide i filamenti più a fondo. 0 lascia la superficie piatta.
+panel-stat-gloss = Lucentezza
+panel-stat-gloss-hover = Lascia che una statistica di ogni orbita stabilisca quanto è forte il riflesso della luce a rilievo, così la sua lucentezza si spezza in ciocche lungo le linee di campo, come metallo spazzolato: più fini con la media a strisce, più lunghe con la disuguaglianza triangolare. La vista calcola allora anche la statistica, più lenta in profondità. Anche --stat-gloss NOME per --render.
+panel-stat-gloss-amount = Quantità
+panel-stat-gloss-amount-hover = Quanto la statistica stabilisce la forza del riflesso: 1 glielo fa seguire del tutto, 0 lascia il riflesso com’è.
+panel-stat-gloss-off = La lucentezza modella il riflesso della luce a rilievo: in Effetti, attiva «Illuminazione a rilievo 3D» e «Pendenza dalla distanza», e porta Riflesso sopra 0.
 panel-trap-shape = Forma trappola
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

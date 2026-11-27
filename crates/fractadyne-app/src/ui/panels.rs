@@ -173,6 +173,50 @@ impl crate::FractadyneApp {
         r.on_hover_text(format!("{}\n\n{}", tr!(panel_stat_bump_height_hover), tr!(panel_double_click_reset)));
     }
 
+    /// The Smooth method's gloss (coloring plan E5): which statistic sets how strong the relief
+    /// light's highlight is, and while one is, how much. Grayed out, saying why, while no highlight
+    /// is drawn (the relief light, its slope from the distance and a highlight above 0).
+    fn stat_gloss_rows(&mut self, ui: &mut egui::Ui) {
+        use fractadyne_core::coloring::BandTexture;
+        let label = |t: BandTexture| match t {
+            BandTexture::None => tr!(panel_band_texture_none),
+            BandTexture::Stripe => tr!(color_method_stripe),
+            BandTexture::Triangle => tr!(color_method_triangle),
+        };
+        let e = &self.effects;
+        let drawn = self.fractal.caps().distance_estimate && e.light && e.light_steep && e.light_highlight > 0.0;
+        ui.add_enabled_ui(drawn, |ui| {
+            labelled(ui, &tr!(panel_stat_gloss), |ui| {
+                egui::ComboBox::from_id_salt("panel_stat_gloss")
+                    .selected_text(label(self.coloring.stat_gloss))
+                    .show_ui(ui, |ui| {
+                        for t in BandTexture::ALL {
+                            ui.selectable_value(&mut self.coloring.stat_gloss, t, label(t));
+                        }
+                    })
+                    .response
+                    .on_hover_text(tr!(panel_stat_gloss_hover));
+            })
+        })
+        .response
+        .on_disabled_hover_text(tr!(panel_stat_gloss_off));
+        if self.coloring.stat_gloss == BandTexture::None {
+            return;
+        }
+        let r = ui
+            .add_enabled_ui(drawn, |ui| {
+                labelled(ui, &tr!(panel_stat_gloss_amount), |ui| {
+                    ui.add(egui::Slider::new(&mut self.coloring.stat_gloss_amount, crate::slider_range::STAT_GLOSS_AMOUNT))
+                })
+            })
+            .inner;
+        if slider_double_clicked(&r) {
+            self.coloring.stat_gloss_amount = fractadyne_core::coloring::GLOSS_AMOUNT_DEFAULT;
+        }
+        r.on_hover_text(format!("{}\n\n{}", tr!(panel_stat_gloss_amount_hover), tr!(panel_double_click_reset)))
+            .on_disabled_hover_text(tr!(panel_stat_gloss_off));
+    }
+
     /// The trap's tail (F4 part 5), the method's trap and the inside's alike: Tail only, and its
     /// length while it is on. Under the trap's shape, wherever that is drawn.
     fn trap_tail_rows(&mut self, ui: &mut egui::Ui) {
@@ -756,18 +800,20 @@ impl FractadyneApp {
                 // texture. A family with no orbit statistics has nothing to texture them with.
                 if self.coloring.color_method == ColorMethod::Smooth && ColorMethod::Stripe.lacks(caps).is_none() {
                     self.band_texture_rows(ui);
-                    // ...and its statistic layer (E3) and bump (E4), on the same terms.
+                    // ...and its statistic layer (E3), bump (E4) and gloss (E5), on the same terms.
                     self.stat_layer_rows(ui);
                     self.stat_bump_rows(ui);
+                    self.stat_gloss_rows(ui);
                 }
                 // The stripe average's density and tail: the stripe method's, or a stripe texture's,
-                // layer's or bump's.
+                // layer's, bump's or gloss's.
                 let stripe = fractadyne_core::coloring::BandTexture::Stripe;
                 let stripe_used = self.coloring.color_method == ColorMethod::Stripe
                     || (self.coloring.color_method == ColorMethod::Smooth
                         && (self.coloring.band_texture == stripe
                             || self.coloring.stat_layer == stripe
-                            || self.coloring.stat_bump == stripe));
+                            || self.coloring.stat_bump == stripe
+                            || self.coloring.stat_gloss == stripe));
                 if stripe_used {
                     let r = labelled(ui, &tr!(panel_stripe_density), |ui| {
                         ui.add(

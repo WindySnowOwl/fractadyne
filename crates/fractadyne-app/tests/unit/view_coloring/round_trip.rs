@@ -45,6 +45,8 @@ fn scrambled() -> ViewColoring {
         stat_layer_opacity: 0.3,
         stat_bump: fractadyne_core::coloring::BandTexture::Triangle,
         stat_bump_height: 11.0,
+        stat_gloss: fractadyne_core::coloring::BandTexture::Stripe,
+        stat_gloss_amount: 0.35,
         light: true,
         light_angle: -1.25,
         light_height: 3.5,
@@ -144,6 +146,11 @@ fn variants() -> Vec<ViewColoring> {
     v.push(ViewColoring { stat_bump: fractadyne_core::coloring::BandTexture::Stripe, ..d.clone() });
     v.push(ViewColoring { stat_bump: fractadyne_core::coloring::BandTexture::Triangle, stat_bump_height: 14.0, ..d.clone() });
     v.push(ViewColoring { stat_bump: fractadyne_core::coloring::BandTexture::Stripe, stat_layer: fractadyne_core::coloring::BandTexture::Triangle, ..d.clone() });
+    // The gloss (E5): the stripe at its default amount, the triangle inequality at another, and a
+    // gloss beside a bump of the other statistic.
+    v.push(ViewColoring { stat_gloss: fractadyne_core::coloring::BandTexture::Stripe, ..d.clone() });
+    v.push(ViewColoring { stat_gloss: fractadyne_core::coloring::BandTexture::Triangle, stat_gloss_amount: 0.6, ..d.clone() });
+    v.push(ViewColoring { stat_gloss: fractadyne_core::coloring::BandTexture::Triangle, stat_bump: fractadyne_core::coloring::BandTexture::Stripe, ..d.clone() });
     // The trap's tail (F4 part 5): on at its default length, then at another; and on with only the
     // inside colored by the trap (Smooth outside).
     v.push(ViewColoring { method: ColorMethod::OrbitTrap, trap_tail: true, ..d.clone() });

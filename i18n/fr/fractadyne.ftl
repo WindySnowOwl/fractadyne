@@ -2888,6 +2888,11 @@ panel-stat-bump = Bosselage
 panel-stat-bump-hover = Lit une statistique de chaque orbite comme une hauteur et éclaire sa pente sous l’angle de la lumière de relief : des mèches gravées le long des lignes de champ, plus fines avec la moyenne de rayures, plus longues avec l’inégalité triangulaire. Avec la lumière de relief allumée, il s’ajoute à la surface du relief, un gaufrage satiné et peigné ; éteinte, il est éclairé seul. La vue calcule alors aussi la statistique, plus lente en profondeur. Aussi --stat-bump NOM pour --render.
 panel-stat-bump-height = Hauteur
 panel-stat-bump-height-hover = La hauteur de la statistique, en pixels par unité de son gris : plus haut creuse les mèches plus profond. 0 laisse la surface plate.
+panel-stat-gloss = Brillance
+panel-stat-gloss-hover = Laisse une statistique de chaque orbite fixer l’intensité du reflet de la lumière de relief, si bien que son lustre se brise en mèches le long des lignes de champ, comme du métal brossé : plus fines avec la moyenne des rayures, plus longues avec l’inégalité triangulaire. La vue calcule alors aussi la statistique, plus lente en profondeur. Aussi --stat-gloss NOM pour --render.
+panel-stat-gloss-amount = Dosage
+panel-stat-gloss-amount-hover = À quel point la statistique fixe l’intensité du reflet : 1 la lui fait suivre entièrement, 0 laisse le reflet tel quel.
+panel-stat-gloss-off = La brillance façonne le reflet de la lumière de relief : dans Effets, activez « Éclairage en relief 3D » et « Pente selon la distance », et réglez Reflet au-dessus de 0.
 panel-trap-shape = Forme du piège
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

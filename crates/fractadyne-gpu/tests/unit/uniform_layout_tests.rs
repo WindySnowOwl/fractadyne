@@ -175,6 +175,10 @@ fn the_palette_fade_fields_line_up() {
         ("bump_stat", std::mem::offset_of!(ColorUniforms, bump_stat)),
         ("bump_height", std::mem::offset_of!(ColorUniforms, bump_height)),
         ("bump_center", std::mem::offset_of!(ColorUniforms, bump_center)),
+        // The gloss (E5).
+        ("gloss_stat", std::mem::offset_of!(ColorUniforms, gloss_stat)),
+        ("gloss_amount", std::mem::offset_of!(ColorUniforms, gloss_amount)),
+        ("gloss_center", std::mem::offset_of!(ColorUniforms, gloss_center)),
     ] {
         assert_eq!(wgsl_field_offset(&fields, wgsl), rust, "`{wgsl}` is at another offset in ColorU than in ColorUniforms");
     }

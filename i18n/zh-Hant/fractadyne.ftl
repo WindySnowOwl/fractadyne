@@ -2807,6 +2807,11 @@ panel-stat-bump = 凹凸
 panel-stat-bump-hover = 把每條軌道的一個統計量讀作高度，並用浮雕光的角度照亮它的坡度：沿力線刻出的絲縷，條紋平均下更細，三角不等式下更長。浮雕光開啟時疊加到浮雕的表面上，成為梳理過的緞面壓紋；關閉時單獨照亮。此時畫面也要計算該統計量，在深處會更慢。--render 中為 --stat-bump NAME。
 panel-stat-bump-height = 高度
 panel-stat-bump-height-hover = 統計量的高度，以其灰度每單位對應的像素計：越高絲縷刻得越深。為 0 時表面平坦。
+panel-stat-gloss = 光澤紋理
+panel-stat-gloss-hover = 讓每條軌道的一個統計量決定浮雕光高光的強弱，使光澤沿力線碎成絲縷，像拉絲金屬：條紋平均下更細，三角不等式下更長。檢視隨之也要計算該統計量，在深處更慢。--render 也可用 --stat-gloss NAME。
+panel-stat-gloss-amount = 比例
+panel-stat-gloss-amount-hover = 統計量決定高光強弱的程度：1 讓高光完全隨統計量變化，0 讓高光保持原樣。
+panel-stat-gloss-off = 光澤紋理塑造浮雕光的高光：請在「效果」中開啟「3D 浮雕光影」和「依距離的坡度」，並把光澤設為大於 0。
 panel-trap-shape = 陷阱形狀
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

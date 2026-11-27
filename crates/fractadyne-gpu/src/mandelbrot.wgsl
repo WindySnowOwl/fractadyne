@@ -4298,6 +4298,12 @@ struct ColorU {
     bump_height: f32,
     bump_center: f32,
     _pad_bp: f32,
+    // The gloss (coloring plan E5): its lane (0 none, 1 the stripe average, 2 the triangle
+    // inequality's), its amount (0..1), the statistic's center. Mirrors `ColorUniforms.gloss_*`.
+    gloss_stat: u32,
+    gloss_amount: f32,
+    gloss_center: f32,
+    _pad_gl: f32,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;
@@ -4745,9 +4751,10 @@ fn layered(c: vec3<f32>, a: vec4<f32>) -> vec3<f32> {
 // sample a neighbor the shade was half noise (the study, 2026-11-26: 0.56 of its structure held
 // against a render shifted a third of a pixel, 0.89 from the means).
 
-// The mean gray over the escaped texels of the texture's pixel `p` (clamped to the texture), and
-// how many there were.
-fn bump_mean(p: vec2<i32>, ss: u32, maxc: vec2<i32>) -> vec2<f32> {
+// The mean gray of the statistic in `lane` (1 the stripe average `aux.r`, 2 the triangle
+// inequality's `aux.g`) about its `center`, over the escaped texels of the texture's pixel `p`
+// (clamped to the texture), and how many there were. The bump's (E4) and the gloss's (E5).
+fn stat_mean(p: vec2<i32>, ss: u32, maxc: vec2<i32>, lane: u32, center: f32) -> vec2<f32> {
     var acc = 0.0;
     var n = 0.0;
     let q0 = clamp(p, vec2<i32>(0, 0), maxc / i32(ss)) * i32(ss);
@@ -4756,8 +4763,8 @@ fn bump_mean(p: vec2<i32>, ss: u32, maxc: vec2<i32>) -> vec2<f32> {
             let q = clamp(q0 + vec2<i32>(i, j), vec2<i32>(0, 0), maxc);
             if (textureLoad(iter_tex, q, 0).r >= 0.0) {
                 let a = textureLoad(aux_tex, q, 0);
-                let s = select(a.r, a.g, cu.bump_stat == 2u);
-                acc = acc + clamp(0.5 + 4.0 * (s - cu.bump_center), 0.0, 1.0);
+                let s = select(a.r, a.g, lane == 2u);
+                acc = acc + clamp(0.5 + 4.0 * (s - center), 0.0, 1.0);
                 n = n + 1.0;
             }
         }
@@ -4769,12 +4776,14 @@ fn bump_mean(p: vec2<i32>, ss: u32, maxc: vec2<i32>) -> vec2<f32> {
 // output pixel, in the stored normal's axes (the complex plane's, y up: the texture's rows run
 // down). 0 for an interior pixel; a neighbor with no escaped texel stands at the pixel's own height.
 fn bump_term(pix: vec2<i32>, ss: u32, maxc: vec2<i32>) -> vec2<f32> {
-    let c = bump_mean(pix, ss, maxc);
+    let lane = cu.bump_stat;
+    let ctr = cu.bump_center;
+    let c = stat_mean(pix, ss, maxc, lane, ctr);
     if (c.y == 0.0) { return vec2<f32>(0.0); }
-    let l = bump_mean(pix - vec2<i32>(1, 0), ss, maxc);
-    let r = bump_mean(pix + vec2<i32>(1, 0), ss, maxc);
-    let u = bump_mean(pix - vec2<i32>(0, 1), ss, maxc);
-    let d = bump_mean(pix + vec2<i32>(0, 1), ss, maxc);
+    let l = stat_mean(pix - vec2<i32>(1, 0), ss, maxc, lane, ctr);
+    let r = stat_mean(pix + vec2<i32>(1, 0), ss, maxc, lane, ctr);
+    let u = stat_mean(pix - vec2<i32>(0, 1), ss, maxc, lane, ctr);
+    let d = stat_mean(pix + vec2<i32>(0, 1), ss, maxc, lane, ctr);
     let gx = (select(c.x, r.x, r.y > 0.0) - select(c.x, l.x, l.y > 0.0)) * 0.5;
     let gy_down = (select(c.x, d.x, d.y > 0.0) - select(c.x, u.x, u.y > 0.0)) * 0.5;
     return -cu.bump_height * vec2<f32>(gx, -gy_down);
@@ -5274,7 +5283,16 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
             // pixel has a distance: the set's inside, and a pixel with none, are flat and stay matte
             // (the 3x3 normal lights the inside's edge pixels too).
             if (cu.relief_highlight > 0.0 && kw > 0.0) {
-                let hl = relief_highlight(nu_s, k_s, ld) * cu.relief_highlight * cf;
+                var hl = relief_highlight(nu_s, k_s, ld) * cu.relief_highlight * cf;
+                // The gloss (E5): the highlight scaled by the statistic's gray, this pixel's mean,
+                // `1 − amount + amount · gray` (`fractadyne_core::coloring::gloss_weight`). Off (lane
+                // 0), the highlight as it was, to the bit.
+                if (cu.gloss_stat != 0u && cu.color_method == METHOD_SMOOTH) {
+                    let gm = stat_mean(pix, ss, maxc, cu.gloss_stat, cu.gloss_center);
+                    if (gm.y > 0.0) {
+                        hl = hl * (1.0 - cu.gloss_amount + cu.gloss_amount * gm.x);
+                    }
+                }
                 col = min(col + hl * cu.relief_hl_col.xyz, vec3<f32>(1.0));
             }
         }

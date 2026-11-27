@@ -372,6 +372,8 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     "stat_layer", "stat_layer_blend", "stat_layer_contrast", "stat_layer_opacity",
     // Its statistic bump (coloring plan E4).
     "stat_bump", "stat_bump_height",
+    // Its gloss (coloring plan E5).
+    "stat_gloss", "stat_gloss_amount",
     // Edge shading (coloring plan C3).
     "edge", "edge_inside", "edge_width", "edge_strength", "edge_curve", "edge_color",
     // Equipotential lines (coloring plan C10).
@@ -503,6 +505,8 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("stat_layer_opacity", ValueKind::Float),
     ("stat_bump", ValueKind::BandTexture),
     ("stat_bump_height", ValueKind::Float),
+    ("stat_gloss", ValueKind::BandTexture),
+    ("stat_gloss_amount", ValueKind::Float),
     ("steps", ValueKind::Uint),
     ("equalize", ValueKind::Float),
     ("edge", ValueKind::Flag),

@@ -29,6 +29,8 @@ fn other_value(f: &Field) -> &'static str {
         Access::Real(..) if f.key == "edge_strength" => "0.5",
         // ...as it does the statistic layer's opacity (E3).
         Access::Real(..) if f.key == "stat_layer_opacity" => "0.5",
+        // ...and the gloss's amount (E5).
+        Access::Real(..) if f.key == "stat_gloss_amount" => "0.5",
         Access::Real(..) => "2.5",
         Access::Count(..) => "77",
         Access::Choice(..) => match f.key {
@@ -45,6 +47,7 @@ fn other_value(f: &Field) -> &'static str {
             "stat_layer" => "triangle",
             "stat_layer_blend" => "screen",
             "stat_bump" => "stripe",
+            "stat_gloss" => "triangle",
             k => panic!("no other value for the choice {k}"),
         },
         Access::Rgb(..) => "0.25,0.5,0.75",

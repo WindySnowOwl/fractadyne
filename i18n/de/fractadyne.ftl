@@ -2888,6 +2888,11 @@ panel-stat-bump = Prägung
 panel-stat-bump-hover = Liest eine Statistik jedes Orbits als Höhe und beleuchtet ihre Neigung im Winkel des Relieflichts: gravierte Strähnen entlang der Feldlinien, feiner mit dem Streifenmittel, länger mit der Dreiecksungleichung. Mit eingeschaltetem Relieflicht kommt sie zur Oberfläche des Reliefs hinzu, eine gekämmte Satinprägung; ausgeschaltet wird sie allein beleuchtet. Die Ansicht berechnet die Statistik dann mit, in der Tiefe langsamer. Auch --stat-bump NAME für --render.
 panel-stat-bump-height = Höhe
 panel-stat-bump-height-hover = Wie hoch die Statistik steht, in Pixeln je Einheit ihres Graus: höher schneidet die Strähnen tiefer ein. 0 lässt die Oberfläche flach.
+panel-stat-gloss = Glanz
+panel-stat-gloss-hover = Lässt eine Statistik jedes Orbits bestimmen, wie stark das Glanzlicht des Relieflichts ist, sodass sein Schimmer in Strähnen entlang der Feldlinien zerfällt, wie gebürstetes Metall: feiner mit dem Streifenmittel, länger mit der Dreiecksungleichung. Die Ansicht berechnet die Statistik dann mit, in der Tiefe langsamer. Auch --stat-gloss NAME für --render.
+panel-stat-gloss-amount = Anteil
+panel-stat-gloss-amount-hover = Wie stark die Statistik die Stärke des Glanzlichts bestimmt: 1 lässt es ganz der Statistik folgen, 0 lässt das Glanzlicht, wie es ist.
+panel-stat-gloss-off = Glanz formt das Glanzlicht des Relieflichts: Schalte unter Effekte „3D-Reliefbeleuchtung“ und „Neigung aus dem Abstand“ ein und stelle Glanzlicht über 0.
 panel-trap-shape = Fallenform
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

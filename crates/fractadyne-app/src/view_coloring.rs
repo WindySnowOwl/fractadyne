@@ -93,6 +93,9 @@ pub(crate) struct ViewColoring {
     /// The Smooth method's statistic bump (E4) and its height.
     pub(crate) stat_bump: fractadyne_core::coloring::BandTexture,
     pub(crate) stat_bump_height: f32,
+    /// The Smooth method's gloss (E5) and its amount.
+    pub(crate) stat_gloss: fractadyne_core::coloring::BandTexture,
+    pub(crate) stat_gloss_amount: f32,
     /// Relief lighting: on, angle (radians), the "Relief" slider.
     pub(crate) light: bool,
     pub(crate) light_angle: f32,
@@ -187,6 +190,8 @@ impl ViewColoring {
             stat_layer_opacity: s.stat_layer_opacity,
             stat_bump: fractadyne_core::coloring::BandTexture::parse_key(&s.stat_bump).unwrap_or_default(),
             stat_bump_height: s.stat_bump_height,
+            stat_gloss: fractadyne_core::coloring::BandTexture::parse_key(&s.stat_gloss).unwrap_or_default(),
+            stat_gloss_amount: s.stat_gloss_amount,
             light: s.light,
             light_angle: s.light_angle,
             light_height: s.light_height,
@@ -286,6 +291,11 @@ impl ViewColoring {
                 t => t.key().to_string(),
             },
             stat_bump_height: self.stat_bump_height,
+            stat_gloss: match self.stat_gloss {
+                fractadyne_core::coloring::BandTexture::None => String::new(),
+                t => t.key().to_string(),
+            },
+            stat_gloss_amount: self.stat_gloss_amount,
             light: self.light,
             light_angle: self.light_angle,
             light_height: self.light_height,

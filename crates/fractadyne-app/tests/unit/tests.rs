@@ -376,6 +376,8 @@ const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "stat_layer", "stat_layer_blend", "stat_layer_contrast", "stat_layer_opacity",
     // ...and only with a statistic bump (E4).
     "stat_bump", "stat_bump_height",
+    // ...and only with a gloss (E5).
+    "stat_gloss", "stat_gloss_amount",
     "light", "light_angle", "light_height", "glow", "glow_strength", "glow_width",
     // Written only with the relief light on, and its slope from the distance (C5).
     "light_steep", "light_steep_px", "light_highlight", "light_shininess", "light_highlight_color",

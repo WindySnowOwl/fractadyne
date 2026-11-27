@@ -2808,6 +2808,11 @@ panel-stat-bump = バンプ
 panel-stat-bump-hover = 各軌道の統計量を高さとして読み、その傾きをレリーフライトの角度で照らします。力線に沿って彫り込まれた筋になり、ストライプ平均ではより細かく、三角不等式ではより長くなります。レリーフライトがオンならレリーフの表面に加わり、くしけずったサテンのエンボスに、オフならそれだけで照らされます。表示はその統計量も計算するため、深い位置では遅くなります。--render では --stat-bump NAME。
 panel-stat-bump-height = 高さ
 panel-stat-bump-height-hover = 統計量の高さ（灰色1あたりのピクセル数）。高いほど筋が深く刻まれます。0 で表面は平らです。
+panel-stat-gloss = つや模様
+panel-stat-gloss-hover = 各軌道の統計量でレリーフライトの光沢の強さを決め、つやを力線に沿った筋に砕きます。ヘアライン仕上げの金属のようになり、ストライプ平均では細かく、三角不等式では長くなります。ビューは統計量も計算するため、深い所では遅くなります。--render では --stat-gloss NAME も使えます。
+panel-stat-gloss-amount = 割合
+panel-stat-gloss-amount-hover = 統計量が光沢の強さをどれだけ決めるか。1 で統計量に完全に従い、0 で光沢はそのままです。
+panel-stat-gloss-off = つや模様はレリーフライトの光沢を形づくります。エフェクトで「3Dレリーフ照明」と「距離による傾斜」をオンにし、光沢を 0 より大きくしてください。
 panel-trap-shape = トラップの形
 # A wave trap's phase (the sine wave, the square wave; user 2026-11-25) and its animation, which uses
 # the Speed slider.

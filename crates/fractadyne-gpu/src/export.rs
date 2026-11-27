@@ -273,6 +273,8 @@ pub struct ExportRequest {
     pub stat_layer: crate::StatLayering,
     /// The statistic bump — see `MandelbrotParams::stat_bump`.
     pub stat_bump: crate::StatBump,
+    /// The gloss — see `MandelbrotParams::stat_gloss`.
+    pub stat_gloss: crate::StatGloss,
     /// Edge shading (coloring plan C3).
     pub edge: crate::EdgeShade,
     /// Equipotential lines (coloring plan C10).
@@ -2073,6 +2075,10 @@ impl<'a> TileRenderer<'a> {
             bump_height: crate::stat_bump_words(req.color_method, req.stat_bump).1,
             bump_center: crate::stat_bump_words(req.color_method, req.stat_bump).2,
             _pad_bp: 0.0,
+            gloss_stat: crate::stat_gloss_words(req.color_method, req.stat_gloss).0,
+            gloss_amount: crate::stat_gloss_words(req.color_method, req.stat_gloss).1,
+            gloss_center: crate::stat_gloss_words(req.color_method, req.stat_gloss).2,
+            _pad_gl: 0.0,
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4541,6 +4547,10 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         bump_height: crate::stat_bump_words(req.color_method, req.stat_bump).1,
         bump_center: crate::stat_bump_words(req.color_method, req.stat_bump).2,
         _pad_bp: 0.0,
+        gloss_stat: crate::stat_gloss_words(req.color_method, req.stat_gloss).0,
+        gloss_amount: crate::stat_gloss_words(req.color_method, req.stat_gloss).1,
+        gloss_center: crate::stat_gloss_words(req.color_method, req.stat_gloss).2,
+        _pad_gl: 0.0,
     }
 }
 

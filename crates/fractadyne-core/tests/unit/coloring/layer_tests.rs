@@ -42,6 +42,25 @@ fn each_mode_merges_as_named() {
     assert!((BlendMode::HardLight.apply(0.3, 1.0) - 1.0).abs() < 1e-6);
 }
 
+/// The gloss (E5): amount 0 leaves the highlight whole whatever the gray; 1 makes the weight the
+/// gray; between, it is linear in the amount, and always in 0..1.
+#[test]
+fn the_gloss_weighs_the_highlight_from_whole_to_the_gray() {
+    for i in 0..=10 {
+        let g = i as f32 / 10.0;
+        assert_eq!(gloss_weight(g, 0.0), 1.0);
+        assert!((gloss_weight(g, 1.0) - g).abs() < 1e-6);
+        let half = gloss_weight(g, 0.5);
+        assert!((half - (gloss_weight(g, 0.0) + gloss_weight(g, 1.0)) / 2.0).abs() < 1e-6);
+        for a in [-1.0, 0.25, 0.75, 2.0] {
+            assert!((0.0..=1.0).contains(&gloss_weight(g, a)));
+        }
+    }
+    assert_eq!(gloss_weight(2.0, 1.0), 1.0);
+    assert_eq!(gloss_weight(-1.0, 1.0), 0.0);
+    assert_eq!(GLOSS_AMOUNT_DEFAULT, 1.0);
+}
+
 /// The layer's gray: the statistic's center is the gray's middle, the contrast its slope, clamped.
 #[test]
 fn the_layer_gray_is_centered_and_clamped() {
