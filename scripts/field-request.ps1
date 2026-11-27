@@ -199,7 +199,11 @@ switch ($Action) {
     "battery" {
         $req.build = $Build
         $req.quick = [bool]$Quick
-        if ($Label) { $req.label = $Label }
+        if ($Label) {
+            # The agent refuses any other label (it names the battery's folders), after claiming the request.
+            if ($Label -notmatch '^[A-Za-z0-9._-]{1,64}$') { throw "-Label must be one word of letters, digits, dots, dashes or underscores (no spaces), such as relief-golden-6800" }
+            $req.label = $Label
+        }
         if ($Adapter) {
             if ($Adapter -notmatch '^[A-Za-z0-9_.-]{1,64}$') { throw "-Adapter must be a word such as 6800 or 1" }
             $req.adapter = $Adapter
