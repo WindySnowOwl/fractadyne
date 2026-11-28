@@ -2256,6 +2256,9 @@ struct Perf {
     /// The base the next frame's fine escape histogram is measured from: the bottom of the view's
     /// last escape-range reading (0 before the first), so its buckets are finest where the picture is.
     norm_base: [f32; 2],
+    /// The count base each view asks its frames to store their counts at (coloring plan D2,
+    /// `fractadyne_gpu::live_count_base`, from the view's escape-range readings); 0 after a jump.
+    count_base: [u32; 2],
     /// EMA-smoothed escaped smooth-iter range per view — the live auto-normalization input.
     norm_range: [Option<(f32, f32)>; 2],
     /// The PALETTE's window per view: fed by the same readings under the same rules as
@@ -3005,6 +3008,7 @@ impl Default for Perf {
                 std::sync::Arc::new(std::sync::Mutex::new(None)),
             ],
             norm_base: [0.0; 2],
+            count_base: [0; 2],
             norm_range: [None, None],
             norm_pal: [None, None],
             norm_sig: [0, 0],
@@ -11286,6 +11290,7 @@ impl FractadyneApp {
         self.perf.iter_exhausted = [false, false];
         self.perf.norm_range = [None, None];
         self.perf.norm_pal = [None, None];
+        self.perf.count_base = [0, 0];
         self.perf.eq_fed = [None, None];
         self.perf.trap_pal = [None, None];
         self.perf.trap_shown = [None, None];

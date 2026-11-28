@@ -1,7 +1,10 @@
 //! The count base (coloring plan D2): the rule that picks a frame's base, the palette map rewritten
 //! about it, and the counter slot the shader reports a base set too high in.
 
-use super::{count_base_for, count_rebased_map, COUNTER_SLOTS, COUNT_BASE_MIN, COUNT_BASE_STEP, CTR_BELOW_BASE, CTR_TRAP_HIST_IN, TRAP_HIST_BUCKETS};
+use super::{
+    count_base_for, count_rebased_map, escape_range_of, live_count_base, COUNTER_SLOTS, COUNT_BASE_MIN, COUNT_BASE_STEP, CTR_BELOW_BASE,
+    CTR_ESC_MAX, CTR_ESC_MIN, CTR_TRAP_HIST_IN, LIVE_COUNT_BASE_MARGIN, TRAP_HIST_BUCKETS,
+};
 use fractadyne_core::coloring::Transfer;
 
 /// No base below 2^21 or with nothing escaped; past it, a multiple of 2^16 at least one step and
@@ -76,6 +79,55 @@ fn the_rebased_map_colors_every_count_as_before() {
             }
         }
     }
+}
+
+/// The live view's base (stage 2): none below 2^21; placed 2^18 to a step more under the lowest
+/// count; kept while the lowest count stays a step to 2^20 above it, whatever small moves the view
+/// makes; dropped to 0 when a reading comes within a step of it or under it (a pixel stored below it
+/// reads as the base), for the next reading to place it again; no reading keeps it.
+#[test]
+fn the_live_base_is_placed_kept_and_dropped() {
+    assert_eq!(live_count_base(0, None), 0);
+    assert_eq!(live_count_base(7 * COUNT_BASE_STEP, None), 7 * COUNT_BASE_STEP);
+    assert_eq!(live_count_base(0, Some(f64::NAN)), 0);
+    assert_eq!(live_count_base(0, Some(1_000_000.0)), 0);
+    // The period-192,920 minibrot's resolved frame at 2.95e88 (2026-11-27).
+    let m = 5_178_440.5;
+    let b = live_count_base(0, Some(m));
+    assert_eq!(b % COUNT_BASE_STEP, 0);
+    let room = m - f64::from(b);
+    let margin = f64::from(LIVE_COUNT_BASE_MARGIN);
+    assert!((margin..margin + f64::from(COUNT_BASE_STEP)).contains(&room), "{room}");
+    for d in [-150_000.0, -10_000.0, 0.0, 50_000.0, 600_000.0] {
+        assert_eq!(live_count_base(b, Some(m + d)), b, "a move of {d} keeps it");
+    }
+    let up = m + 2.0e6;
+    let b2 = live_count_base(b, Some(up));
+    assert!(b2 > b && (margin..margin + f64::from(COUNT_BASE_STEP)).contains(&(up - f64::from(b2))), "far up: {b2}");
+    for r in [f64::from(b) + 1000.0, f64::from(b), f64::from(b) - 5.0e5] {
+        assert_eq!(live_count_base(b, Some(r)), 0, "a reading at {r} drops it");
+    }
+    // Under 2^21 with room: kept, the counts still keep their fraction.
+    let low = 30 * COUNT_BASE_STEP;
+    assert!(low < COUNT_BASE_MIN);
+    assert_eq!(live_count_base(low, Some(f64::from(low) + 200_000.0)), low);
+}
+
+/// A frame's escape range handed on as the counts themselves: the counters' range plus the base; a
+/// sample below the base pulls the bottom down to the base itself; base 0, or no escape, the
+/// counters' bits as they are.
+#[test]
+fn the_escape_range_is_of_the_counts_themselves() {
+    let mut slots = vec![0u32; COUNTER_SLOTS];
+    slots[CTR_ESC_MIN] = 70_000.5f32.to_bits();
+    slots[CTR_ESC_MAX] = 70_150.5f32.to_bits();
+    assert_eq!(escape_range_of(&slots, 0), (slots[CTR_ESC_MIN], slots[CTR_ESC_MAX]));
+    let (lo, hi) = escape_range_of(&slots, 5_111_808);
+    assert_eq!((f32::from_bits(lo), f32::from_bits(hi)), (5_181_808.5, 5_181_958.5));
+    slots[CTR_BELOW_BASE] = 3;
+    assert_eq!(f32::from_bits(escape_range_of(&slots, 5_111_808).0), 5_111_808.0, "below the base reads as the base");
+    slots[CTR_ESC_MIN] = u32::MAX;
+    assert_eq!(escape_range_of(&slots, 5_111_808).0, u32::MAX, "no escape stays no escape");
 }
 
 /// The slot is the last, after the inside's trap histogram, and the shader's constant says so.

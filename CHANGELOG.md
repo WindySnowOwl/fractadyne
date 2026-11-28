@@ -81,16 +81,18 @@ detail is in the git history.
   Misiurewicz twist. `--light-angle` takes degrees too, and so does the `light_angle` key of a view
   file (format 6) and of a tour's `[render.coloring]` (format 3). Older view files, tours and saved
   sessions keep their light where it was: their radians are read as such and converted.
-- **Smooth colors stay smooth at millions of iterations in saved pictures.** Each pixel's escape
-  count is kept as a 32-bit number, which past about two million iterations can no longer hold the
-  count's fraction finely, and past eight million holds whole iterations only. Where the colors
-  change slowly, as beside a deep minibrot, a smooth gradient then broke into flat steps. Saved
-  pictures, tours' frames and render farms' frames now first measure the view's lowest count, with
-  a quick pass at a quarter of the size, and store each count less a base just under it, so the
-  fraction survives; the palette is shifted to match, so the colors are the same, only smooth. The
-  extra pass runs only when the iteration limit is 2,097,152 or more, and a view whose counts stay
-  under that renders exactly as before. The live view keeps the old storage for now.
-  `--render-lanes` writes the base in view.json as `count_base`, which `scripts/lanes.py` adds back.
+- **Smooth colors stay smooth at millions of iterations.** Each pixel's escape count is kept as a
+  32-bit number, which past about two million iterations can no longer hold the count's fraction
+  finely, and past eight million holds whole iterations only. Where the colors change slowly, as
+  beside a deep minibrot, a smooth gradient then broke into flat steps. Now each count is stored
+  less a base just under the view's lowest count, so the fraction survives, and the palette is
+  shifted to match: the colors are the same, only smooth. Saved pictures, tours' frames and render
+  farms' frames measure the view first, with a quick pass at a quarter of the size, when the
+  iteration limit is 2,097,152 or more; the live view takes its base from the counts it has just
+  drawn, and keeps it while the view moves a little. A view whose counts stay under two million
+  renders exactly as before. (On the screen the steps were softer than in a still, because
+  supersampling already blurred them a little.) `--render-lanes` writes the base in view.json as
+  `count_base`, which `scripts/lanes.py` adds back.
 - **Gloss: a statistic shapes the highlight.** Under Smooth iteration, Gloss lets a statistic of
   each orbit set how strong the relief light's highlight is, so its sheen breaks into strands
   along the field lines, like brushed metal: finer with the stripe average, longer with the

@@ -4151,7 +4151,8 @@ fn fs_resolve(in: VsOut) -> FragOut {
     // the sibling "flat gray at shallow zoom" defect is outliers stretching the range.
     if ((p.x & 3) == 0 && (p.y & 3) == 0) {
         esc_range_commit(sm.z);
-        esc_hist_commit(sm.z);
+        // The count itself (the auto budget's histogram), the frame storing it less its base.
+        esc_hist_commit(sm.z + f32(iu.count_base));
         norm_hist_commit(sm.z, p);
         // Local gradient against the RIGHT neighbor, same subsample. Bounds-checked rather than
         // relying on out-of-range textureLoad returning zero: a zeroed meta decodes to a status
@@ -4331,7 +4332,10 @@ struct ColorU {
     gloss_stat: u32,
     gloss_amount: f32,
     gloss_center: f32,
-    _pad_gl: f32,
+    // The count base of the texture this pass colors (coloring plan D2): each count in it is stored
+    // this far below its value; the map is rewritten about it on the CPU, and a coloring hook's
+    // `count` adds it back. Mirrors `ColorUniforms.count_base`.
+    count_base: f32,
 };
 @group(0) @binding(0) var<uniform> cu: ColorU;
 @group(0) @binding(1) var iter_tex: texture_2d<f32>;

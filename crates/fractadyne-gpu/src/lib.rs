@@ -308,6 +308,57 @@ pub fn count_base_for(min: Option<f64>) -> u32 {
     }
 }
 
+/// The live view's margin (2^18): a base it picks sits this far or a step more under the lowest
+/// count it read, room for the counts to fall as the view moves before the next reading lands (two
+/// or three frames later).
+pub const LIVE_COUNT_BASE_MARGIN: u32 = 1 << 18;
+/// How far above its base the live view's lowest count may climb before the base follows (2^20):
+/// up to there the f32 keeps 1/8 of an iteration.
+pub const LIVE_COUNT_BASE_SLACK: u32 = 1 << 20;
+
+/// The base a live view asks for (coloring plan D2), given the one it asks for now and the lowest
+/// escape count of its latest reading (`None`: no reading, or nothing escaped, which keeps it):
+/// kept while that count stays between one [`COUNT_BASE_STEP`] and [`LIVE_COUNT_BASE_SLACK`] above
+/// it, so a small move asks for nothing new; 0 when it comes within a step of the base or under it
+/// (a pixel stored below the base reads as the base itself, `escape_range_of`): the next reading,
+/// of the counts as they are, places the base again, where stepping it down would leave the frame
+/// clamped for as many frames as steps after a jump to a shallower view; else 0 below
+/// [`COUNT_BASE_MIN`], or the multiple of [`COUNT_BASE_STEP`] [`LIVE_COUNT_BASE_MARGIN`] to a step
+/// more under the count.
+pub fn live_count_base(current: u32, min: Option<f64>) -> u32 {
+    let Some(m) = min.filter(|m| m.is_finite()) else {
+        return current;
+    };
+    let room = m - f64::from(current);
+    if current > 0 && room <= f64::from(LIVE_COUNT_BASE_SLACK) {
+        return if room >= f64::from(COUNT_BASE_STEP) { current } else { 0 };
+    }
+    if m < f64::from(COUNT_BASE_MIN) {
+        return 0;
+    }
+    let step = f64::from(COUNT_BASE_STEP);
+    let k = ((m - f64::from(LIVE_COUNT_BASE_MARGIN)) / step).floor().max(0.0);
+    (k as u32).saturating_mul(COUNT_BASE_STEP)
+}
+
+/// A frame's escape range as bits, `(min, max)`, of the counts themselves from its counters and the
+/// count base its pass stored at (coloring plan D2): the shader's range is of the counts less the
+/// base, and a sample below the base (stored as 0, `CTR_BELOW_BASE`) reads as the base itself, so
+/// the app's next base goes lower. No escape (`min` = `u32::MAX`), or base 0: as the counters
+/// hold them, to the bit.
+pub(crate) fn escape_range_of(slots: &[u32], base: u32) -> (u32, u32) {
+    let (lo, hi) = (slots[CTR_ESC_MIN], slots[CTR_ESC_MAX]);
+    if base == 0 || lo == u32::MAX {
+        return (lo, hi);
+    }
+    let b = base as f32;
+    let mut mn = f32::from_bits(lo) + b;
+    if slots[CTR_BELOW_BASE] > 0 {
+        mn = mn.min(b);
+    }
+    (mn.to_bits(), (f32::from_bits(hi) + b).to_bits())
+}
+
 /// The iteration uniform's count-base row ([`IterUniforms::count_row`]) for `base`.
 pub(crate) fn count_row(base: u32) -> [u32; 4] {
     [base, 0, 0, 0]
@@ -790,7 +841,9 @@ pub(crate) struct ColorUniforms {
     pub(crate) gloss_stat: u32,
     pub(crate) gloss_amount: f32,
     pub(crate) gloss_center: f32,
-    pub(crate) _pad_gl: f32,
+    /// The count base of the texture this pass colors (coloring plan D2, [`CountBase`]), as an
+    /// f32 (a multiple of 2^16, exact): a coloring hook's `count` adds it back. The row's last word.
+    pub(crate) count_base: f32,
 }
 
 /// [`ColorUniforms::tap_stride`] for a palette-browser thumbnail colored from a texture built at
@@ -1583,6 +1636,9 @@ struct CounterRead {
     /// The submitting frame's `MandelbrotParams::norm_base`, recorded with `norm_sig`: what its
     /// fine escape histogram's buckets were measured from.
     norm_base: f32,
+    /// The count base its pass stored at (coloring plan D2), recorded with `norm_sig`: the escape
+    /// range is handed on as the counts themselves.
+    count_base: u32,
     /// The submitting frame's `MandelbrotParams::content_tag` and the end of its chunk range —
     /// stamped at copy time like `norm_sig`, published in the [`ContentReading`].
     content_tag: u64,
@@ -1610,6 +1666,7 @@ impl CounterRead {
             norm_sig: 0,
             norm_complete: true,
             norm_base: 0.0,
+            count_base: 0,
             content_tag: 0,
             content_cursor: 0,
             walk: 0,
@@ -1681,9 +1738,8 @@ impl CounterRead {
                             }
                         }
                         if let Some(o) = norm_out {
-                            let packed = ((slots[CTR_ESC_MIN] as u64) << 32)
-                                | slots[CTR_ESC_MAX] as u64;
-                            o.store(packed, SeqCst);
+                            let (lo, hi) = escape_range_of(&slots, self.count_base);
+                            o.store(((lo as u64) << 32) | hi as u64, SeqCst);
                         }
                         // The orbit trap's palette window, when the frame counted any (only an
                         // orbit-trap frame does): `(lo_bits << 32) | hi_bits`. Its distribution
@@ -1852,6 +1908,10 @@ struct ViewResources {
     /// Supersampling factor the current iteration texture was rendered at. Needed so a pan
     /// reprojection colors the frozen texture with the ss it was built with (not the live ss).
     last_ss: u32,
+    /// The count base the texture's counts are stored at (coloring plan D2): what every pass colors
+    /// it with, a held or reprojected frame included, whatever base the app asks for now
+    /// ([`MandelbrotParams::count_base`]).
+    last_count_base: u32,
     /// The coloring this view's frame was last drawn with: what the palette browser's
     /// thumbnails color the same iteration texture with (`atlas::render_palette_atlas`), so a
     /// thumbnail differs from the view only in its palette.
@@ -1990,6 +2050,8 @@ struct HoldState {
     bg: wgpu::BindGroup,
     size: [u32; 2],
     ss: u32,
+    /// The snapshot's count base (its texture's `last_count_base` when it was taken).
+    count_base: u32,
     /// The snapshot's pixels were wholly the view the app named for them (`hold_stamp`) when it was
     /// taken: the display gate serves nothing else.
     stamp_ok: bool,
@@ -3726,6 +3788,7 @@ impl ViewResources {
             aux_view,
             size,
             last_ss: 1,
+            last_count_base: 0,
             last_cu: None,
             last_hook: None,
             writes: 0,
@@ -3936,9 +3999,10 @@ impl ViewResources {
             pass.set_bind_group(0, &seed_bg, &[]);
             pass.draw(0..3, 0..1);
         }
-        // A whole frame replaces whatever walk was under way.
+        // A whole frame replaces whatever walk was under way, its counts at its own base.
         self.chunk_state = None;
         self.last_chunk = None;
+        self.last_count_base = f.count_base;
     }
 
     /// A hold snapshot that IS `f` (`MandelbrotParams::adopt_hold`): its planes bound for the color
@@ -3946,7 +4010,7 @@ impl ViewResources {
     fn hold_of(&self, device: &wgpu::Device, color_bgl: &wgpu::BindGroupLayout, f: &AdoptFrame) -> HoldState {
         let bg = make_color_bg(device, color_bgl, &self.color_uniform, &self.lut_buf, &f.iter, &f.aux);
         // A whole frame, checked on the worker and named by the app as it adopts it.
-        HoldState { bg, size: [f.width, f.height], ss: f.ss, stamp_ok: true }
+        HoldState { bg, size: [f.width, f.height], ss: f.ss, count_base: f.count_base, stamp_ok: true }
     }
 
     fn ensure_orbit_capacity(
@@ -4188,6 +4252,14 @@ pub struct MandelbrotParams {
     /// The base the frame's fine escape histogram is measured from ([`CTR_NORM_HIST`]): the app
     /// passes the bottom of the view's last escape-range reading. Handed back with the histogram.
     pub norm_base: f32,
+    /// The count base the app asks this view's frames to store their counts at ([`CountBase`],
+    /// coloring plan D2; [`live_count_base`] picks it from the view's escape-range readings). It
+    /// takes effect only on a pass that rewrites the whole texture from scratch (no tile, no split,
+    /// a chunked walk's first window), so a texture never holds counts at two bases; until then the
+    /// texture keeps its own, and every pass colors a texture at the base it was stored at. 0 for
+    /// a frame a base cannot apply to ([`Self::count_base_applies`]). Every reading handed back is
+    /// of the counts themselves.
+    pub count_base: u32,
     /// Sink for the fine escape histogram ([`NormHist`]) of the frame that submitted the
     /// norm/gradient readings, published with them. `None` disables it.
     pub norm_hist_out: Option<NormHistSink>,
@@ -4497,6 +4569,30 @@ pub struct MandelbrotParams {
 impl MandelbrotParams {
     /// The key a frame re-iterates on: everything the iteration's output depends on. `size` is
     /// the texture's, `life` and `lsystem` the display keys of those renderers (0 otherwise).
+    /// `(offset, lo, fade offset, fade lo)` for a texture whose counts are stored `base` below
+    /// their value (coloring plan D2, [`count_rebased_map`]): the Smooth method's palette map and
+    /// its dissolve's rewritten about it. Any other method reads no count and keeps its words.
+    fn count_map_words(&self, base: u32) -> (f32, f32, f32, f32) {
+        let f = &self.palette_fade;
+        if base == 0 || self.color_method != fractadyne_core::coloring::ColorMethod::Smooth.gpu_id() {
+            return (self.offset, self.norm_lo, f.offset, f.lo);
+        }
+        let eq = |e: Option<&Equalize>| e.is_some_and(|e| e.share > 0.0 && e.sweeps > 0.0);
+        let (o, lo) = count_rebased_map(self.norm_mode, eq(self.equalize.as_ref()), self.cycle, self.offset, self.norm_lo, self.wrap, base);
+        let (fo, flo) = count_rebased_map(f.mode, eq(f.equalize.as_ref()), f.cycle, f.offset, f.lo, self.wrap, base);
+        (o, lo, fo, flo)
+    }
+
+    /// Whether this frame's counts may be stored less a base (coloring plan D2), as
+    /// [`ExportRequest::count_base_applies`] says for an export: the Smooth method, a built-in
+    /// escape-time formula, no coloring hook. Otherwise the base asked for is 0.
+    pub fn count_base_applies(&self) -> bool {
+        self.color_method == fractadyne_core::coloring::ColorMethod::Smooth.gpu_id()
+            && self.custom.is_none()
+            && self.color_hook.is_none()
+            && self.formula != fractadyne_core::formula::NEWTON
+    }
+
     fn iter_key(&self, size: [u32; 2], life: u64, lsystem: u64) -> IterKey {
         use fractadyne_core::coloring::Stat;
         let orbit_stats = self.iter_stats();
@@ -4610,6 +4706,7 @@ impl Default for MandelbrotParams {
             norm_complete: true,
             norm_complete_out: None,
             norm_base: 0.0,
+            count_base: 0,
             norm_hist_out: None,
             trap_window_out: None,
             trap_dist_out: None,
@@ -5019,7 +5116,7 @@ impl CallbackTrait for MandelbrotParams {
             // ⭐W6 (U42): the snapshot is of the pixels as they are — the app's transform displays
             // it from the view the app believes they are (`hold_stamp`); record whether they are.
             let stamp_ok = self.hold_stamp != 0 && view.pixels_stamp == Some(self.hold_stamp);
-            view.hold = Some(HoldState { bg, size: view.size, ss: view.last_ss.max(1), stamp_ok });
+            view.hold = Some(HoldState { bg, size: view.size, ss: view.last_ss.max(1), count_base: view.last_count_base, stamp_ok });
         }
         // …or for the HOLD (`adopt_hold`): it becomes what the display serves, over any snapshot.
         if let Some(f) = self.adopt.as_deref().filter(|_| self.adopt_hold && self.display_hold) {
@@ -5083,6 +5180,11 @@ impl CallbackTrait for MandelbrotParams {
         // A held frame (reprojection, tile-hold, or the present-gate) displays an EXISTING
         // texture, so it must be colored at the ss and size that texture was built with.
         let held = reproject || hold;
+        // The count base of the texture this frame colors (coloring plan D2), as the ss: the hold
+        // snapshot's under the gate, else the view's texture's (a pass below that stores at another
+        // base writes the uniform again).
+        let color_base = if gate { view.hold.as_ref().map_or(0, |h| h.count_base) } else { view.last_count_base };
+        let (map_offset, map_lo, fade_offset, fade_lo) = self.count_map_words(color_base);
         let color_ss = if gate {
             view.hold.as_ref().map(|h| h.ss).unwrap_or(1).max(1)
         } else if held {
@@ -5100,7 +5202,7 @@ impl CallbackTrait for MandelbrotParams {
         let cu = ColorUniforms {
             lut_len,
             cycle: self.cycle,
-            offset: self.offset,
+            offset: map_offset,
             ss: color_ss,
             light: self.light,
             light_angle: self.light_angle,
@@ -5149,13 +5251,13 @@ impl CallbackTrait for MandelbrotParams {
                 [base[0] as f32, base[1] as f32]
             },
             norm_mode: self.norm_mode,
-            norm_lo: self.norm_lo,
+            norm_lo: map_lo,
             aa_palette: self.aa_palette.gpu_word(),
             fade_weight: self.palette_fade.weight,
             fade_mode: self.palette_fade.mode,
-            fade_lo: self.palette_fade.lo,
+            fade_lo,
             fade_cycle: self.palette_fade.cycle,
-            fade_offset: self.palette_fade.offset,
+            fade_offset,
             // The panel this view fills (`display_res`): a reduced motion frame's texels are larger
             // than its pixels, and a held frame's texture is not this frame's size.
             display_w: self.display_res[0] as f32,
@@ -5205,7 +5307,7 @@ impl CallbackTrait for MandelbrotParams {
             gloss_stat: stat_gloss_words(self.color_method, self.stat_gloss).0,
             gloss_amount: stat_gloss_words(self.color_method, self.stat_gloss).1,
             gloss_center: stat_gloss_words(self.color_method, self.stat_gloss).2,
-            _pad_gl: 0.0,
+            count_base: color_base as f32,
         };
         queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&cu));
         view.last_cu = Some(cu);
@@ -5411,8 +5513,23 @@ impl CallbackTrait for MandelbrotParams {
                 _ => 0,
             };
             iu.rn.pad[0] = (count_walk != 0) as u32;
-            // The fine escape histogram's base (`CTR_NORM_HIST`; the shader's `norm_base`).
-            iu.rn.pad[1] = self.norm_base.to_bits();
+            // THE COUNT BASE (coloring plan D2; `MandelbrotParams::count_base`): the one asked for on
+            // a pass that rewrites the whole texture from scratch (no tile, no split, a walk's first
+            // window), else the texture's own, so a texture never holds counts at two bases (a walk's
+            // later windows resolve counts its earlier ones stored). A frame a base cannot apply to
+            // stores at 0 whatever the texture held: its module writes the count as it is.
+            let whole = self.tile.is_none() && !split_on && chunk.is_none_or(|[s, _]| s == 0);
+            let base = if !self.count_base_applies() {
+                0
+            } else if whole {
+                self.count_base
+            } else {
+                view.last_count_base
+            };
+            iu.count_row = count_row(base);
+            // The fine escape histogram's base (`CTR_NORM_HIST`; the shader's `norm_base`), less the
+            // count base: the histogram measures the counts as the pass stores them.
+            iu.rn.pad[1] = ((f64::from(self.norm_base) - f64::from(base)) as f32).to_bits();
             queue.write_buffer(&view.iter_uniform, 0, bytemuck::bytes_of(&iu));
             // Bracket the iterate with GPU timestamps when nothing is already in flight. This is the
             // only measurement of the deep iterate that isn't contaminated by vsync, repaint
@@ -5754,6 +5871,7 @@ impl CallbackTrait for MandelbrotParams {
                 view.counter_read.norm_sig = self.norm_sig;
                 view.counter_read.norm_complete = self.norm_complete;
                 view.counter_read.norm_base = self.norm_base;
+                view.counter_read.count_base = base;
                 view.counter_read.content_tag = self.content_tag;
                 view.counter_read.content_cursor =
                     self.chunk_range.map_or(self.max_iter, |[_, e]| e);
@@ -5767,6 +5885,17 @@ impl CallbackTrait for MandelbrotParams {
             view.last_probe = self.probe_nonce;
             view.last_split = self.split;
             view.last_ss = ss; // remember the ss this texture was built at (for reprojection)
+            view.last_count_base = base; // ...and the base its counts are stored at
+            // A pass that stored at another base than the texture held: the frame shows what it
+            // wrote (unless the gate shows the snapshot), so its colors take the new base.
+            if base != color_base && !gate {
+                if let Some(mut c) = view.last_cu {
+                    (c.offset, c.norm_lo, c.fade_offset, c.fade_lo) = self.count_map_words(base);
+                    c.count_base = base as f32;
+                    queue.write_buffer(&view.color_uniform, 0, bytemuck::bytes_of(&c));
+                    view.last_cu = Some(c);
+                }
+            }
             view.rendered = true; // the texture now holds a real frame (survives orbit swaps)
             view.writes += 1;
             // Provenance of what now sits in the texture. A FULL-frame pass rewrites every pixel,
