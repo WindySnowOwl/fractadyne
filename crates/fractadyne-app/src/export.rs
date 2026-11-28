@@ -229,7 +229,13 @@ pub(crate) fn stamp_watermark(pixels: &mut [f32], w: u32, h: u32, ov: &WmOverlay
 /// 5 — a coloring hook (coloring plan B10): `coloring_hook=` (its WGSL text, one escaped line) and
 /// `coloring_hook_params=` (p1..p4). Written only by a view colored through one, for the same reason:
 /// an older build would show the method's colors and say only "unknown key".
-pub(crate) const VIEW_FORMAT_VERSION: u32 = 5;
+///
+/// 6 — `light_angle=` in degrees, counterclockwise from the right (radians before; user,
+/// 2026-11-28). Written only by a view that writes the key (the relief light on); a file of an
+/// earlier format holds radians, which the reader converts.
+pub(crate) const VIEW_FORMAT_VERSION: u32 = 6;
+/// What a view with the relief light's angle in it writes (format 6), whatever else it is.
+pub(crate) const VIEW_FORMAT_LIGHT_DEGREES: u32 = 6;
 /// What an L-system view writes (format 4, unchanged by format 5).
 pub(crate) const VIEW_FORMAT_LSYSTEM: u32 = 4;
 /// What a view colored through a coloring hook writes (format 5), whatever its family.
@@ -1135,23 +1141,33 @@ impl FractadyneApp {
             ),
             _ => String::new(),
         };
+        // The method, the light, the glow, Duotone or Binary, the live normalization (see below).
+        let coloring_text = if self.fractal.is_escape_time() {
+            let spec = self.coloring_spec();
+            format!("{}{}", crate::coloring_fields::view_lines(&spec), crate::trap_outline::outline_view_lines(&spec))
+        } else {
+            String::new()
+        };
+        let format = if self.fractal == FractalKind::LSystem {
+            VIEW_FORMAT_LSYSTEM
+        } else if self.fractal == FractalKind::Life {
+            VIEW_FORMAT_LIFE
+        } else if !self.coloring_hook_metadata().is_empty() {
+            VIEW_FORMAT_HOOK
+        } else if self.custom_formula_metadata().is_empty() && self.fractal.power_family().is_none() {
+            VIEW_FORMAT_PLAIN
+        } else {
+            VIEW_FORMAT_CUSTOM
+        };
+        // The light's angle in degrees (format 6): only a view that writes it says so.
+        let format = if coloring_text.lines().any(|l| l.starts_with("light_angle=")) { format.max(VIEW_FORMAT_LIGHT_DEGREES) } else { format };
         format!(
             "app=Fractadyne\nversion={}\nformat_version={}\nsaved_unix={}\nsaved={}\n\
              notes={}\nfractal={}\njulia={}\n{julia_c}\
              center_re={}\ncenter_im={}\n{scale}max_iter={}\nauto_iter={}\n\
              palette={}\npalette_id={}\ncycle={}\n{}offset={}\naa={}\n{dual}{}{}{}{}{}",
             version_string(),
-            if self.fractal == FractalKind::LSystem {
-                VIEW_FORMAT_LSYSTEM
-            } else if self.fractal == FractalKind::Life {
-                VIEW_FORMAT_LIFE
-            } else if !self.coloring_hook_metadata().is_empty() {
-                VIEW_FORMAT_HOOK
-            } else if self.custom_formula_metadata().is_empty() && self.fractal.power_family().is_none() {
-                VIEW_FORMAT_PLAIN
-            } else {
-                VIEW_FORMAT_CUSTOM
-            },
+            format,
             secs,
             Self::utc_date_string(secs),
             notes,
@@ -1181,12 +1197,7 @@ impl FractadyneApp {
             // view's metadata is byte-identical to what it was before these keys existed. Not for a
             // Life or L-system view, which these settings do not color.
             // With the trap's outline, when a trap the picture uses is one (`trap_outline`).
-            if self.fractal.is_escape_time() {
-                let spec = self.coloring_spec();
-                format!("{}{}", crate::coloring_fields::view_lines(&spec), crate::trap_outline::outline_view_lines(&spec))
-            } else {
-                String::new()
-            },
+            coloring_text,
             // The custom gradient, when there is one. Empty otherwise, so a preset view's
             // metadata is byte-identical to what it was before this field existed.
             if self.coloring.use_custom_palette
@@ -1585,6 +1596,16 @@ impl FractadyneApp {
             let states = get("cycle").is_some();
             let mut spec = self.coloring_spec();
             crate::coloring_fields::apply_view(&mut spec, &get, states, &mut report.clamped);
+            // A view of an earlier format than 6 holds the light's angle in radians: the value it
+            // read, converted (only when it read it, so a default put back is left as it is).
+            let ver = get("format_version").and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(VIEW_FORMAT_PLAIN);
+            if ver < VIEW_FORMAT_LIGHT_DEGREES {
+                if let Some(rad) = get("light_angle").and_then(|v| v.trim().parse::<f32>().ok()) {
+                    if spec.light_angle == rad {
+                        spec.light_angle = rad.to_degrees().rem_euclid(360.0);
+                    }
+                }
+            }
             crate::trap_outline::apply_outline_view(&mut spec, &get, states, &mut report.problems);
             // The coloring hook (B10): a view that states its coloring and names none was colored
             // without one. One that does not build is said, and the view shows the method's colors.

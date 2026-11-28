@@ -571,7 +571,7 @@ pub(crate) const FIELDS: [Field; 75] = [
     Field {
         key: "light_angle",
         name: "light angle",
-        doc: "The light's direction in radians (with `light`).",
+        doc: "Where the light comes from, in degrees counterclockwise from the right (with `light`). Radians in a view file before format 6 and a tour before format 3, read as such.",
         access: Access::Real(|s| s.light_angle, |s, v| s.light_angle = v, f32::MIN, f32::MAX),
         parents: &["light"],
         shows: |s| s.light,

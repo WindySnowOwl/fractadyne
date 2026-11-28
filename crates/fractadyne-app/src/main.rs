@@ -3361,6 +3361,8 @@ pub(crate) mod slider_range {
     pub(crate) const OFFSET: RangeInclusive<f32> = 0.0..=1.0;
     /// Relief (`--light-height`).
     pub(crate) const LIGHT_HEIGHT: RangeInclusive<f32> = 0.2..=4.0;
+    /// The relief light's angle, degrees counterclockwise from the right (a whole turn).
+    pub(crate) const LIGHT_ANGLE: RangeInclusive<f32> = 0.0..=360.0;
     /// Glow (`--glow-strength`).
     pub(crate) const GLOW_STRENGTH: RangeInclusive<f32> = 0.0..=1.0;
     /// Band width (`--glow-width`).
@@ -6557,7 +6559,7 @@ struct ExportState {
 struct EffectsConfig {
     /// Distance-estimate relief lighting (slope shading from the derivative).
     light: bool,
-    light_angle: f32,  // radians
+    light_angle: f32,  // degrees, counterclockwise from the right (radians only for the GPU)
     light_height: f32, // relief strength (smaller = sharper)
     light_anim: bool,  // rotate the light direction over time
     /// The relief's surface and highlight (coloring plan C5): the slope from the distance, 45
@@ -9632,9 +9634,13 @@ impl FractadyneApp {
             self.effects.light = true;
         }
         if let Some(a) =
-            val("--light-angle").map(|s| arg_parse::<f32>("--light-angle", s, "a number"))
+            val("--light-angle").map(|s| arg_parse::<f32>("--light-angle", s, "a number of degrees"))
         {
-            self.effects.light_angle = a;
+            // Degrees, as the panel shows them (user, 2026-11-28; radians before), into the panel's
+            // turn, 0 to 360.
+            if a.is_finite() {
+                self.effects.light_angle = a.rem_euclid(360.0);
+            }
         }
         if args.iter().any(|a| a == "--de") {
             self.effects.de = true;
@@ -14278,9 +14284,7 @@ impl FractadyneApp {
         }
         // Rotate the relief light direction (cheap — it's a color-pass param).
         if self.effects.light && self.effects.light_anim && self.anim.palette_anim_speed > 0.0 {
-            self.effects.light_angle = (self.effects.light_angle
-                + self.anim.palette_anim_speed * dt * std::f32::consts::TAU)
-                .rem_euclid(std::f32::consts::TAU);
+            self.effects.light_angle = (self.effects.light_angle + self.anim.palette_anim_speed * dt * 360.0).rem_euclid(360.0);
             self.schedule_repaint(ctx);
         }
         // Cycle a wave trap's phase (user 2026-11-25): a trap setting, so every step iterates the

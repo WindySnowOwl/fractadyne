@@ -430,13 +430,14 @@ pub(crate) fn slider_double_clicked(r: &egui::Response) -> bool {
 /// the left at 0.34; at π/2 the top half at 0.88 and the bottom at 0.31. A screen point's y grows
 /// DOWN, hence the minus in [`dial_point`] and [`dial_angle_at`].
 /// A press or a drag on it points the light at the pointer (on round, past the dial's edge); a
-/// double-click puts `reset` back, as the row's slider does.
+/// double-click puts `reset` back, as the row's slider does. `angle` and `reset` are in degrees,
+/// as the row shows them (user, 2026-11-28); the dial's geometry works in radians.
 pub(crate) fn light_dial(ui: &mut egui::Ui, angle: &mut f32, reset: f32) -> egui::Response {
     let side = ui.spacing().interact_size.y;
     let (rect, mut r) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click_and_drag());
     let c = rect.center();
     if r.is_pointer_button_down_on() {
-        if let Some(a) = r.interact_pointer_pos().and_then(|p| dial_angle_at(c, p)) {
+        if let Some(a) = r.interact_pointer_pos().and_then(|p| dial_angle_at(c, p)).map(f32::to_degrees) {
             if a != *angle {
                 *angle = a;
                 r.mark_changed();
@@ -455,8 +456,8 @@ pub(crate) fn light_dial(ui: &mut egui::Ui, angle: &mut f32, reset: f32) -> egui
         let rad = side * 0.5 - 0.5;
         painter.circle(c, rad, ui.visuals().extreme_bg_color, ring);
         let ink = egui::Stroke::new(1.5_f32, w.fg_stroke.color);
-        let sun = dial_point(c, rad - 3.0, *angle);
-        let tip = dial_point(c, rad - 1.5, *angle + std::f32::consts::PI);
+        let sun = dial_point(c, rad - 3.0, angle.to_radians());
+        let tip = dial_point(c, rad - 1.5, angle.to_radians() + std::f32::consts::PI);
         painter.line_segment([sun, tip], ink);
         // The arrowhead: two strokes back from the tip, about 35 degrees either side of the shaft.
         let back = (sun - tip).normalized() * (side * 0.25);
@@ -1232,8 +1233,9 @@ impl FractadyneApp {
                         let spacing = ui.spacing_mut();
                         spacing.slider_width = (spacing.slider_width - dial.rect.width() - spacing.item_spacing.x).max(40.0);
                         let r = ui.add(
-                            egui::Slider::new(&mut self.effects.light_angle, 0.0..=std::f32::consts::TAU)
-                                .suffix(" rad"),
+                            egui::Slider::new(&mut self.effects.light_angle, crate::slider_range::LIGHT_ANGLE)
+                                .suffix("°")
+                                .fixed_decimals(1),
                         );
                         (dial, r)
                     });

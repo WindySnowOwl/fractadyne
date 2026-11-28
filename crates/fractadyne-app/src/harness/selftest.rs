@@ -12422,6 +12422,32 @@ zoom = \"1e94\"
                 pass: bad.is_empty() && keyless && older_defaults && bare_keeps,
             });
 
+            // The light's angle in degrees from view format 6 (user, 2026-11-28): a view written now
+            // states it in degrees and says format 6; the same view as an older build wrote it (an
+            // earlier format, the angle in radians) opens at the same angle.
+            {
+                // Not the default, 126, which no view writes.
+                self.set_view_coloring(&ViewColoring { light: true, light_angle: 200.0, ..d.clone() });
+                let blob = self.view_metadata();
+                let written = blob.contains("\nformat_version=6\n") && blob.contains("\nlight_angle=200\n");
+                let older = blob.replace("\nformat_version=6\n", "\nformat_version=1\n").replace("\nlight_angle=200\n", "\nlight_angle=3.4906585\n");
+                self.set_view_coloring(&scrambled);
+                self.load_view_metadata(&blob);
+                let now = self.view_coloring().light_angle;
+                self.set_view_coloring(&scrambled);
+                self.load_view_metadata(&older);
+                let then = self.view_coloring().light_angle;
+                self.set_view_coloring(&d);
+                push_check(&mut checks, &mut last_check_t, SelfCheck {
+                    category: "View format",
+                    name: "the light's angle reads in degrees, an older view's in radians".into(),
+                    params: "the light at 200 degrees, saved; the same view as format 1 with light_angle=3.4906585 (radians)".into(),
+                    result: format!("format 6 and light_angle=200 written: {written}; read back {now}; the older view {then}"),
+                    threshold: "written in degrees as format 6; 200 back; the older view at 200 (3.4906585 radians)",
+                    pass: written && now == 200.0 && (then - 200.0).abs() < 1.0e-3,
+                });
+            }
+
             // The picture: a trap view with relief, glow and a Duotone ramp, saved, then rendered
             // after the session was set to the default coloring and the view reloaded.
             let (rw, rh) = (360u32, 200u32);
@@ -13053,7 +13079,7 @@ zoom = \"1e94\"
             self.effects.light = true;
             self.effects.light_anim = true;
             let lit = self.minimap_key_now();
-            self.effects.light_angle = (self.effects.light_angle + 0.5).rem_euclid(std::f32::consts::TAU);
+            self.effects.light_angle = (self.effects.light_angle + 30.0).rem_euclid(360.0);
             let light_held = self.minimap_key_now() == lit;
             // The sine wave's phase turned by its animation.
             let was_phase = (self.coloring.trap_type, self.coloring.trap_place, self.coloring.trap_phase_anim);
@@ -16745,7 +16771,7 @@ zoom = \"1e94\"
             // golden that renders at whatever angle the last session left would drift on every
             // bless. `light_anim` off for the same reason `palette_anim` is — it is a clock.
             self.effects.light = relief;
-            self.effects.light_angle = 2.281;
+            self.effects.light_angle = 2.281f32.to_degrees(); // the 2.281 radians it was blessed at
             self.effects.light_height = 1.2;
             self.effects.light_anim = false;
             self.effects.de = false;

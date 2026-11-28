@@ -1517,6 +1517,7 @@ fn the_coloring_slider_options_are_documented_with_their_ranges() {
         ("--cycle", r::CYCLE),
         ("--offset", r::OFFSET),
         ("--light-height", r::LIGHT_HEIGHT),
+        ("--light-angle", r::LIGHT_ANGLE),
         ("--glow-strength", r::GLOW_STRENGTH),
         ("--glow-width", r::GLOW_WIDTH),
         ("--edge-width", r::EDGE_WIDTH),
