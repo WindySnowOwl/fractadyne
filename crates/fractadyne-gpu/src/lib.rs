@@ -843,7 +843,9 @@ pub(crate) struct ColorUniforms {
     pub(crate) layer_contrast: f32,
     pub(crate) layer_opacity: f32,
     pub(crate) layer_center: f32,
-    pub(crate) _pad_ly: [f32; 2],
+    /// A held frame's turn against the view (`MandelbrotParams::uv_turn`), in what were this row's
+    /// pad words. `ColorU.uv_turn_c/s` mirror them.
+    pub(crate) uv_turn: [f32; 2],
     /// The statistic bump (coloring plan E4, [`stat_bump_words`]): its lane (`BandTexture::gpu_id`, 0
     /// none), its height and the statistic's center; a new 16-byte row. `ColorU.bump_*` mirror them.
     pub(crate) bump_stat: u32,
@@ -4509,6 +4511,10 @@ pub struct MandelbrotParams {
     /// Reprojection scale about the view center: 1.0 = pan only; <1.0 = the view has zoomed in
     /// since the frozen frame, so the held detail is magnified to follow the zoom.
     pub uv_scale: f32,
+    /// A held frame's turn against the view, `(cos, sin)` of its angle less the view's
+    /// (design/view-rotation.md): the view's screen offset is turned by it into the held frame's,
+    /// before the scale. `[0, 0]`: no turn.
+    pub uv_turn: [f32; 2],
     /// Spotlight vignette (guided tours); `on == 0` disables it.
     pub vignette: Vignette,
     /// Which on-screen panel this is (distinct GPU resources per id).
@@ -4823,6 +4829,7 @@ impl Default for MandelbrotParams {
             reproject: 0,
             uv_offset: [0.0, 0.0],
             uv_scale: 1.0,
+            uv_turn: [0.0, 0.0],
             vignette: Vignette::default(),
             view_id: 0,
             jitter: [0.0, 0.0],
@@ -5320,7 +5327,7 @@ impl CallbackTrait for MandelbrotParams {
             layer_contrast: stat_layer_words(self.color_method, self.stat_layer).2,
             layer_opacity: stat_layer_words(self.color_method, self.stat_layer).3,
             layer_center: stat_layer_words(self.color_method, self.stat_layer).4,
-            _pad_ly: [0.0; 2],
+            uv_turn: self.uv_turn,
             bump_stat: stat_bump_words(self.color_method, self.stat_bump).0,
             bump_height: stat_bump_words(self.color_method, self.stat_bump).1,
             bump_center: stat_bump_words(self.color_method, self.stat_bump).2,

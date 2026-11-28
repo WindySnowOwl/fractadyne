@@ -7474,6 +7474,7 @@ impl FractadyneApp {
         ref_offset: RefOffset,
         reproject: Option<[f32; 2]>,
         reproject_scale: f32,
+        reproject_turn: [f32; 2],
         mode: RenderMode,
         fractal: FractalKind,
         julia: bool,
@@ -7981,6 +7982,7 @@ impl FractadyneApp {
                 reproject.unwrap_or([0.0, 0.0])
             },
             uv_scale: if display_hold { self.perf.hold_uv[vs][2] } else { reproject_scale },
+            uv_turn: if display_hold { self.perf.hold_turn[vs] } else { reproject_turn },
             hold_copy,
             display_hold,
             // Guided-tour spotlight (main view only), anchored to its fractal coordinate.
@@ -8246,15 +8248,19 @@ impl FractadyneApp {
     /// The held frame's display transform on view `v` (`frame_plan::hold_transform`):
     /// `[uv_off.x, uv_off.y, uv_scale]` for `gap_oct` octaves of zoom since it was rendered
     /// (`frozen − now`) and the view's center `off` from the held frame's, in spans of the view now
-    /// along the plane's axes (turned here into the screen's on a turned view).
+    /// along the plane's axes (turned here into the held frame's screen axes), the held frame
+    /// rendered at `held_rot`; with the turn between the two (`[0, 0]`: none).
     /// ⭐The ONE site the four hold transforms (the freeze, a worker frame, the two snapshots) take
     /// it from, so the bound they apply cannot differ — and the bound that applied goes into the
     /// frame record (`hold_floor`, U39: whether a jump clamp put the held frame on screen at a
     /// smaller magnification than the view's).
-    fn hold_transform_for(&mut self, v: usize, gap_oct: f64, off: (f64, f64)) -> [f32; 3] {
-        // `off` is along the plane's axes: on a turned view, along the screen's.
+    fn hold_transform_for(&mut self, v: usize, gap_oct: f64, off: (f64, f64), held_rot: f64) -> ([f32; 3], [f32; 2]) {
+        // `off` is along the plane's axes: the held frame's screen axes are turned by its own angle,
+        // and the view's against them by the difference (`frame_plan::hold_turn`, the color pass's
+        // `uv_turn`).
         let vp = if v == 1 { &self.julia_viewport } else { &self.viewport };
-        let off = crate::render::frame_plan::plane_spans_on_screen(off, vp.rotation, vp.height_px / vp.width_px);
+        let off = crate::render::frame_plan::plane_spans_on_screen(off, held_rot, vp.height_px / vp.width_px);
+        let turn = crate::render::frame_plan::hold_turn(held_rot, vp.rotation);
         // U39: the jump floor only where a jump stands between the held frame and the view
         // (`frame_plan::hold_jump_next`), never inferred from a zoom velocity only Space writes.
         let jumped = self.perf.hold_jump[v.min(1)];
@@ -8269,7 +8275,7 @@ impl FractadyneApp {
         }
         let p = &mut self.perf.hold_floor_pending[v.min(1)];
         *p = (*p).max(code);
-        t
+        (t, turn)
     }
 
     /// A moving df32 frame of view `lr` did not render live, for `why`: remember it, and under
@@ -8321,8 +8327,9 @@ impl FractadyneApp {
         // The pin's verdict runs FIRST, on the live inputs: `Adopt` must land before `reuse_hold`
         // reads `frozen_l2`, and only `Continue` licenses the shadowing.
         let vsub = (view_id as usize).min(1);
-        // The pane's rotation, in the view's identity (`pos_sig`): 0 bits unturned.
-        let rot_bits = fractadyne_core::rotation_bits(if view_id == 1 { self.julia_viewport.rotation } else { self.viewport.rotation });
+        // The pane's rotation; in the view's identity (`pos_sig`) as its bits, 0 unturned.
+        let view_rot = if view_id == 1 { self.julia_viewport.rotation } else { self.viewport.rotation };
+        let rot_bits = fractadyne_core::rotation_bits(view_rot);
         // The panel-size PARAM, saved before `resolution` is rebound downstream: the pin captures
         // it, and any change abandons (a resize re-scales everything derived from it).
         let panel_res = resolution;
@@ -8434,6 +8441,7 @@ impl FractadyneApp {
                         reading_final: ct.reading_final_for(tag, pin.gpu_iter),
                         converged: ct.converged_for(tag),
                         past_range_top,
+                        turned: view_rot != pin.rotation,
                     },
                 )
             };
@@ -8462,6 +8470,7 @@ impl FractadyneApp {
                     // next pin starts this same frame, snapshotting the fresh texture.
                     self.ref_cache[vsub].frozen_center = Some(pin.center_bf.clone());
                     self.ref_cache[vsub].frozen_l2 = pin.log2mag;
+                    self.ref_cache[vsub].frozen_rot = pin.rotation;
                     self.ref_cache[vsub].frozen_upp_l2 = pin.upp_l2;
                     self.ref_cache[vsub].frozen_at = Some(Instant::now());
                     self.ref_cache[vsub].frozen_frame = pin.started_frame;
@@ -8541,7 +8550,7 @@ impl FractadyneApp {
                         }
                     }
                     let why = match reason {
-                        PinStop::Drift | PinStop::Pan => bl::Abandon::Drift,
+                        PinStop::Drift | PinStop::Pan | PinStop::Turn => bl::Abandon::Drift,
                         PinStop::Age => bl::Abandon::Age,
                         PinStop::Superseded => bl::Abandon::Superseded,
                         PinStop::Orbit | PinStop::Panel => bl::Abandon::Rekeyed,
@@ -9921,6 +9930,8 @@ impl FractadyneApp {
         // Reprojection scale about the view center: 1.0 for a pan (drag) reprojection; set <1.0 by
         // the freeze below to zoom the held frame as the view keeps diving (zoom-reprojection).
         let mut reproject_scale = 1.0_f32;
+        // …and the turn between the held frame and the view (`frame_plan::hold_turn`; none for a pan).
+        let mut reproject_turn = [0.0_f32; 2];
         // A worker frame adopted on this frame (`motion_worker`), and whether into the hold.
         let mut worker_adopt: Option<(std::sync::Arc<fractadyne_gpu::AdoptFrame>, bool, u64)> = None;
 
@@ -10372,9 +10383,10 @@ impl FractadyneApp {
                             / span_mantissa.x;
                         let py = fractadyne_core::ref_offset_mantissa(&center_bf[1], &fc[1], delta_exp, precision)
                             / span_mantissa.y;
-                        let [ox, oy, scale] =
-                            self.hold_transform_for(vi, self.ref_cache[vi].frozen_l2 - log2mag, (px, py));
+                        let ([ox, oy, scale], turn) =
+                            self.hold_transform_for(vi, self.ref_cache[vi].frozen_l2 - log2mag, (px, py), self.ref_cache[vi].frozen_rot);
                         reproject_scale = scale;
+                        reproject_turn = turn;
                         reproject = Some([ox, oy]);
                     }
                     None => reproject = Some([0.0, 0.0]), // nothing rendered yet → static hold
@@ -10474,6 +10486,7 @@ impl FractadyneApp {
                     span,
                     magnification,
                     log2mag,
+                    rotation: view_rot,
                     upp_l2,
                     eff_iter,
                     gpu_iter,
@@ -10556,6 +10569,7 @@ impl FractadyneApp {
                         span,
                         magnification,
                         log2mag,
+                        rotation: view_rot,
                         upp_l2,
                         eff_iter,
                         gpu_iter,
@@ -10610,6 +10624,7 @@ impl FractadyneApp {
                 let t = &d.ticket;
                 self.ref_cache[vi].frozen_center = Some(t.center_bf.clone());
                 self.ref_cache[vi].frozen_l2 = t.log2mag;
+                self.ref_cache[vi].frozen_rot = t.rotation;
                 self.ref_cache[vi].frozen_at = Some(Instant::now());
                 self.ref_cache[vi].frozen_frame = t.frame;
                 self.ref_cache[vi].frozen_res = t.res_log2;
@@ -10635,8 +10650,9 @@ impl FractadyneApp {
                             / span_mantissa.x;
                         let py = fractadyne_core::ref_offset_mantissa(&center_bf[1], &t.center_bf[1], delta_exp, precision)
                             / span_mantissa.y;
-                        let [ox, oy, scale] = self.hold_transform_for(vi, t.log2mag - log2mag, (px, py));
+                        let ([ox, oy, scale], turn) = self.hold_transform_for(vi, t.log2mag - log2mag, (px, py), t.rotation);
                         reproject_scale = scale;
+                        reproject_turn = turn;
                         reproject = Some([ox, oy]);
                     }
                 }
@@ -10694,7 +10710,7 @@ impl FractadyneApp {
             // static while gated (interaction breaks the gate), so the stored transform stays
             // valid for the whole composition.
             if hold_copy {
-                self.perf.hold_uv[vs] = match self.ref_cache[vi].frozen_center.clone() {
+                (self.perf.hold_uv[vs], self.perf.hold_turn[vs]) = match self.ref_cache[vi].frozen_center.clone() {
                     Some(fc) => {
                         let px = fractadyne_core::ref_offset_mantissa(
                             &center_bf[0], &fc[0], delta_exp, precision,
@@ -10702,10 +10718,10 @@ impl FractadyneApp {
                         let py = fractadyne_core::ref_offset_mantissa(
                             &center_bf[1], &fc[1], delta_exp, precision,
                         ) / span_mantissa.y;
-                        self.hold_transform_for(vi, self.ref_cache[vi].frozen_l2 - log2mag, (px, py))
+                        self.hold_transform_for(vi, self.ref_cache[vi].frozen_l2 - log2mag, (px, py), self.ref_cache[vi].frozen_rot)
                     }
                     // Nothing frozen (e.g. the very first render): the snapshot IS this view — 1:1.
-                    None => [0.0, 0.0, 1.0],
+                    None => ([0.0, 0.0, 1.0], [0.0, 0.0]),
                 };
             }
             // While a PIN (or its dirty residue) gates the display, the snapshot transform is
@@ -10715,7 +10731,7 @@ impl FractadyneApp {
             // overwrites `frozen_center` on its very first frame.) On pin frames the frame locals
             // describe the PINNED view, so the live values saved in the pre-step are used.
             if pin_gate && !hold_copy {
-                self.perf.hold_uv[vs] = match self.ref_cache[vi].frozen_center.clone() {
+                (self.perf.hold_uv[vs], self.perf.hold_turn[vs]) = match self.ref_cache[vi].frozen_center.clone() {
                     Some(fc) => {
                         let l2 = if pin_frame { live_l2 } else { log2mag };
                         let cbf = live_center_bf.as_ref().unwrap_or(&center_bf);
@@ -10728,9 +10744,9 @@ impl FractadyneApp {
                             fractadyne_core::ref_offset_mantissa(&cbf[0], &fc[0], de, prec) / smx;
                         let py =
                             fractadyne_core::ref_offset_mantissa(&cbf[1], &fc[1], de, prec) / smy;
-                        self.hold_transform_for(vi, self.ref_cache[vi].frozen_l2 - l2, (px, py))
+                        self.hold_transform_for(vi, self.ref_cache[vi].frozen_l2 - l2, (px, py), self.ref_cache[vi].frozen_rot)
                     }
-                    None => [0.0, 0.0, 1.0],
+                    None => ([0.0, 0.0, 1.0], [0.0, 0.0]),
                 };
             }
             // When this frame will actually re-iterate (not a freeze/pan reprojection), remember the
@@ -10770,6 +10786,7 @@ impl FractadyneApp {
                 }
                 self.ref_cache[vi].frozen_center = Some(center_bf.clone());
                 self.ref_cache[vi].frozen_l2 = log2mag;
+                self.ref_cache[vi].frozen_rot = view_rot;
                 self.ref_cache[vi].frozen_upp_l2 = upp_l2;
                 self.ref_cache[vi].frozen_at = Some(Instant::now());
                 self.ref_cache[vi].frozen_frame = self.perf.frame_idx;
@@ -10928,6 +10945,7 @@ impl FractadyneApp {
             ref_offset,
             reproject,
             reproject_scale,
+            reproject_turn,
             mode,
             fractal,
             julia,
@@ -11105,6 +11123,9 @@ pub(crate) struct PinnedRefresh {
     pub(crate) span: (fractadyne_core::FloatExp, fractadyne_core::FloatExp),
     pub(crate) magnification: f64,
     pub(crate) log2mag: f64,
+    /// The view's rotation its passes render at (design/view-rotation.md): a turn stops it
+    /// ([`PinStop::Turn`]), and an adopted pin's frame is held at this angle (`RefCache::frozen_rot`).
+    pub(crate) rotation: f64,
     pub(crate) upp_l2: f64,
     /// The caller's iteration appetite at pin time (substituted as the frame's `eff_iter`).
     pub(crate) eff_iter: u32,
@@ -11274,6 +11295,8 @@ pub(crate) struct PinInputs {
     pub(crate) converged: bool,
     /// The walk passed the view's last known escape-range top, with margin.
     pub(crate) past_range_top: bool,
+    /// The live view's rotation is not the pin's: its next passes would render at another angle.
+    pub(crate) turned: bool,
 }
 
 /// Why a pinned refresh stopped without adopting.
@@ -11300,6 +11323,9 @@ pub(crate) enum PinStop {
     /// A frame from the second GPU on screen shows the live view at least as well as the pin's
     /// could (`motion_worker::frame_quality`): the pin's work could never reach the screen.
     Superseded,
+    /// The view turned (design/view-rotation.md): the walk's next passes would resume its pixels
+    /// at another angle. A finished walk still adopts: its frame is held turned.
+    Turn,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -11586,6 +11612,9 @@ pub(crate) fn pin_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
     if !i.interacting {
         return PinVerdict::Stop(PinStop::Settled);
     }
+    if i.turned {
+        return PinVerdict::Stop(PinStop::Turn);
+    }
     if i.orbit_id != pin.orbit_id || i.orbit_len != pin.orbit_len {
         // A same-point orbit that is at least as long is the pinned orbit with more (or fresher)
         // samples: the stored per-pixel state resumes against an identical prefix, so the pin
@@ -11640,6 +11669,9 @@ fn split_verdict(pin: &PinnedRefresh, i: &PinInputs) -> PinVerdict {
     }
     if !i.interacting {
         return PinVerdict::Stop(PinStop::Settled);
+    }
+    if i.turned {
+        return PinVerdict::Stop(PinStop::Turn);
     }
     if i.panel != pin.panel {
         return PinVerdict::Stop(PinStop::Panel);

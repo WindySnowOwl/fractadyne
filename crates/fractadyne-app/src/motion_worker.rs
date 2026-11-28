@@ -34,6 +34,8 @@ pub(crate) struct LiveTicket {
     pub(crate) frame: u64,
     pub(crate) center_bf: [fractadyne_core::BigFloat; 2],
     pub(crate) log2mag: f64,
+    /// The rotation it renders at (design/view-rotation.md), held turned if the view turns on.
+    pub(crate) rotation: f64,
     pub(crate) res: [u32; 2],
     /// log2 of its texels across the panel's width (`RefCache::frozen_res`).
     pub(crate) res_log2: f64,
@@ -334,6 +336,7 @@ impl FractadyneApp {
                 frame: self.perf.frame_idx,
                 center_bf,
                 log2mag,
+                rotation: params.rotation,
                 res,
                 res_log2: (res[0] as f64 / panel[0].max(1) as f64).log2(),
                 // `live_ref_fields` clamps a partial reference's count to `orbit_len - 1`.
