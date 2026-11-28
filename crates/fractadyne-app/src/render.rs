@@ -6473,6 +6473,18 @@ impl FractadyneApp {
                 if min_b != u32::MAX && max_b >= min_b {
                     let (mn, mx) = (f32::from_bits(min_b), f32::from_bits(max_b));
                     if mn.is_finite() && mx.is_finite() && mx >= mn {
+                        // The count base the view asks for next (coloring plan D2): from the
+                        // lowest count a reading of the view on screen saw.
+                        if reading_current {
+                            let next = fractadyne_gpu::live_count_base(self.perf.count_base[vb], Some(f64::from(mn)));
+                            if next != self.perf.count_base[vb] {
+                                crate::diag::log_line(
+                                    "render",
+                                    &format!("count base v{vb}: {} -> {next} (the lowest count read {mn})", self.perf.count_base[vb]),
+                                );
+                                self.perf.count_base[vb] = next;
+                            }
+                        }
                         // A chunked frame's reading spans ONE PASS's iteration band, not the
                         // frame — see `norm_window_feed` (the noise-vs-flat field report).
                         // ⚠Classified by REGIME (`chunk_governed`), never by the cursor:
@@ -7861,6 +7873,7 @@ impl FractadyneApp {
             norm_complete: self.perf.norm_complete_submit[vs.min(1)],
             norm_complete_out: Some(self.perf.norm_complete_sink[vs.min(1)].clone()),
             norm_base: self.perf.norm_base[vs.min(1)],
+            count_base: self.perf.count_base[vs.min(1)],
             norm_hist_out: Some(self.perf.norm_hist_sink[vs.min(1)].clone()),
             trap_window_out: Some(self.perf.trap_sink[vs.min(1)].clone()),
             trap_dist_out: Some(self.perf.trap_dist_sink[vs.min(1)].clone()),

@@ -108,6 +108,7 @@ fn a_gbuffers_escape_range_spans_its_escaped_texels_only() {
         width: rs.len() as u32,
         height: 1,
         ss: 1,
+        count_base: 0,
         iter: rs.iter().flat_map(|&r| texel(r)).collect(),
         aux: Vec::new(),
     };
@@ -116,6 +117,12 @@ fn a_gbuffers_escape_range_spans_its_escaped_texels_only() {
     assert_eq!(g(&[-1.0, -1.0, 0.0]).escape_range(), None);
     // A non-finite value is no escape.
     assert_eq!(g(&[f32::NAN, 5.0, f32::INFINITY]).escape_range(), Some((5.0, 5.0)));
+    // A G-buffer stored at a count base (coloring plan D2) hands on the counts themselves, and its
+    // fine histogram buckets them, not the stored values.
+    let at = GBuffer { count_base: 5_111_808, ..g(&[-1.0, 66_632.5, 66_781.5]) };
+    assert_eq!(at.escape_range(), Some((5_178_440.5, 5_178_589.5)));
+    let plain = g(&[-1.0, 5_178_440.5, 5_178_589.5]);
+    assert_eq!(at.escape_hist(5_178_000.0).counts, plain.escape_hist(5_178_000.0).counts);
 }
 
 #[test]
@@ -125,6 +132,7 @@ fn a_gbuffers_escaped_share_counts_only_escaped_texels() {
         width: rs.len() as u32,
         height: 1,
         ss: 1,
+        count_base: 0,
         iter: rs.iter().flat_map(|&r| texel(r)).collect(),
         aux: Vec::new(),
     };

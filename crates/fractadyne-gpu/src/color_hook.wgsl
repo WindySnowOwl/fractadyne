@@ -67,7 +67,8 @@ fn palette_inside(t: f32) -> vec3<f32> {
 
 fn hook_lanes(m: vec4<f32>, a: vec4<f32>, col: vec3<f32>) -> Lanes {
     var l: Lanes;
-    l.count = m.r;
+    // The count itself: the texture holds it less the frame's count base (coloring plan D2).
+    l.count = select(m.r, m.r + cu.count_base, m.r >= 0.0);
     l.normal_x = m.g;
     l.normal_y = m.b;
     l.de_log2 = m.a - de_px_shift;

@@ -2121,7 +2121,7 @@ impl<'a> TileRenderer<'a> {
             gloss_stat: crate::stat_gloss_words(req.color_method, req.stat_gloss).0,
             gloss_amount: crate::stat_gloss_words(req.color_method, req.stat_gloss).1,
             gloss_center: crate::stat_gloss_words(req.color_method, req.stat_gloss).2,
-            _pad_gl: 0.0,
+            count_base: req.count_base_fixed() as f32,
         };
         queue.write_buffer(&color_uniform, 0, bytemuck::bytes_of(&cu));
         let split = |v: f64| -> (f32, f32) {
@@ -4695,7 +4695,7 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         gloss_stat: crate::stat_gloss_words(req.color_method, req.stat_gloss).0,
         gloss_amount: crate::stat_gloss_words(req.color_method, req.stat_gloss).1,
         gloss_center: crate::stat_gloss_words(req.color_method, req.stat_gloss).2,
-        _pad_gl: 0.0,
+        count_base: req.count_base_fixed() as f32,
     }
 }
 

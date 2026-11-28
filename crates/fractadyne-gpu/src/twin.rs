@@ -21,6 +21,10 @@ pub struct GBuffer {
     pub width: u32,
     pub height: u32,
     pub ss: u32,
+    /// The count base the iteration plane's counts are stored at (coloring plan D2,
+    /// [`crate::CountBase`]): each escaped `r` is its count less this. [`Self::escape_range`] and
+    /// [`Self::escape_hist`] add it back.
+    pub count_base: u32,
     pub iter: Vec<f32>,
     pub aux: Vec<f32>,
 }
@@ -62,6 +66,7 @@ impl GBuffer {
         for t in self.iter.chunks_exact(4) {
             let v = t[0];
             if v > 0.0 && v.is_finite() {
+                let v = v + self.count_base as f32;
                 r = Some(r.map_or((v, v), |(lo, hi)| (lo.min(v), hi.max(v))));
             }
         }
@@ -77,7 +82,7 @@ impl GBuffer {
         for t in self.iter.chunks_exact(4) {
             let v = t[0];
             if v > 0.0 && v.is_finite() {
-                counts[crate::norm_hist_bucket(v, base)] += 1;
+                counts[crate::norm_hist_bucket(v + self.count_base as f32, base)] += 1;
             }
         }
         crate::NormHist { base, counts }
@@ -99,6 +104,8 @@ pub struct AdoptFrame {
     pub width: u32,
     pub height: u32,
     pub ss: u32,
+    /// The G-buffer's count base ([`GBuffer::count_base`]): what the texture it is installed in holds.
+    pub count_base: u32,
     pub(crate) iter: wgpu::TextureView,
     /// A 1×1 zero texture when the G-buffer had no aux plane: every read of it is 0.
     pub(crate) aux: wgpu::TextureView,
@@ -159,6 +166,7 @@ impl AdoptFrame {
             width: w,
             height: h,
             ss: g.ss.max(1),
+            count_base: g.count_base,
             iter: iter_t.create_view(&wgpu::TextureViewDescriptor::default()),
             aux: aux_t.create_view(&wgpu::TextureViewDescriptor::default()),
             pending: std::sync::Mutex::new(pending),
@@ -432,6 +440,15 @@ impl LiveTwin {
     pub fn gbuffer(&self, device: &wgpu::Device, queue: &wgpu::Queue, view_id: u32, with_aux: bool) -> Result<GBuffer, GpuError> {
         let r = self.resources.get::<Renderer>().ok_or_else(|| GpuError::Readback("the twin has no renderer".into()))?;
         r.read_gbuffer(device, queue, view_id, with_aux)
+    }
+
+    /// The palette words view `view_id` last colored with, `(offset, lo, count base)`
+    /// ([`crate::ColorUniforms`]): what the color pass reads its texture through, the map rewritten
+    /// about the texture's count base (coloring plan D2). `None` before its first frame.
+    pub fn color_words(&self, view_id: u32) -> Option<(f32, f32, f32)> {
+        let r = self.resources.get::<Renderer>()?;
+        let cu = r.views.get(&view_id)?.last_cu?;
+        Some((cu.offset, cu.norm_lo, cu.count_base))
     }
 }
 
@@ -711,7 +728,7 @@ impl Renderer {
         };
         let iter = read(&bi)?;
         let aux = if with_aux { read(&ba)? } else { Vec::new() };
-        Ok(GBuffer { width: w, height: h, ss: view.last_ss.max(1), iter, aux })
+        Ok(GBuffer { width: w, height: h, ss: view.last_ss.max(1), count_base: view.last_count_base, iter, aux })
     }
 }
 

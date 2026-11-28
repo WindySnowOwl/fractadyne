@@ -86,7 +86,177 @@ fn held(plain: &Shot, based: &Shot) -> Option<(u32, f64, usize, usize, usize)> {
     Some((based.base, off, moved, f0.len(), fb.len()))
 }
 
+/// The live frames' size and budget (stage 2), as the twin self-test's.
+const LW: u32 = 192;
+const LH: u32 = 120;
+const LITER: u32 = 20_000;
+
+/// What a live check reads of a run of passes on a fresh [`fractadyne_gpu::LiveTwin`]: the view's
+/// G-buffer (its counts and the base they are stored at) and the palette words it colors them with.
+struct Live {
+    g: fractadyne_gpu::GBuffer,
+    words: Option<(f32, f32, f32)>,
+}
+
+#[inline(never)]
+fn live_run(device: &eframe::wgpu::Device, queue: &eframe::wgpu::Queue, passes: &[fractadyne_gpu::MandelbrotParams]) -> Result<Live, String> {
+    let mut t = fractadyne_gpu::LiveTwin::new(device, queue);
+    for p in passes {
+        t.frame(device, queue, p).map_err(|e| e.to_string())?;
+    }
+    let id = passes.first().map_or(0, |p| p.view_id);
+    let g = t.gbuffer(device, queue, id, false).map_err(|e| e.to_string())?;
+    Ok(Live { g, words: t.color_words(id) })
+}
+
+/// [`held`] for two G-buffers.
+fn held_g(plain: &fractadyne_gpu::GBuffer, based: &fractadyne_gpu::GBuffer) -> Option<(u32, f64, usize, usize, usize)> {
+    held(&Shot { px: plain.iter.clone(), base: plain.count_base, below: 0 }, &Shot { px: based.iter.clone(), base: based.count_base, below: 0 })
+}
+
+/// The palette words a frame of `p` colors a texture stored at `base` with, `(offset, lo)`: its
+/// map's words rewritten about the base ([`fractadyne_gpu::count_rebased_map`]).
+fn words_at(p: &fractadyne_gpu::MandelbrotParams, base: u32) -> (f32, f32) {
+    let eq = p.equalize.as_ref().is_some_and(|e| e.share > 0.0 && e.sweeps > 0.0);
+    fractadyne_gpu::count_rebased_map(p.norm_mode, eq, p.cycle, p.offset, p.norm_lo, p.wrap, base)
+}
+
 impl crate::FractadyneApp {
+    /// The live view's own params for corpus 07 at 1.3e30x (floatexp), Smooth, as a whole frame at
+    /// its full size; built on a fresh frame state and a cold reference cache, and the session's put
+    /// back whole after (as the twin self-test builds them: `build_params` mutates far more frame
+    /// state than a list of fields would catch).
+    #[inline(never)]
+    fn cb_live_params(&mut self) -> Option<Box<fractadyne_gpu::MandelbrotParams>> {
+        const CRX: &str = "-1.178853950372678747911373866849720956148855";
+        const CRY: &str = "0.1853420232408490265512092752061929308714979";
+        let saved_vp = self.viewport.clone();
+        let saved = (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method);
+        let fresh = crate::Perf { ts_supported: self.perf.ts_supported, wall_fallback: self.perf.wall_fallback, actuators: self.perf.actuators, ..Default::default() };
+        let saved_perf = std::mem::replace(&mut self.perf, fresh);
+        let saved_cache = self.ref_cache.clone();
+        let saved_rx = std::mem::take(&mut self.recompute_rx);
+        self.ref_cache[0] = Default::default();
+        self.render_cfg.max_iter = LITER;
+        self.render_cfg.auto_iter = false;
+        self.coloring.color_method = crate::ColorMethod::Smooth;
+        self.viewport.set_size(LW as f64, LH as f64);
+        self.viewport.set_center_log2mag(fractadyne_core::parse_bf(CRX).unwrap(), fractadyne_core::parse_bf(CRY).unwrap(), 100.0);
+        let live = |app: &mut Self| {
+            app.perf.frame_idx += 1;
+            let center_bf = [app.viewport.center_x.clone(), app.viewport.center_y.clone()];
+            let center = app.viewport.center_f64();
+            let span = app.viewport.complex_span_fe();
+            let mag = app.viewport.magnification();
+            let l2 = app.viewport.log2_magnification();
+            app.build_params(center_bf, center, span, mag, l2, app.fractal, false, LITER, false, 1, [LW, LH], 0, None)
+        };
+        let mut warm = 0;
+        while self.ref_cache[0].ref_pt.is_none() && warm < 400 {
+            let _ = live(self);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            warm += 1;
+        }
+        let have_ref = self.ref_cache[0].ref_pt.is_some();
+        let pr = live(self);
+        self.viewport = saved_vp;
+        (self.render_cfg.max_iter, self.render_cfg.auto_iter, self.coloring.color_method) = saved;
+        self.perf = saved_perf;
+        self.ref_cache = saved_cache;
+        self.recompute_rx = saved_rx;
+        if !have_ref {
+            return None;
+        }
+        let mut p = Box::new(pr.headless());
+        p.tile = None;
+        p.chunk_range = None;
+        p.chunk_idx = 0;
+        p.split = [1, 0];
+        p.ss = 1;
+        p.jitter = [0.0, 0.0];
+        p.resolution = [LW, LH];
+        p.count_base = 0;
+        Some(p)
+    }
+
+    /// The live view's count base (coloring plan D2, stage 2), on a fresh live renderer each: a whole
+    /// pass stores its counts at the base it asks for and colors them about it; a walk keeps the base
+    /// its first window took, whatever its later windows ask; a split pass keeps the texture's.
+    pub(super) fn count_base_live_checks(&mut self, device: &eframe::wgpu::Device, queue: &eframe::wgpu::Queue) -> Vec<SelfCheck> {
+        let mut checks = Vec::new();
+        let Some(p0) = self.cb_live_params() else {
+            checks.push(SelfCheck {
+                category: "consistency",
+                name: "a live frame stores its counts at the base it asks for".into(),
+                params: "corpus 07 at 1.3e30x".into(),
+                result: "no reference was built".into(),
+                threshold: "a reference",
+                pass: false,
+            });
+            return checks;
+        };
+        let plain = live_run(device, queue, std::slice::from_ref(&*p0));
+        let low = plain.as_ref().ok().and_then(|l| l.g.escape_range()).map(|r| r.0);
+        let base = low.map_or(1, |v| (v.floor() as u32).saturating_sub(64).max(1));
+        let at = |b: u32| fractadyne_gpu::MandelbrotParams { count_base: b, ..(*p0).clone() };
+        // A whole pass at the base.
+        let one = live_run(device, queue, &[at(base)]);
+        let (want_o, want_lo) = words_at(&p0, base);
+        let whole = match (&plain, &one) {
+            (Ok(a), Ok(b)) => Some((held_g(&a.g, &b.g), b.words, b.words == Some((want_o, want_lo, base as f32)))),
+            _ => None,
+        };
+        checks.push(SelfCheck {
+            category: "consistency",
+            name: "a live frame stores its counts at the base it asks for, and colors them about it".into(),
+            params: format!("corpus 07 at 1.3e30x, {LW}x{LH}, {LITER} iterations, one pass; the base {base} (the lowest count {low:?} less 64)"),
+            result: format!("((the base stored; the largest difference in steps of the old texel; pixels moved; distinct fractions at 0, at the base); the color words; the map rewritten about the base): {whole:?}"),
+            threshold: "the base stored; within 1 step; none moved; the words the map's about the base",
+            pass: whole.is_some_and(|(h, _, w)| w && h.is_some_and(|(cb, off, moved, f0, fb)| cb == base && off <= 1.0 && moved == 0 && fb >= f0)),
+        });
+        // A walk: its first window at the base, the later ones asking for another.
+        let mid = plain.as_ref().ok().map_or(LITER / 2, |l| {
+            let mut c: Vec<f32> = l.g.iter.chunks(4).map(|t| t[0]).filter(|v| *v >= 0.0).collect();
+            c.sort_by(|a, b| a.total_cmp(b));
+            c.get(c.len() / 2).map_or(LITER / 2, |v| (*v as u32).clamp(1, LITER - 1))
+        });
+        let window = |s: u32, e: u32, k: u32, b: u32| fractadyne_gpu::MandelbrotParams { chunk_range: Some([s, e]), chunk_idx: k, count_base: b, ..(*p0).clone() };
+        let steady = live_run(device, queue, &[window(0, mid, 0, base), window(mid, LITER, 1, base), window(LITER, LITER, 2, base)]);
+        let asked = live_run(device, queue, &[window(0, mid, 0, base), window(mid, LITER, 1, base + 65_536), window(LITER, LITER, 2, base + 65_536)]);
+        let walk = match (&steady, &asked) {
+            (Ok(s), Ok(a)) => Some((
+                a.g.count_base,
+                s.g.iter.len() == a.g.iter.len() && s.g.iter.iter().zip(&a.g.iter).all(|(x, y)| x.to_bits() == y.to_bits()),
+                a.words.map(|w| w.2),
+            )),
+            _ => None,
+        };
+        checks.push(SelfCheck {
+            category: "consistency",
+            name: "a live walk keeps the base its first window took".into(),
+            params: format!("the same view walked in windows [0, {mid}), [{mid}, {LITER}) and the tail: the first at the base {base}, the later ones asking for {}", base + 65_536),
+            result: format!("(the base stored; the walk the walk at a steady base, bit for bit; the colors' base): {walk:?}"),
+            threshold: "the first window's base; identical; colored at it",
+            pass: walk == Some((base, true, Some(base as f32))),
+        });
+        // A split pass over a frame stored at 0, asking for the base: the texture keeps 0.
+        let split = |j: u32| fractadyne_gpu::MandelbrotParams { split: [2, j], count_base: base, ..(*p0).clone() };
+        let kept = live_run(device, queue, &[(*p0).clone(), split(0), split(1)]);
+        let split_r = match (&plain, &kept) {
+            (Ok(a), Ok(k)) => Some((k.g.count_base, a.g.iter.iter().zip(&k.g.iter).all(|(x, y)| x.to_bits() == y.to_bits()), k.words.map(|w| w.2))),
+            _ => None,
+        };
+        checks.push(SelfCheck {
+            category: "consistency",
+            name: "a live split pass keeps the texture's base".into(),
+            params: format!("a whole pass at base 0, then the two halves of a split asking for {base}"),
+            result: format!("(the base stored; the frame the whole pass's, bit for bit; the colors' base): {split_r:?}"),
+            threshold: "0; identical; colored at 0",
+            pass: split_r == Some((0, true, Some(0.0))),
+        });
+        checks
+    }
+
     /// The export request for a view of the checks, at their size and one sample a pixel.
     #[inline(never)]
     fn cb_request(&mut self, re: &str, im: &str, mag: f64, iter: u32) -> Box<fractadyne_gpu::ExportRequest> {
@@ -205,6 +375,8 @@ impl crate::FractadyneApp {
             threshold: "base 0, identical",
             pass: same == Some((0, true)),
         });
+        // The live view's (stage 2).
+        checks.extend(self.count_base_live_checks(device, queue));
         (
             (self.fractal, self.julia_mode, self.coloring.color_method, self.coloring.interior, self.coloring.transfer),
             (self.coloring.band_texture, self.coloring.stat_layer, self.coloring.stat_bump, self.coloring.stat_gloss, self.coloring.use_custom_palette),
