@@ -231,3 +231,19 @@ fn a_shallow_location_clamps_rather_than_inverting() {
     .expect("parses");
     assert_eq!(v.zoom, 1.0);
 }
+
+/// ⚠**An assumption, named** (design/view-rotation.md): a `.kfr` `RotateAngle` is read as degrees
+/// in Fractadyne's own sense, positive turning the picture counterclockwise. Kalles Fraktaler's
+/// sense is not yet checked against a picture it rendered; if it turns out clockwise, the fix is
+/// one sign in `parse_kfr`, and this test says where to make it. A file without the key, or with
+/// one that does not read, is unturned; a value is wrapped into (-180, 180].
+#[test]
+fn kfr_rotate_angle_is_taken_counterclockwise() {
+    let at = |extra: &str| super::parse_kfr(&format!("Re: -0.75\nIm: 0.1\nZoom: 1E10\n{extra}")).expect("parses").rotate_deg;
+    assert_eq!(at(""), 0.0);
+    assert_eq!(at("RotateAngle: 30\n"), 30.0);
+    assert_eq!(at("RotateAngle: -45.5\n"), -45.5);
+    assert_eq!(at("RotateAngle: 270\n"), -90.0);
+    assert_eq!(at("RotateAngle: turned\n"), 0.0);
+    assert_eq!(at("RotateAngle: 0\n").to_bits(), 0f64.to_bits(), "unturned is +0");
+}

@@ -233,7 +233,27 @@ pub(crate) fn stamp_watermark(pixels: &mut [f32], w: u32, h: u32, ov: &WmOverlay
 /// 6 — `light_angle=` in degrees, counterclockwise from the right (radians before; user,
 /// 2026-11-28). Written only by a view that writes the key (the relief light on); a file of an
 /// earlier format holds radians, which the reader converts.
-pub(crate) const VIEW_FORMAT_VERSION: u32 = 6;
+///
+/// 7 — `rotation=` (degrees, positive turning the picture counterclockwise; design/view-rotation.md)
+/// and `julia_view_rotation=` for a dual view's Julia pane. Written only by a turned view, for the
+/// reason of 2: an older build would show it unturned and say only "unknown key". A file without
+/// the key is unturned: the reader sets 0, never keeps the rotation on screen.
+pub(crate) const VIEW_FORMAT_VERSION: u32 = 7;
+/// What a turned view writes (format 7), whatever else it is.
+pub(crate) const VIEW_FORMAT_ROTATION: u32 = 7;
+
+/// A view file's rotation key: absent, unturned (0); a number, wrapped into (−180, 180]; anything
+/// else, unturned and reported.
+fn read_rotation(value: Option<String>, report: &mut ViewLoad) -> f64 {
+    match value.map(|s| s.trim().parse::<f64>()) {
+        None => 0.0,
+        Some(Ok(d)) if d.is_finite() => fractadyne_core::wrap_rotation(d),
+        Some(_) => {
+            report.clamped.push("rotation");
+            0.0
+        }
+    }
+}
 /// What a view with the relief light's angle in it writes (format 6), whatever else it is.
 pub(crate) const VIEW_FORMAT_LIGHT_DEGREES: u32 = 6;
 /// What an L-system view writes (format 4, unchanged by format 5).
@@ -387,6 +407,9 @@ pub(crate) const KNOWN_VIEW_KEYS: &[&str] = &[
     // The dual view (2026-11-16, review finding 8): the layout and the Julia pane's own camera,
     // written only for a dual view, so a single view is byte-identical to one written before.
     "dual", "dual_split", "julia_view_center_re", "julia_view_center_im", "julia_view_upp_log2",
+    // The view's rotation and the Julia pane's (format 7, design/view-rotation.md), degrees,
+    // written only when turned.
+    "rotation", "julia_view_rotation",
     // A coloring hook (format 5): its WGSL text (one line, `\n`/`\\` escaped) and its parameters
     // p1..p4. Written only for a view colored through one.
     "coloring_hook", "coloring_hook_params",
@@ -444,6 +467,8 @@ const TYPED_VIEW_KEYS: &[(&str, ValueKind)] = &[
     ("center_y", ValueKind::BigFloat),
     ("upp", ValueKind::Float),
     ("upp_log2", ValueKind::Float),
+    ("rotation", ValueKind::Float),
+    ("julia_view_rotation", ValueKind::Float),
     ("max_iter", ValueKind::Uint),
     ("palette", ValueKind::Uint),
     ("palette_id", ValueKind::Id),
@@ -1125,6 +1150,9 @@ impl FractadyneApp {
             crate::diag::log_line("view", &format!("view text written WITHOUT its zoom: the viewport's scale is not a number ({upp_log2})"));
             String::new()
         };
+        // The view's rotation (format 7, design/view-rotation.md), only when it is turned: an
+        // unturned view's text is byte-identical to what it was before the key existed.
+        let scale = if vp.rotation != 0.0 && vp.rotation.is_finite() { format!("{scale}rotation={:?}\n", vp.rotation) } else { scale };
         let julia_c = if jcx.is_finite() && jcy.is_finite() {
             format!("julia_c_re={jcx:.17e}\njulia_c_im={jcy:.17e}\n")
         } else {
@@ -1133,11 +1161,13 @@ impl FractadyneApp {
         // The dual view (finding 8): the layout and the Julia pane's own camera.
         let dual = match dual_pane.filter(|_| self.fractal.supports_julia()) {
             Some(j) if j.units_per_pixel.log2().is_finite() => format!(
-                "dual=1\ndual_split={}\njulia_view_center_re={}\njulia_view_center_im={}\njulia_view_upp_log2={:.17e}\n",
+                "dual=1\ndual_split={}\njulia_view_center_re={}\njulia_view_center_im={}\njulia_view_upp_log2={:.17e}\n{}",
                 self.dual_split,
                 fractadyne_core::to_decimal_string(&j.center_x),
                 fractadyne_core::to_decimal_string(&j.center_y),
                 j.units_per_pixel.log2(),
+                // The Julia pane's own rotation (format 7), only when it is turned.
+                if j.rotation != 0.0 && j.rotation.is_finite() { format!("julia_view_rotation={:?}\n", j.rotation) } else { String::new() },
             ),
             _ => String::new(),
         };
@@ -1161,6 +1191,8 @@ impl FractadyneApp {
         };
         // The light's angle in degrees (format 6): only a view that writes it says so.
         let format = if coloring_text.lines().any(|l| l.starts_with("light_angle=")) { format.max(VIEW_FORMAT_LIGHT_DEGREES) } else { format };
+        // A turned view (format 7): only a view that writes a rotation says so.
+        let format = if scale.contains("rotation=") || dual.contains("julia_view_rotation=") { format.max(VIEW_FORMAT_ROTATION) } else { format };
         format!(
             "app=Fractadyne\nversion={}\nformat_version={}\nsaved_unix={}\nsaved={}\n\
              notes={}\nfractal={}\njulia={}\n{julia_c}\
@@ -1550,6 +1582,9 @@ impl FractadyneApp {
             // until this said so (2026-08-29); the depth belongs in `upp_log2`.
             report.clamped.push("zoom (ignored — depth is read from upp_log2, not zoom)");
         }
+        // The rotation (format 7). ⭐A file without the key is UNTURNED: the rotation on screen is
+        // never kept, or a bookmark of an unturned view would open turned.
+        self.viewport.rotation = read_rotation(get("rotation"), &mut report);
         if let Some(mi) = get("max_iter").and_then(|s| s.parse::<u32>().ok()) {
             let c = mi.clamp(1, MAX_LOAD_ITER);
             if c != mi {
@@ -1714,6 +1749,8 @@ impl FractadyneApp {
             {
                 report.clamped.push("Julia pane");
             }
+            // The pane's own rotation, unturned without the key, as the main view's.
+            self.julia_viewport.rotation = read_rotation(get("julia_view_rotation"), &mut report);
         }
         // Match the viewport's working precision to the restored zoom; drop caches.
         self.viewport.precision = fractadyne_core::precision_for_octaves(

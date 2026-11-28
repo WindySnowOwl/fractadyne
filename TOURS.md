@@ -210,6 +210,7 @@ A camera waypoint. The view eases from the previous keyframe to this one, ARRIVI
 | `draw` | float | (inherit, else 1) | How much of an L-system is drawn, 0 to 1, in the order the turtle draws it; interpolated, so the curve draws itself on. |
 | `trap_phase` | float, degrees | (inherit, else the coloring's) | The wave trap's phase here (the sine wave's or the square wave's; `[render.coloring]` `trap_phase`), in degrees and never wrapped: interpolated along the glide, so 0 here and 360 at the next keyframe turn the wave once through, 720 twice. Two keyframes at the same place with `ease = "linear"` turn it evenly while the camera stays still (a hold keeps its keyframe's phase). Up to a thousand turns either way. |
 | `interior_trap_phase` | float, degrees | (inherit, else the coloring's) | The inside's own trap's phase, as `trap_phase`. |
+| `rotate` | float, degrees | (inherit, else 0) | The view's rotation here, in degrees, positive turning the picture counterclockwise, and never wrapped: interpolated along the glide, so 0 here and 360 at the next keyframe turn the picture once around. A tour that never states it plays unturned. Up to a thousand turns either way. |
 
 ### `[[annotation]]` — repeatable
 

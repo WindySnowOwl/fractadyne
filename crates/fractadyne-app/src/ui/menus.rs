@@ -1642,11 +1642,19 @@ impl FractadyneApp {
                 let mag = vp.magnification();
                 let upp = vp.units_per_pixel.to_f64();
                 let direct = self.render_mode(self.fractal, self.julia_mode, mag).is_direct();
+                // The view's reach along the plane's axes: a turned view's is its bounding box's.
+                let (hw, hh) = (upp * vp.width_px * 0.5, upp * vp.height_px * 0.5);
+                let reach = if vp.rotation == 0.0 {
+                    (hw, hh)
+                } else {
+                    let (c, s) = fractadyne_core::rotation_cos_sin(vp.rotation);
+                    (c.abs() * hw + s.abs() * hh, s.abs() * hw + c.abs() * hh)
+                };
                 // (A Life view has no escape-time limits: the slot stays transparent.)
                 let limit = if life_bar { None } else { Self::direct_precision_status(
                     direct,
                     vp.center_f64(),
-                    (upp * vp.width_px * 0.5, upp * vp.height_px * 0.5),
+                    reach,
                     upp,
                     mag,
                 )

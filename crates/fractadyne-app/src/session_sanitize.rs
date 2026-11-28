@@ -47,6 +47,13 @@ pub(crate) fn sanitize(s: &mut SessionState) -> Vec<&'static str> {
         fixed.push("julia_c");
     }
     real32(&mut s.dual_split, crate::DUAL_SPLIT_MIN, crate::DUAL_SPLIT_MAX, d.dual_split, "dual_split", &mut fixed);
+    // The rotations: a number is put in (−180, 180] where it is read; anything else is unturned.
+    for (v, name) in [(&mut s.rotation, "rotation"), (&mut s.julia_view_rotation, "julia_view_rotation")] {
+        if !v.is_finite() {
+            *v = 0.0;
+            fixed.push(name);
+        }
+    }
     if let Some(l) = s.julia_view_upp_log2 {
         if !l.is_finite() || l.abs() > crate::export::MAX_LOAD_OCTAVES {
             s.julia_view_upp_log2 = None;

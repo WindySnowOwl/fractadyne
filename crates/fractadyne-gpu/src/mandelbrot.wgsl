@@ -649,6 +649,32 @@ fn pow2_down(x: f32) -> f32 {
     return bitcast<f32>(0x7F800000u - (bitcast<u32>(x) & 0x7F800000u));
 }
 
+// A texel's offset from the view's center, scaled per axis, `(re, im)` in df32, into the plane:
+// turned by R(-θ) when the view is turned (`iu.view_rot`), the picture then turning by +θ on the
+// screen. After the per-axis scaling, so a frame whose x and y steps differ by rounding is not
+// sheared. Unturned: the offset as it was, `(re.hi, re.lo, im.hi, im.lo)`.
+fn view_offset(re: vec2<f32>, im: vec2<f32>) -> vec4<f32> {
+    if (iu.view_rot.z == 0.0) {
+        return vec4<f32>(re, im);
+    }
+    let c = iu.view_rot.x;
+    let s = iu.view_rot.y;
+    return vec4<f32>(df_add(df_mul_f32(re, c), df_mul_f32(im, s)), df_sub(df_mul_f32(im, c), df_mul_f32(re, s)));
+}
+
+// A unit direction in the plane as the screen shows it (+y up): turned by R(+θ) on a turned view,
+// so the relief light, its highlight, the fringe and the bump stay fixed to the screen
+// (design/view-rotation.md §1). Unturned: as it was. At each normal an iterate writes, not inside
+// `slope_normal`, which `fs_gputest` (bound to the color pass's group) calls too.
+fn view_normal(n: vec2<f32>) -> vec2<f32> {
+    if (iu.view_rot.z == 0.0) {
+        return n;
+    }
+    let c = iu.view_rot.x;
+    let s = iu.view_rot.y;
+    return vec2<f32>(c * n.x - s * n.y, s * n.x + c * n.y);
+}
+
 // Slope normal for distance-estimate lighting: direction of u = z / (dz/dc).
 // Only the *direction* matters (the magnitude is normalized away), so any positive
 // real scale on the derivative — e.g. a floatexp exponent — cancels and we can pass
@@ -1092,6 +1118,10 @@ struct IterU {
     count_pad0: u32,
     count_pad1: u32,
     count_pad2: u32,
+    // THE VIEW'S ROTATION (design/view-rotation.md; lib.rs `view_rot_row`): (cos θ, sin θ, on, 0),
+    // θ turning the picture counterclockwise on the screen (`view_offset`, `view_normal`). On 0:
+    // the unturned view, mapped as before.
+    view_rot: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -1961,8 +1991,10 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
     let step_im = iu.step.zw;
     let coord_re = gx - iu.res.x * 0.5;
     let coord_im = iu.res.y * 0.5 - gy;
-    let off_re = df_mul_f32(step_re, coord_re);
-    let off_im = df_mul_f32(step_im, coord_im);
+    // Turned into the plane on a turned view (`view_offset`).
+    let off_v = view_offset(df_mul_f32(step_re, coord_re), df_mul_f32(step_im, coord_im));
+    let off_re = off_v.xy;
+    let off_im = off_v.zw;
     // @@STRIP_AT_END
 
     let bail2 = bail2_of(iu.formula);
@@ -2150,7 +2182,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
         if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
-            nrm = slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x));
+            nrm = view_normal(slope_normal(zf, vec2<f32>(dz.re.x, dz.im.x)));
             de = de_log2(mag2, vec2<f32>(dz.re.x, dz.im.x), 0.0);
         }
         trap_hist_commit(aux, gx, gy, false);
@@ -2678,7 +2710,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
         if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
-            nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
+            nrm = view_normal(slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x)));
             de = de_log2(mag2, vec2<f32>(D.m.re.x, D.m.im.x), f32(D.e));
         }
         trap_hist_commit(aux, gx, gy, false);
@@ -2920,7 +2952,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
         if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
-            nrm = slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x));
+            nrm = view_normal(slope_normal(zf, vec2<f32>(D.m.re.x, D.m.im.x)));
             de = de_log2(mag2, vec2<f32>(D.m.re.x, D.m.im.x), f32(D.e));
         }
         trap_hist_commit(aux, gx, gy, false);
@@ -3101,8 +3133,10 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
     let gy = iu.px_offset.y + in.pos.y;
     let coord_re = gx - iu.res.x * 0.5;
     let coord_im = iu.res.y * 0.5 - gy;
-    let off_re = df_mul_f32(step_re, coord_re);
-    let off_im = df_mul_f32(step_im, coord_im);
+    // Turned into the plane on a turned view (`view_offset`).
+    let off_v = view_offset(df_mul_f32(step_re, coord_re), df_mul_f32(step_im, coord_im));
+    let off_re = off_v.xy;
+    let off_im = off_v.zw;
     // @@STRIP_CHUNK_END
 
     let bail2 = bail2_of(iu.formula);
@@ -3501,8 +3535,10 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
     let gy = iu.px_offset.y + pos.y;
     let coord_re = gx - iu.res.x * 0.5;
     let coord_im = iu.res.y * 0.5 - gy;
-    let off_re = df_mul_f32(step_re, coord_re);
-    let off_im = df_mul_f32(step_im, coord_im);
+    // Turned into the plane on a turned view (`view_offset`).
+    let off_v = view_offset(df_mul_f32(step_re, coord_re), df_mul_f32(step_im, coord_im));
+    let off_re = off_v.xy;
+    let off_im = off_v.zw;
     // @@STRIP_FE_END
 
     let bail2 = bail2_of(iu.formula);
@@ -4128,7 +4164,7 @@ fn fs_resolve(in: VsOut) -> FragOut {
     // @@STRIP_RESOLVE_AT_END
     // @@CUSTOM_RESOLVE_DE_BEGIN — a custom module has no derivative (st_dz carries z_{n-1}), so
     // it writes fs_iterate's no-DE values here instead.
-    let nrm = slope_normal(zf, d);
+    let nrm = view_normal(slope_normal(zf, d));
     let de = de_log2(mag2, d, sm.w);
     // @@CUSTOM_RESOLVE_DE_END
     // ⭐⭐WHOLE-FRAME ESCAPE RANGE FOR LIVE AUTO-NORMALIZATION. The iterate passes commit the range

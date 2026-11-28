@@ -62,6 +62,8 @@ fn stopping_playback_restores_interaction() {
         "order",
         "angle",
         "draw",
+        // Where the tour left the view, turned as it was there: the view you keep exploring from.
+        "rotate",
     ];
     let fields = keyframe_field_names();
     for f in &fields {

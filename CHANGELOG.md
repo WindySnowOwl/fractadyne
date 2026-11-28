@@ -75,6 +75,15 @@ detail is in the git history.
   now fitted to its own values, as the live view fits the screen, so the video looks like the
   view. Fitting a frame costs about a quarter more time at 2x2 supersampling. A frame depends on
   nothing but its own view, so one full turn of the trap's phase rendered once loops seamlessly.
+- **Turned views, first part: the command line, tours and view files.** A view can be turned
+  about its center: `--rotate DEG` turns a `--render` by DEG degrees, positive counterclockwise,
+  and a tour's keyframes take `rotate`, interpolated along a glide and never wrapped, so 0 and then
+  360 turn the picture once around. The relief light and its highlight stay fixed to the screen,
+  lit from the same side however the picture is turned. A turned view's file, bookmark and saved
+  session keep the angle (view file format 7, written only by a turned view, so an unturned view's
+  file is as before), as does the dual view's Julia pane its own, and a Kalles Fraktaler `.kfr`
+  location brings its `RotateAngle` with it. Every arithmetic path renders a turned view, and a
+  quarter turn exactly. Turning the view in the window comes next.
 - **The relief light's angle is in degrees.** It was the one angle Fractadyne showed in radians.
   The Light angle row now reads 0° to 360°, counterclockwise from the right (126°, the light from
   the upper left, by default), like the trap's rotation and phase, the L-system angle and the

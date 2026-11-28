@@ -200,7 +200,14 @@ impl FractadyneApp {
             }
             Some(SnapTarget::Axis) => {
                 let zero = BigFloat::from_f64(0.0, vp.precision);
-                [cursor[0], vp.complex_to_pixel(&vp.center_x, &zero).1]
+                if vp.rotation == 0.0 {
+                    [cursor[0], vp.complex_to_pixel(&vp.center_x, &zero).1]
+                } else {
+                    // On a turned view the axis is a slanted line: the cursor's foot on it.
+                    let (re, _) = vp.pixel_to_complex(cursor[0], cursor[1]);
+                    let (x, y) = vp.complex_to_pixel(&re, &zero);
+                    [x, y]
+                }
             }
             None => return cursor,
         };

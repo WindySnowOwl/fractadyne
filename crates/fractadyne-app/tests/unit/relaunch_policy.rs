@@ -16,6 +16,7 @@ fn crash_view_fdn_is_a_loadable_location() {
         cy: fractadyne_core::parse_bf("0.1318259042053122928210973548747672652630").unwrap(),
         upp_log2: -55.0,
         log2mag: 54.0,
+        rotation: 30.0,
         max_iter: 10_000_000,
         auto_iter: false,
     });
@@ -31,6 +32,8 @@ fn crash_view_fdn_is_a_loadable_location() {
         "center did not round-trip: {cre}"
     );
     assert!(!fdn.contains("formula="), "a built-in view carries no formula:\n{fdn}");
+    // A turned view carries its rotation (design/view-rotation.md); the unturned one below does not.
+    assert!(fdn.contains("\nrotation=30.0\n"), "the rotation is missing:\n{fdn}");
 
     // A Custom view carries its formula (same test: `CRASH_VIEW` is one global, and a second test
     // writing it in parallel would race this one).
@@ -45,6 +48,7 @@ fn crash_view_fdn_is_a_loadable_location() {
         cy: fractadyne_core::parse_bf("0").unwrap(),
         upp_log2: -8.0,
         log2mag: 0.5,
+        rotation: 0.0,
         max_iter: 500,
         auto_iter: false,
     });
@@ -53,6 +57,7 @@ fn crash_view_fdn_is_a_loadable_location() {
     assert!(fdn.contains("fractal=Custom\n"), "{fdn}");
     assert!(fdn.contains("formula=t = sqr(z)\\nz = t + p1*z + c\n"), "the formula, one escaped line:\n{fdn}");
     assert!(fdn.contains("formula_params=0.5,-0.25\n"), "{fdn}");
+    assert!(!fdn.contains("rotation="), "an unturned view writes no rotation:\n{fdn}");
 }
 
 #[test]

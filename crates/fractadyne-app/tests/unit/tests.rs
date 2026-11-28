@@ -228,6 +228,7 @@ fn snap_at(x: f64, log2mag: f64) -> ViewSnapshot {
         cy: vp.center_y,
         upp: vp.units_per_pixel,
         prec: vp.precision,
+        rot: 0.0,
     }
 }
 
@@ -355,6 +356,9 @@ palette_custom=0,0.25,0.5,0,0,0,1,1,0.2,0.1,1,0,0,0,0,0,0;\
 ///   panes` (review 2026-11-16, finding 8).
 const SAMPLE_OPTIONAL_KEYS: &[&str] = &[
     "dual", "dual_split", "julia_view_center_re", "julia_view_center_im", "julia_view_upp_log2",
+    // Written only by a turned view (format 7); their round trip is the selftest group
+    // `view-rotation` ("a turned view's file carries its rotation").
+    "rotation", "julia_view_rotation",
     "thumb", "checksum",
     "center_re_expr", "center_im_expr", "center_re_offset", "center_im_offset",
     "formula", "formula_params",

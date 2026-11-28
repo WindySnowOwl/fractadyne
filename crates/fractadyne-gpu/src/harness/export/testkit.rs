@@ -251,6 +251,7 @@ pub fn render_iter_chunked_timed(
         outline_row: [0; 4],
         trap_tail: crate::trap_tail_row(0, false),
         count_row: crate::count_row(0),
+        view_rot: crate::view_rot_row(req.rotation),
     };
 
     // One bounded submission per iteration range; poll-wait between them so each stays a short,

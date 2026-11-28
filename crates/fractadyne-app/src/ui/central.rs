@@ -407,6 +407,7 @@ impl FractadyneApp {
             cx: cx0,
             cy: cy0,
             upp: vp.units_per_pixel.to_f64(),
+            rot: vp.rotation,
             julia: is_julia,
             formula,
             custom: self.custom_key_for(self.fractal),
@@ -516,12 +517,9 @@ impl FractadyneApp {
                 })
                 .collect()
         } else {
-            let (cx, cy) = vp.center_f64();
-            let upp = vp.units_per_pixel.to_f64();
             pts.iter()
-                .map(|p| {
-                    let px = (p.0 - cx) / upp + vp.width_px * 0.5;
-                    let py = vp.height_px * 0.5 - (p.1 - cy) / upp;
+                .map(|&p| {
+                    let (px, py) = vp.pixel_of_f64(p);
                     egui::pos2(rect.min.x + (px / ppp) as f32, rect.min.y + (py / ppp) as f32)
                 })
                 .collect()
@@ -848,7 +846,24 @@ impl FractadyneApp {
                         let rw = (sx / (2.0 * MINIMAP_HX)) as f32 * rect.width();
                         let amber = BRAND_ACCENT;
                         let halo = egui::Color32::from_black_alpha(190);
-                        if rw >= 6.0 {
+                        if rw >= 6.0 && self.viewport.rotation != 0.0 {
+                            // Shallow and turned: the view's frame is a turned quad on the
+                            // north-up map, its corners through the view's own mapping.
+                            let vp = &self.viewport;
+                            let upp = vp.units_per_pixel.to_f64();
+                            let kx = (upp / (2.0 * MINIMAP_HX)) as f32 * rect.width();
+                            let ky = (upp / (2.0 * MINIMAP_HY)) as f32 * rect.height();
+                            let (hw, hh) = (vp.width_px * 0.5, vp.height_px * 0.5);
+                            let quad: Vec<egui::Pos2> = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+                                .iter()
+                                .map(|&(dx, dy)| {
+                                    let (ux, uy) = vp.screen_to_plane(dx, dy);
+                                    mk + egui::vec2(ux as f32 * kx, -(uy as f32) * ky)
+                                })
+                                .collect();
+                            p.add(egui::Shape::closed_line(quad.clone(), egui::Stroke::new(3.0_f32, halo)));
+                            p.add(egui::Shape::closed_line(quad, egui::Stroke::new(1.5_f32, amber)));
+                        } else if rw >= 6.0 {
                             // Shallow: draw the actual view rectangle (auto-clipped to the map).
                             let rh = rw * rect.height() / rect.width();
                             let vr = egui::Rect::from_center_size(mk, egui::vec2(rw, rh));

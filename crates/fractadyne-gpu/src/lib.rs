@@ -140,6 +140,9 @@ pub(crate) struct IterUniforms {
     /// ([`CountBase`]); zeros = every count as it always was. A row of its own after the trap tail's,
     /// so no field moved.
     pub(crate) count_row: [u32; 4],
+    /// THE VIEW'S ROTATION (the shader's `view_rot`, design/view-rotation.md): [`view_rot_row`].
+    /// A row of its own after the count base's, so no field moved.
+    pub(crate) view_rot: [f32; 4],
 }
 
 /// The trap's tail for the shader (`trap_tail_g`, `trap_tail_inv`): a tail of `tail` iterations
@@ -362,6 +365,17 @@ pub(crate) fn escape_range_of(slots: &[u32], base: u32) -> (u32, u32) {
 /// The iteration uniform's count-base row ([`IterUniforms::count_row`]) for `base`.
 pub(crate) fn count_row(base: u32) -> [u32; 4] {
     [base, 0, 0, 0]
+}
+
+/// The iteration uniform's rotation row ([`IterUniforms::view_rot`]) for a view turned `deg`
+/// degrees counterclockwise: `(cos, sin, 1, 0)`, exact at quarter turns
+/// ([`fractadyne_core::rotation_cos_sin`]); `(1, 0, 0, 0)` unturned, which the shader reads as off.
+pub(crate) fn view_rot_row(deg: f64) -> [f32; 4] {
+    if deg == 0.0 || !deg.is_finite() {
+        return [1.0, 0.0, 0.0, 0.0];
+    }
+    let (c, s) = fractadyne_core::rotation_cos_sin(deg);
+    [c as f32, s as f32, 1.0, 0.0]
 }
 
 /// A palette map's `(offset, lo)` for counts stored `base` below their value (coloring plan D2):
@@ -1140,6 +1154,8 @@ struct IterKey {
     /// Sub-pixel jitter (progressive SSAA): a changed jitter is a new sample and must re-iterate,
     /// so it participates in the key even though it only shifts `px_offset`.
     jitter: [f32; 2],
+    /// The view's rotation's bits: a turn alone re-iterates.
+    rotation: u64,
     /// A Life frame's display key (`LifeRenderer::update`): the cells, the mapping, the texture.
     /// 0 for every escape-time frame.
     life: u64,
@@ -4501,6 +4517,9 @@ pub struct MandelbrotParams {
     /// `IterUniforms.px_offset`. `[0, 0]` = the classic pixel-center sample. Used by progressive
     /// on-settle supersampling to place each accumulated sample at a different sub-pixel position.
     pub jitter: [f32; 2],
+    /// The view's rotation, degrees, positive turning the picture counterclockwise on the screen
+    /// (`fractadyne_core::Viewport::rotation`, design/view-rotation.md). 0: unturned.
+    pub rotation: f64,
     /// Progressive-supersampling accumulation (deep-zoom despeckle), all `false` = off / classic
     /// live behavior. `accum_present`: display the running AVERAGE (from the accumulator) instead
     /// of this frame's color. `accum_commit`: fold this frame's (complete, jittered) color into
@@ -4622,6 +4641,7 @@ impl MandelbrotParams {
             sa_skip: self.sa_skip,
             bla_on: self.bla_on,
             jitter: self.jitter,
+            rotation: fractadyne_core::rotation_bits(self.rotation),
             life,
             lsystem,
         }
@@ -4806,6 +4826,7 @@ impl Default for MandelbrotParams {
             vignette: Vignette::default(),
             view_id: 0,
             jitter: [0.0, 0.0],
+            rotation: 0.0,
             accum_present: false,
             accum_commit: false,
             accum_reset: false,
@@ -5477,6 +5498,7 @@ impl CallbackTrait for MandelbrotParams {
                 outline_row: outline_row(self.outline_base(), self.outline.as_deref(), true),
                 trap_tail: trap_tail_row(self.trap_tail, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)),
                 count_row: count_row(0),
+                view_rot: view_rot_row(self.rotation),
             };
             // A split pass is a single full-frame pass by definition (`MandelbrotParams::split`).
             let split_on = self.split[0] > 1 && self.chunk_range.is_none() && self.tile.is_none();

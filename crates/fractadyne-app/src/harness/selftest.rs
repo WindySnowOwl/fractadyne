@@ -83,7 +83,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe", "round-trip",
     "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize", "palette-oklab",
     "tour-equalize", "video-equalize", "trap-equalize", "lossy-formats", "tour-trap-fit", "trap-tail", "band-texture",
-    "stat-layer", "stat-bump", "stat-gloss", "count-base",
+    "stat-layer", "stat-bump", "stat-gloss", "count-base", "view-rotation",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -8596,6 +8596,13 @@ impl FractadyneApp {
         // the render chooses, at a view of each render path.
         if want("count-base") {
             for c in self.count_base_checks(device, queue) {
+                push_check(&mut checks, &mut last_check_t, c);
+            }
+        }
+
+        // ---- the view's rotation (design/view-rotation.md): `view_rotation` ----
+        if want("view-rotation") {
+            for c in self.view_rotation_checks(device, queue) {
                 push_check(&mut checks, &mut last_check_t, c);
             }
         }
@@ -17200,3 +17207,4 @@ mod frame_signature_tests;
 mod count_base;
 mod round_trip;
 mod tour_trap_fit;
+mod view_rotation;

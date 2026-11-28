@@ -969,6 +969,8 @@ struct CrashView {
     cy: fractadyne_core::BigFloat,
     upp_log2: f64,
     log2mag: f64,
+    /// The view's rotation, written only when it is turned (design/view-rotation.md).
+    rotation: f64,
     max_iter: u32,
     auto_iter: bool,
 }
@@ -984,7 +986,7 @@ pub(crate) fn crash_view_fdn() -> Option<String> {
     let v = g.as_ref()?;
     Some(format!(
         "app=Fractadyne\nfractal={}\njulia={}\njulia_c_re={:.17e}\njulia_c_im={:.17e}\n\
-         center_re={}\ncenter_im={}\nupp_log2={:.17e}\nzoom={}\nmax_iter={}\nauto_iter={}\n{}",
+         center_re={}\ncenter_im={}\nupp_log2={:.17e}\nzoom={}\n{}max_iter={}\nauto_iter={}\n{}",
         v.fractal.name(),
         v.julia as u32,
         v.julia_c.0,
@@ -993,6 +995,7 @@ pub(crate) fn crash_view_fdn() -> Option<String> {
         fractadyne_core::to_decimal_string(&v.cy),
         v.upp_log2,
         fmt_zoom_field(v.log2mag),
+        if v.rotation != 0.0 && v.rotation.is_finite() { format!("rotation={:?}\n", v.rotation) } else { String::new() },
         v.max_iter,
         v.auto_iter as u32,
         v.custom
@@ -2070,10 +2073,10 @@ struct Perf {
     pre_switch_probe_next: u64,
     accum_ss: [u32; 2],
     /// The view sample 0 of the running average was folded at — (log2 magnification, f64
-    /// center) — so a later fold at ANOTHER view is caught and logged (always, no trace flag):
+    /// center, rotation) — so a later fold at ANOTHER view is caught and logged (always, no trace flag):
     /// that is the one way a converged average shows a translucent copy of another location,
     /// and the field report of 2026-09-16 could not be reproduced in the harness.
-    accum_view0: [(f64, f64, f64); 2],
+    accum_view0: [(f64, f64, f64, f64); 2],
     /// What the GPU reports the iteration texture's pixels are WHOLLY drawn at (`u64::MAX` = older
     /// pixels may remain under the newest writes). ⭐This is the provenance check the other two
     /// guards cannot make: `accum_fold_clean` rules on the FRAME and `accum_view0` on the
@@ -2854,7 +2857,7 @@ impl Default for Perf {
             accum_end_why: [None, None],
             pre_switch_probe_next: 0,
             accum_ss: [1, 1],
-            accum_view0: [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0)],
+            accum_view0: [(0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0)],
             content_stamp: [
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
                 std::sync::Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
@@ -5595,6 +5598,8 @@ struct OrbitKey {
     cx: f64,
     cy: f64,
     upp: f64,
+    /// The view's rotation: the cursor's pixel is another plane point on a turned view.
+    rot: f64,
     julia: bool,
     formula: u32,
     /// The custom formula's key (0 for a built-in): every custom formula is `formula` 1000.
@@ -6438,6 +6443,8 @@ struct ViewSnapshot {
     cy: fractadyne_core::BigFloat,
     upp: fractadyne_core::FloatExp,
     prec: usize,
+    /// The view's rotation (design/view-rotation.md): undo turns the picture back too.
+    rot: f64,
 }
 
 /// Navigation history for undo/redo of view changes (transient).
@@ -6466,7 +6473,7 @@ impl NavHistory {
         let dup = self
             .undo
             .last()
-            .is_some_and(|t| t.upp == snap.upp && t.cx == snap.cx && t.cy == snap.cy);
+            .is_some_and(|t| t.upp == snap.upp && t.cx == snap.cx && t.cy == snap.cy && t.rot == snap.rot);
         if dup {
             return false;
         }
@@ -8655,6 +8662,8 @@ impl FractadyneApp {
         };
         viewport.precision =
             fractadyne_core::precision_for_octaves(viewport.log2_magnification().max(0.0).ceil() as u64);
+        // The view's rotation (design/view-rotation.md); the crash-loop guard's Home below unturns it.
+        viewport.rotation = fractadyne_core::wrap_rotation(s.rotation);
         // ⭐⭐**Crash-loop guard companion (see `relaunch_after_device_loss`).** A GPU-loss RELAUNCH
         // must NOT come back up on the exact view that lost the device — restoring it verbatim is the
         // loop the 2026-09-10 field capture hit: a deep interior minibrot rebuilt its 7.45M-sample
@@ -8703,7 +8712,7 @@ impl FractadyneApp {
         // The center's expression and the dual view's Julia pane camera, put back once the app
         // exists (review findings 11 and 8). Not after a GPU-loss relaunch, which opens at Home.
         let center_expr_text = s.center_expr.clone();
-        let julia_pane = (s.julia_view_center_re.clone(), s.julia_view_center_im.clone(), s.julia_view_upp_log2);
+        let julia_pane = (s.julia_view_center_re.clone(), s.julia_view_center_im.clone(), s.julia_view_upp_log2, s.julia_view_rotation);
         let restarted_after_gpu_loss = std::env::var_os("FRACTADYNE_RESTARTED_AFTER_GPU_LOSS").is_some();
 
         // The libraries, each with its notice when it did not read whole (review finding 1). What
@@ -9174,9 +9183,11 @@ impl FractadyneApp {
                 };
                 app.apply_center_expr_fields(&get);
             }
-            let (re, im, l) = &julia_pane;
+            let (re, im, l, rot) = &julia_pane;
             if !re.is_empty() && !app.apply_julia_pane(Some(re), Some(im), *l) {
                 diag::log_line("start", "saved Julia pane camera unusable — the pane opens at its home view");
+            } else if !re.is_empty() {
+                app.julia_viewport.rotation = fractadyne_core::wrap_rotation(*rot);
             }
         }
         // W7 (§5.7): how the previous session ended, and whether its iteration setting comes back.
@@ -9486,6 +9497,10 @@ impl FractadyneApp {
         match log2mag {
             Some(l2) => self.viewport.set_center_log2mag(cx, cy, l2),
             None => self.viewport.set_center_mag(cx, cy, 1.0),
+        }
+        // The view's rotation (design/view-rotation.md): the picture turned counterclockwise.
+        if let Some(d) = val("--rotate").map(|s| arg_parse::<f64>("--rotate", s, "a number of degrees")) {
+            self.viewport.rotation = fractadyne_core::wrap_rotation(d);
         }
         if let Some(ss) = val("--ss").map(|s| arg_parse::<u32>("--ss", s, "a whole number")) {
             self.export.ss = ss.clamp(1, 8);
@@ -10607,6 +10622,7 @@ impl FractadyneApp {
             } else {
                 Viewport::new(1280.0, 720.0).units_per_pixel.e
             },
+            rotation: fractadyne_core::wrap_rotation(self.viewport.rotation),
             max_iter: self.render_cfg.max_iter,
             auto_iter: self.render_cfg.auto_iter,
             coloring: self.coloring_spec(),
@@ -10684,6 +10700,7 @@ impl FractadyneApp {
             julia_view_center_re: fractadyne_core::to_decimal_string(&self.julia_viewport.center_x),
             julia_view_center_im: fractadyne_core::to_decimal_string(&self.julia_viewport.center_y),
             julia_view_upp_log2: Some(self.julia_viewport.units_per_pixel.log2()).filter(|l| l.is_finite()),
+            julia_view_rotation: fractadyne_core::wrap_rotation(self.julia_viewport.rotation),
             series_approx: self.render_cfg.series_approx,
             glitch_correct: self.render_cfg.glitch_correct,
             use_bla: self.render_cfg.use_bla,
@@ -11385,6 +11402,7 @@ impl FractadyneApp {
                 cy: self.viewport.center_y.clone(),
                 upp_log2: self.viewport.units_per_pixel.log2(),
                 log2mag: self.viewport.log2_magnification(),
+                rotation: self.viewport.rotation,
                 max_iter: self.render_cfg.max_iter,
                 auto_iter: self.render_cfg.auto_iter,
             });
@@ -11440,6 +11458,7 @@ impl FractadyneApp {
             cy: self.viewport.center_y.clone(),
             upp: self.viewport.units_per_pixel,
             prec: self.viewport.precision,
+            rot: self.viewport.rotation,
         }
     }
 
@@ -11449,6 +11468,7 @@ impl FractadyneApp {
         self.viewport.center_y = s.cy.clone();
         self.viewport.units_per_pixel = s.upp;
         self.viewport.precision = s.prec;
+        self.viewport.rotation = s.rot;
         // Undo/redo restores the center as a fixed value; drop any live expression anchor (the
         // history records the decimal center, not the expression it may have come from).
         self.center_expr = None;
@@ -11898,6 +11918,7 @@ impl FractadyneApp {
             mag,
         );
         self.viewport.precision = fractadyne_core::precision_for_magnification(mag);
+        self.viewport.rotation = 0.0; // a new place, unturned (design/view-rotation.md, jump sites)
         self.center_expr = None; // a discrete jump to a fixed coordinate — no anchor to re-derive
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
@@ -12388,10 +12409,7 @@ impl FractadyneApp {
     /// Screen position (points) of a complex coordinate in the Mandelbrot viewport,
     /// within the given panel rect. Inverse of `complex_at_pixel_f64`.
     fn complex_screen_pos(&self, c: (f64, f64), rect: egui::Rect, ppp: f64) -> egui::Pos2 {
-        let (cx, cy) = self.viewport.center_f64();
-        let upp = self.viewport.units_per_pixel.to_f64();
-        let px = (c.0 - cx) / upp + self.viewport.width_px * 0.5;
-        let py = self.viewport.height_px * 0.5 - (c.1 - cy) / upp;
+        let (px, py) = self.viewport.pixel_of_f64(c);
         egui::pos2(
             rect.min.x + (px / ppp) as f32,
             rect.min.y + (py / ppp) as f32,
@@ -12687,6 +12705,8 @@ impl FractadyneApp {
         vp.center_x = at.cx.clone();
         vp.center_y = at.cy.clone();
         vp.set_center_log2mag(at.cx, at.cy, at.log2mag);
+        // The preview shows what the click will: the view's own turn.
+        vp.rotation = self.viewport.rotation;
         let mut req = self.autopilot_probe_request(&vp, false);
         req.width = RETICLE_PX;
         req.height = RETICLE_PX;
@@ -12749,6 +12769,10 @@ impl FractadyneApp {
         let (cx, cy) = self.viewport.center_f64();
         cx.to_bits().hash(&mut h);
         cy.to_bits().hash(&mut h);
+        let rot = fractadyne_core::rotation_bits(self.viewport.rotation);
+        if rot != 0 {
+            rot.hash(&mut h);
+        }
         h.finish()
     }
 
@@ -13105,6 +13129,8 @@ impl FractadyneApp {
         }
         self.viewport.set_center_log2mag(v.cx, v.cy, l2);
         self.viewport.precision = fractadyne_core::precision_for_octaves(l2.ceil() as u64);
+        // The file's rotation, 0 without one (a location file never keeps the turn on screen).
+        self.viewport.rotation = v.rotate_deg;
         self.center_expr = None; // imported foreign file — a fixed decimal center, no expression
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
@@ -13145,6 +13171,7 @@ impl FractadyneApp {
         }
         self.viewport.set_center_log2mag(v.cx, v.cy, l2);
         self.viewport.precision = fractadyne_core::precision_for_octaves(l2.ceil() as u64);
+        self.viewport.rotation = v.rotate_deg; // (an Imagina text location carries none: 0)
         self.center_expr = None; // imported foreign file — a fixed decimal center, no expression
         self.pointer.zoom_vel = 0.0;
         self.invalidate_refs();
@@ -18454,18 +18481,18 @@ impl FractadyneApp {
         // view puts a translucent copy of that view into every later average, and the report of
         // one (2026-09-16) reached the log with no trace flag set.
         let vp = if view == 1 { &self.julia_viewport } else { &self.viewport };
-        let (vl2, vc) = (vp.log2_magnification(), vp.center_f64());
+        let (vl2, vc, vr) = (vp.log2_magnification(), vp.center_f64(), vp.rotation);
         if count == 0 {
             self.perf.accum_ss[view] = params.ss;
-            self.perf.accum_view0[view] = (vl2, vc.0, vc.1);
+            self.perf.accum_view0[view] = (vl2, vc.0, vc.1, vr);
         } else {
-            let (l0, x0, y0) = self.perf.accum_view0[view];
-            if vl2 != l0 || vc.0 != x0 || vc.1 != y0 {
+            let (l0, x0, y0, r0) = self.perf.accum_view0[view];
+            if vl2 != l0 || vc.0 != x0 || vc.1 != y0 || vr != r0 {
                 crate::diag::log_line(
                     "accum",
                     &format!(
                         "⚠FOLD AT ANOTHER VIEW: view {view} sample {} at 2^{vl2:.4} c=({:.12e},{:.12e}) — \
-                         sample 0 was at 2^{l0:.4} c=({x0:.12e},{y0:.12e}); reproject={} hold={}/{} \
+                         sample 0 was at 2^{l0:.4} c=({x0:.12e},{y0:.12e}); turned {vr} (sample 0: {r0}); reproject={} hold={}/{} \
                          tile={} chunk={} build={} frozen_l2={:.4}",
                         count + 1,
                         vc.0,
