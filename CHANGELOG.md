@@ -83,7 +83,12 @@ detail is in the git history.
   session keep the angle (view file format 7, written only by a turned view, so an unturned view's
   file is as before), as does the dual view's Julia pane its own, and a Kalles Fraktaler `.kfr`
   location brings its `RotateAngle` with it. Every arithmetic path renders a turned view, and a
-  quarter turn exactly. Turning the view in the window comes next.
+  quarter turn exactly. In the window a turned view behaves as any other: a drag carries the
+  picture with the pointer, the wheel and click-to-zoom zoom about the point under the cursor, the
+  minimap draws the view's frame turned, and a held picture is shown at its own angle while a new
+  one is calculated. A zoom video of a turned view is turned the same way (`--rotate`), and one
+  that follows a tour turns with the tour's `rotate`. A control to turn the view in the window
+  comes next.
 - **The relief light's angle is in degrees.** It was the one angle Fractadyne showed in radians.
   The Light angle row now reads 0° to 360°, counterclockwise from the right (126°, the light from
   the upper left, by default), like the trap's rotation and phase, the L-system angle and the

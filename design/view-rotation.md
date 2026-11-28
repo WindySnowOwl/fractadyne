@@ -174,3 +174,26 @@ and the quarter-turn oracle tests both together.
   tile and chunk counts as the control that the path ran.
 - **Until R3** a held frame and the view share an angle: a jump to a file at another angle shows
   the old frame unturned against the new one until the new picture lands.
+
+## 7. Decided while building R3 (2026-11-28)
+
+Most of the live interaction needed nothing: a drag pans by the pointer's screen pixels
+(`pan_px`), and the wheel, click-to-zoom, the zoom box and the reticle all go through `Viewport`.
+
+- **A held frame keeps its own angle** (`RefCache::frozen_rot`, set wherever `frozen_center` is:
+  a real frame, an adopted pin, a worker frame from its ticket). The hold transform turns the view
+  center's offset into the HELD frame's screen axes, and the color pass turns each pixel's offset
+  from the center by `held − view` in the held frame's pixels before the scale
+  (`frame_plan::hold_turn` → `uv_turn`, in what were `ColorU`'s pad words; `(0, 0)` is no turn).
+  Oracle: `hold_turn_tests` mirrors `fs_color` against the two viewports' mappings (a flipped
+  sign fails by half a pixel). Not yet seen on screen: a turn while a frame is held needs the R4
+  gesture.
+- **A turn stops a walk in progress** (`PinStop::Turn`, a split pin too) rather than pin frames
+  shadowing the angle: a turn is a short gesture and the hold covers it. A finished walk still
+  adopts, held turned.
+- **The zoom video**: the strips stay at 0; `--rotate` reaches the assembly as a constant
+  `-deg/360` of every frame's turns (clockwise there), on top of `--assemble-rotate`; a tour's
+  timeline turns by its keyframes' `rotate`. The dialog passes `--rotate`, the farm forwards it.
+- **The walk's live check compares 12-pixel block averages**: per pixel, the view's sub-pixel dust
+  alone differs by ~25 levels between the live drawing and an export; by blocks 2.6 unturned (the
+  control), 3.0 turned, and 43.5 against an export at the wrong angle.
