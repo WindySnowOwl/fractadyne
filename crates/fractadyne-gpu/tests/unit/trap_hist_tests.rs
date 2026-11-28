@@ -44,7 +44,8 @@ fn nothing_to_fit_is_no_window() {
 #[test]
 fn the_slots_agree_with_the_shader() {
     assert_eq!(CTR_TRAP_HIST_IN, CTR_TRAP_HIST + TRAP_HIST_BUCKETS);
-    assert_eq!(COUNTER_SLOTS, CTR_TRAP_HIST_IN + TRAP_HIST_BUCKETS);
+    // The count base's slot follows them (coloring plan D2, `count_base_tests`).
+    assert_eq!(COUNTER_SLOTS, CTR_TRAP_HIST_IN + TRAP_HIST_BUCKETS + 1);
     let wgsl = include_str!("../../src/mandelbrot.wgsl");
     assert!(wgsl.contains(&format!("const CTR_TRAP_HIST: u32 = {CTR_TRAP_HIST}u;")));
     assert!(wgsl.contains(&format!("const CTR_TRAP_HIST_IN: u32 = {CTR_TRAP_HIST_IN}u;")));

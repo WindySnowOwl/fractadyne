@@ -59,7 +59,9 @@ fn the_histogram_fits_the_counter_buffer() {
     assert_eq!(CTR_RENORM + 1, CTR_NORM_HIST);
     assert_eq!(CTR_NORM_HIST + NORM_HIST_BUCKETS, CTR_TRAP_HIST);
     assert_eq!(CTR_TRAP_HIST + TRAP_HIST_BUCKETS, crate::CTR_TRAP_HIST_IN);
-    assert_eq!(crate::CTR_TRAP_HIST_IN + TRAP_HIST_BUCKETS, COUNTER_SLOTS);
+    // ...then the count base's slot, the last (coloring plan D2, count_base_tests).
+    assert_eq!(crate::CTR_TRAP_HIST_IN + TRAP_HIST_BUCKETS, crate::CTR_BELOW_BASE);
+    assert_eq!(crate::CTR_BELOW_BASE + 1, COUNTER_SLOTS);
     assert!(CTR_GRAD_HIST > CTR_GRAD_N, "the histogram must not overlap the gradient sum/count");
 }
 

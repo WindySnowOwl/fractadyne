@@ -4830,6 +4830,8 @@ impl FractadyneApp {
             work_budget: None, // default export tile budget; the tour path overrides per frame
             pass_ms: None,
             tile_px_max: None,
+            // Measured by the render when the counts can run that high (coloring plan D2).
+            count_base: fractadyne_gpu::CountBase::Auto,
             jitter: [0.0, 0.0],
             ss: self.export.ss.max(1),
             span_mantissa: scale.span_mantissa,
@@ -4918,6 +4920,9 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         work_budget: None,
         pass_ms: None,
         tile_px_max: None,
+        // The live view stores its counts as they are (coloring plan D2, stage 1), and so does a
+        // render of its frame.
+        count_base: fractadyne_gpu::CountBase::Fixed(0),
         jitter: [0.0, 0.0],
         ss: p.ss.max(1),
         span_mantissa: p.span_mantissa,

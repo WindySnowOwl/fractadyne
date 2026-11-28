@@ -2514,10 +2514,12 @@ impl FractadyneApp {
             "band": band,
             "bla": req.bla_on != 0,
             "series_skip": req.sa_skip,
+            // The count lane holds each count less this (coloring plan D2): add it back, in f64.
+            "count_base": r.count_base,
             "stats": stats.to_string(),
             "files": files,
             "lanes": {
-                "count": "smooth iteration count: N + 1 - log_p(log2|z_N|); -1 inside the set (or not escaped by max_iter), -2 a glitched pixel",
+                "count": "smooth iteration count less count_base: N + 1 - log_p(log2|z_N|) - count_base; -1 inside the set (or not escaped by max_iter), -2 a glitched pixel",
                 "normal_x": "slope normal u = z/(dz/dc), normalized, x; 0 inside",
                 "normal_y": "slope normal, y; 0 inside",
                 "de_log2": "log2 of the distance estimate in pixels; 1e30 inside or where there is none",

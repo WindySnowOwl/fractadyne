@@ -75,6 +75,16 @@ detail is in the git history.
   now fitted to its own values, as the live view fits the screen, so the video looks like the
   view. Fitting a frame costs about a quarter more time at 2x2 supersampling. A frame depends on
   nothing but its own view, so one full turn of the trap's phase rendered once loops seamlessly.
+- **Smooth colors stay smooth at millions of iterations in saved pictures.** Each pixel's escape
+  count is kept as a 32-bit number, which past about two million iterations can no longer hold the
+  count's fraction finely, and past eight million holds whole iterations only. Where the colors
+  change slowly, as beside a deep minibrot, a smooth gradient then broke into flat steps. Saved
+  pictures, tours' frames and render farms' frames now first measure the view's lowest count, with
+  a quick pass at a quarter of the size, and store each count less a base just under it, so the
+  fraction survives; the palette is shifted to match, so the colors are the same, only smooth. The
+  extra pass runs only when the iteration limit is 2,097,152 or more, and a view whose counts stay
+  under that renders exactly as before. The live view keeps the old storage for now.
+  `--render-lanes` writes the base in view.json as `count_base`, which `scripts/lanes.py` adds back.
 - **Gloss: a statistic shapes the highlight.** Under Smooth iteration, Gloss lets a statistic of
   each orbit set how strong the relief light's highlight is, so its sheen breaks into strands
   along the field lines, like brushed metal: finer with the stripe average, longer with the
