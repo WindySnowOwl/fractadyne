@@ -83,7 +83,7 @@ pub(crate) const GROUPS: &[&str] = &[
     "width-independence", "coloring-matrix-quick", "color-sig", "coloring-reset", "julia-link", "fringe", "round-trip",
     "lanes", "hook", "transfer", "edges", "equipotentials", "relief", "equalize", "palette-oklab",
     "tour-equalize", "video-equalize", "trap-equalize", "lossy-formats", "tour-trap-fit", "trap-tail", "band-texture",
-    "stat-layer", "stat-bump", "stat-gloss",
+    "stat-layer", "stat-bump", "stat-gloss", "count-base",
 ];
 
 /// Groups that run ONLY when named. ⛔Kept out of `GROUPS` so a bare `--selftest` never pays for
@@ -8591,6 +8591,15 @@ impl FractadyneApp {
             ) = saved;
         }
 
+        // ---- the count base (coloring plan D2): `count_base` ----
+        // A count stored less a base keeps its fraction past 2^21; its colors, lanes and the base
+        // the render chooses, at a view of each render path.
+        if want("count-base") {
+            for c in self.count_base_checks(device, queue) {
+                push_check(&mut checks, &mut last_check_t, c);
+            }
+        }
+
         // ---- the trap's tail draws a deep view again (coloring plan F4, part 5) ----
         // The coloring matrix's known-flat trap cells: at the seahorse at 1e20x every pixel's orbit
         // follows the reference for all but its last iterations and comes nearest the trap in that
@@ -13393,10 +13402,12 @@ zoom = \"1e94\"
                     });
                     continue;
                 }
-                let colored = lanes.as_ref().and_then(|l| fractadyne_gpu::color_lanes(device, queue, &req, &l.pixels, &l.aux).ok());
+                // Colored at the base the lanes were stored at (coloring plan D2), as the export is.
+                let at = |l: &fractadyne_gpu::ExportResult| fractadyne_gpu::ExportRequest { count_base: fractadyne_gpu::CountBase::Fixed(l.count_base), ..req.clone() };
+                let colored = lanes.as_ref().and_then(|l| fractadyne_gpu::color_lanes(device, queue, &at(l), &l.pixels, &l.aux).ok());
                 // The CONTROL: the same main plane with an empty aux plane must color differently, or
                 // the comparison above could not tell the lanes from nothing.
-                let control = lanes.as_ref().and_then(|l| fractadyne_gpu::color_lanes(device, queue, &req, &l.pixels, &vec![0.0; l.aux.len()]).ok());
+                let control = lanes.as_ref().and_then(|l| fractadyne_gpu::color_lanes(device, queue, &at(l), &l.pixels, &vec![0.0; l.aux.len()]).ok());
                 let export = {
                     let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
                     fractadyne_gpu::render_export(device, queue, &req, &progress, &cancel).ok()
@@ -17160,5 +17171,6 @@ mod wait_alive_tests;
 #[path = "../../tests/unit/harness/selftest/frame_signature_tests.rs"]
 mod frame_signature_tests;
 
+mod count_base;
 mod round_trip;
 mod tour_trap_fit;

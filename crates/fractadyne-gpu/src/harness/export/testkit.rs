@@ -250,6 +250,7 @@ pub fn render_iter_chunked_timed(
         trap_in_row: [0; 4],
         outline_row: [0; 4],
         trap_tail: crate::trap_tail_row(0, false),
+        count_row: crate::count_row(0),
     };
 
     // One bounded submission per iteration range; poll-wait between them so each stays a short,
@@ -391,6 +392,7 @@ pub fn render_iter_chunked_timed(
     // window"; this path returned 0.0 because it measured nothing. It does now.
     let max_dispatch_ms = passes.iter().map(|p| p.wall_ms).fold(0.0_f64, f64::max);
     Ok(ExportResult {
+        count_base: 0,
         width: w, height: h, ss: 1, pixels, iterate_ms: 0.0, color_ms: 0.0, counters,
         max_dispatch_ms, max_dispatch_work: 0, chunk_passes: 0, tiles_total: 0, tiles_chunked: 0,
         packs: 0,

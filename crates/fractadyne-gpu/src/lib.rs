@@ -136,6 +136,10 @@ pub(crate) struct IterUniforms {
     /// iteration, 1 / the tail, 0, 0]` ([`trap_tail_row`]); `[1, 0, 0, 0]` off, every hit as near as
     /// it came. ⛔Never zeros: a growth of 0 would zero every distance.
     pub(crate) trap_tail: [f32; 4],
+    /// THE COUNT BASE (the shader's `count_base`, coloring plan D2): `[base, 0, 0, 0]`
+    /// ([`CountBase`]); zeros = every count as it always was. A row of its own after the trap tail's,
+    /// so no field moved.
+    pub(crate) count_row: [u32; 4],
 }
 
 /// The trap's tail for the shader (`trap_tail_g`, `trap_tail_inv`): a tail of `tail` iterations
@@ -265,6 +269,72 @@ pub(crate) fn stat_gloss_words(method: u32, g: StatGloss) -> (u32, f32, f32) {
     }
     (t.gpu_id(), amount.min(1.0), t.center())
 }
+
+/// THE COUNT BASE (coloring plan D2): how far below its value a frame stores each pixel's escape
+/// count. The count is an f32 in the iteration texture, whose fraction runs out as the count grows
+/// (1/8 of an iteration at 2^20, none past 2^23), and the palette map's `count·cycle + offset` loses
+/// as much again; a frame whose counts all lie far up stores them less a base instead, and its
+/// palette map is rewritten about the base ([`count_rebased_map`]), so its colors keep the fraction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CountBase {
+    /// A colored export or a G-buffer ([`render_lanes`]) measures its frame first when its counts
+    /// can reach [`COUNT_BASE_MIN`] ([`count_base_for`]); the raw planes ([`render_iter`],
+    /// [`render_iter_tiled`]) take 0.
+    #[default]
+    Auto,
+    /// This base (0: every count as it always was). A pixel that escapes below it is stored as 0
+    /// and counted ([`CTR_BELOW_BASE`]).
+    Fixed(u32),
+}
+
+/// The lowest count a frame must reach everywhere before it is stored less a base (2^21): below
+/// it the f32 count keeps a quarter of an iteration or better, and the frame is stored as before.
+pub const COUNT_BASE_MIN: u32 = 1 << 21;
+/// A base is a multiple of this (2^16), at least this far below the frame's lowest count: room for
+/// a pixel the measuring pass did not sample, and the stored counts start at 2^16, where an f32
+/// keeps 1/128 of an iteration.
+pub const COUNT_BASE_STEP: u32 = 1 << 16;
+
+/// The base for a frame whose lowest escape count is `min` (`None`: nothing escaped): 0 below
+/// [`COUNT_BASE_MIN`], else the highest multiple of [`COUNT_BASE_STEP`] at least one step below it.
+pub fn count_base_for(min: Option<f64>) -> u32 {
+    match min {
+        Some(m) if m.is_finite() && m >= f64::from(COUNT_BASE_MIN) => {
+            let step = f64::from(COUNT_BASE_STEP);
+            let k = ((m - step) / step).floor().max(0.0);
+            (k as u32).saturating_mul(COUNT_BASE_STEP)
+        }
+        _ => 0,
+    }
+}
+
+/// The iteration uniform's count-base row ([`IterUniforms::count_row`]) for `base`.
+pub(crate) fn count_row(base: u32) -> [u32; 4] {
+    [base, 0, 0, 0]
+}
+
+/// A palette map's `(offset, lo)` for counts stored `base` below their value (coloring plan D2):
+/// the same palette coordinate for every count, worked out in f64. A curve or an equalized map (C2,
+/// C6) measures from its floor `lo`, which moves down by the base; a linear one adds `base · cycle`
+/// to its offset, reduced modulo 2 (the period of both Repeat and Mirror, `wrap` 0 and 1, whole
+/// numbers of Steps included) so it stays small in the f32 the shader adds it in, and under Clamp
+/// (2) as it is. Base 0: as given, to the bit.
+pub fn count_rebased_map(mode: u32, equalized: bool, cycle: f32, offset: f32, lo: f32, wrap: u32, base: u32) -> (f32, f32) {
+    if base == 0 {
+        return (offset, lo);
+    }
+    let b = f64::from(base);
+    if mode != 0 || equalized {
+        return (offset, (f64::from(lo) - b) as f32);
+    }
+    let o = f64::from(offset) + b * f64::from(cycle);
+    let o = if wrap <= 1 { o - 2.0 * (o / 2.0).floor() } else { o };
+    (o as f32, lo)
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/count_base_tests.rs"]
+mod count_base_tests;
 
 /// Where the orbit trap sits, turned and sized (the shader's `trap_c` .. `trap_on`; coloring plan
 /// F4): the shape's coordinates are `w = R(−θ)·(z − center)·inv_size` and its distance is
@@ -2364,7 +2434,7 @@ pub(crate) fn make_iter_bg(
 /// atomics per pixel — negligible next to the iteration loop. This is the "did the code
 /// path actually execute?" detector (the F4 dead-NaN-marker lesson): a render that claims
 /// to exercise rebasing/extended samples/BLA must show nonzero counts.
-pub const COUNTER_SLOTS: usize = CTR_TRAP_HIST_IN + TRAP_HIST_BUCKETS;
+pub const COUNTER_SLOTS: usize = CTR_BELOW_BASE + 1;
 /// Slot indices (keep in sync with mandelbrot.wgsl's `CTR_*` constants).
 pub const CTR_REBASE: usize = 0; // Zhuoran rebases taken (mode 2)
 pub const CTR_EXT_SAMPLE: usize = 1; // extended-range orbit samples decoded (mode 2)
@@ -2576,6 +2646,9 @@ pub const CTR_TRAP_HIST_IN: usize = CTR_TRAP_HIST + TRAP_HIST_BUCKETS;
 /// The quantiles of the inside's trap values its fitted palette spans: the research prototype's
 /// 1st and 99th percentiles (design/coloring-plan.md C4).
 pub const INSIDE_WINDOW_QUANTILES: (f64, f64) = (0.01, 0.99);
+/// Pixels that escaped below the frame's count base ([`CountBase`], coloring plan D2), stored as 0:
+/// a base set too high. Every pixel, not a grid: one is enough to make the frame wrong.
+pub const CTR_BELOW_BASE: usize = CTR_TRAP_HIST_IN + TRAP_HIST_BUCKETS;
 
 /// The palette window `(lo, hi)` of a [`CTR_TRAP_HIST`] histogram: the values at quantiles `q.0`
 /// and `q.1` of its samples, interpolated inside the bucket each falls in. `None` for fewer than 16
@@ -5301,6 +5374,7 @@ impl CallbackTrait for MandelbrotParams {
                 trap_in_row: trap_in_uniform(self.trap_type, self.trap_place, self.trap_in, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
                 outline_row: outline_row(self.outline_base(), self.outline.as_deref(), true),
                 trap_tail: trap_tail_row(self.trap_tail, self.iter_stats().has(fractadyne_core::coloring::Stat::Trap)),
+                count_row: count_row(0),
             };
             // A split pass is a single full-frame pass by definition (`MandelbrotParams::split`).
             let split_on = self.split[0] > 1 && self.chunk_range.is_none() && self.tile.is_none();

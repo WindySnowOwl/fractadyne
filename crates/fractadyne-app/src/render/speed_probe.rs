@@ -524,6 +524,7 @@ fn plan_request(plan: Plan) -> (fractadyne_gpu::ExportRequest, u32) {
         pass_ms: None,
         jitter: [0.0, 0.0],
         tile_px_max: None,
+        count_base: fractadyne_gpu::CountBase::Fixed(0),
     };
     (req, iters_cap)
 }

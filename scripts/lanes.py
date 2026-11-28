@@ -10,6 +10,7 @@ iteration (which in double precision could not go deep, and would not be the app
     import lanes                                    # with scripts/ on sys.path
     v = lanes.load("DIR")
     v.count, v.normal_x, v.normal_y, v.de_log2      # (H, W) float32, as --render-iter's channels
+    v.counts                                        # the counts themselves, float64 (count + count_base)
     v.stripe, v.triangle, v.trap, v.angle           # the statistics accumulated (None if not)
     v.palette                                       # (N, 4) display RGBA, the baked palette
     v.view                                          # view.json: band, statistics, the palette map
@@ -50,6 +51,15 @@ class Lanes:
             f = self.dir / f"{name}.npy"
             setattr(self, name, np.load(f) if f.exists() else None)
         self.coloring = self.view["coloring"]
+        # The count lane holds each count less this (coloring plan D2; 0 in an older folder).
+        self.count_base = int(self.view.get("count_base", 0))
+
+    @property
+    def counts(self):
+        """The smooth counts themselves, float64: the count lane plus `count_base`, whose f32 keeps
+        the fraction a count past 2^21 would lose on its own; the inside and glitches as the lane."""
+        c = self.count.astype(np.float64)
+        return np.where(c >= 0, c + self.count_base, c)
 
     @property
     def escaped(self):
@@ -170,7 +180,7 @@ def color_smooth(v):
     out = np.empty(v.shape + (3,))
     out[...] = v.coloring["interior_color"][:3]
     e = v.escaped
-    out[e] = palette_at(v, palette_coord(v, v.count[e]))
+    out[e] = palette_at(v, palette_coord(v, v.counts[e]))
     return out
 
 

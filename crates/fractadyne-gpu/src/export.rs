@@ -355,9 +355,47 @@ pub struct ExportRequest {
     /// The selftest's tile-loop cases pin the pre-occupancy tile with it, so a 220-px frame still
     /// runs several tiles — a single tile cannot exercise cross-tile state or mix entry points.
     pub tile_px_max: Option<u32>,
+    /// How far below its value each escape count is stored ([`crate::CountBase`], coloring plan
+    /// D2): `Auto` (the default) lets [`render_export`] and [`render_lanes`] measure the frame
+    /// first when its counts can pass [`crate::COUNT_BASE_MIN`]; the raw planes read `Auto` as 0.
+    pub count_base: crate::CountBase,
 }
 
 impl ExportRequest {
+    /// The base this request's passes store the counts at: a `Fixed` one, or 0 for `Auto` (which
+    /// [`render_export`] and [`render_lanes`] resolve before any pass runs).
+    pub fn count_base_fixed(&self) -> u32 {
+        match self.count_base {
+            crate::CountBase::Fixed(b) if self.count_base_applies() => b,
+            _ => 0,
+        }
+    }
+
+    /// Whether this frame's counts may be stored less a base (coloring plan D2): the Smooth method,
+    /// whose colors are the count's value, with a built-in escape-time formula (a custom formula's
+    /// module writes its own count, and Newton's is a count of steps to a root), no coloring hook
+    /// (its code reads the count as it is), on the affine grid (a zoom-video strip keeps its exact
+    /// count in lanes of its own). Anywhere else the count is stored as it always was.
+    pub fn count_base_applies(&self) -> bool {
+        self.color_method == fractadyne_core::coloring::ColorMethod::Smooth.gpu_id()
+            && self.custom.is_none()
+            && self.color_hook.is_none()
+            && self.formula != fractadyne_core::formula::NEWTON
+            && self.map.mode == 0
+    }
+
+    /// `(offset, lo, fade offset, fade lo)`: the palette map's and the dissolve's, for the counts as
+    /// this request's passes store them ([`Self::count_base_fixed`], [`crate::count_rebased_map`];
+    /// an equalized map is one the shader equalizes, `eq_words`). Base 0: the request's own words.
+    pub(crate) fn count_map_words(&self) -> (f32, f32, f32, f32) {
+        let b = self.count_base_fixed();
+        let eq = |e: Option<&crate::Equalize>| e.is_some_and(|e| e.share > 0.0 && e.sweeps > 0.0);
+        let (o, lo) = crate::count_rebased_map(self.norm_mode, eq(self.equalize.as_ref()), self.cycle, self.offset, self.norm_lo, self.wrap, b);
+        let f = &self.palette_fade;
+        let (fo, flo) = crate::count_rebased_map(f.mode, eq(f.equalize.as_ref()), f.cycle, f.offset, f.lo, self.wrap, b);
+        (o, lo, fo, flo)
+    }
+
     /// What this frame's iteration accumulates ([`crate::iter_stats`]).
     pub fn iter_stats(&self) -> fractadyne_core::coloring::StatSet {
         crate::iter_stats(self.orbit_stats, self.color_method)
@@ -462,6 +500,9 @@ pub struct ExportResult {
     pub ss: u32,
     /// Linear RGBA, row-major, `width*height*4` floats.
     pub pixels: Vec<f32>,
+    /// The count base the frame was stored at ([`crate::CountBase`], coloring plan D2): a raw
+    /// plane's or a G-buffer's count lane holds each count less this; 0 = the counts themselves.
+    pub count_base: u32,
     /// Pure-GPU iterate-pass time summed across tiles (ms; 0.0 when TIMESTAMP_QUERY is
     /// unavailable). Unconditional since D3.1 — the export throughput metric.
     pub iterate_ms: f64,
@@ -1997,10 +2038,12 @@ impl<'a> TileRenderer<'a> {
         let (lut_len, lut_smooth) = crate::write_lut(queue, &lut_buf, &req.lut, req.lut_smooth);
         let iw = req.interior.upload(queue, &lut_buf);
         let eqw = crate::eq_words(req.equalize.as_ref(), req.palette_fade.equalize.as_ref());
+        // The map about the frame's count base (coloring plan D2; base 0: the request's words).
+        let (map_offset, map_lo, fade_offset, fade_lo) = req.count_map_words();
         let cu = ColorUniforms {
             lut_len,
             cycle: req.cycle,
-            offset: req.offset,
+            offset: map_offset,
             ss,
             light: req.light,
             light_angle: req.light_angle,
@@ -2023,13 +2066,13 @@ impl<'a> TileRenderer<'a> {
             interior_col: req.interior_col,
             out_res: [w as f32, h as f32],
             norm_mode: req.norm_mode,
-            norm_lo: req.norm_lo,
+            norm_lo: map_lo,
             aa_palette: req.aa_palette.gpu_word(),
             fade_weight: req.palette_fade.weight,
             fade_mode: req.palette_fade.mode,
-            fade_lo: req.palette_fade.lo,
+            fade_lo,
             fade_cycle: req.palette_fade.cycle,
-            fade_offset: req.palette_fade.offset,
+            fade_offset,
             // Each tile is the texture's own base (`w·ss` samples across `w` pixels).
             display_w: 0.0,
             interior_mode: iw.mode,
@@ -2184,6 +2227,7 @@ impl<'a> TileRenderer<'a> {
             trap_in_row: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
             outline_row: req.outline_row(),
             trap_tail: crate::trap_tail_row(req.trap_tail, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)),
+            count_row: crate::count_row(req.count_base_fixed()),
         };
         queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -2540,6 +2584,7 @@ impl TileSum {
 
     fn finish(self, h: u32, ss: u32) -> ExportResult {
         ExportResult {
+            count_base: 0,
             width: self.w,
             height: h,
             ss,
@@ -2558,7 +2603,74 @@ impl TileSum {
     }
 }
 
+/// The tile budget of the pass that measures a frame's lowest count ([`measure_count_base`]): the
+/// app's correction passes' (`CORRECT_WORK_BUDGET`), which tile a raw plane for the same safety.
+const COUNT_BASE_PASS_BUDGET: u64 = 2_000_000_000;
+
+/// The base a frame's counts are stored at when its request leaves it to the render
+/// ([`crate::CountBase::Auto`], coloring plan D2): 0 where a base cannot apply
+/// ([`ExportRequest::count_base_applies`]) or the budget stops short of [`crate::COUNT_BASE_MIN`];
+/// else measured. `None`: the request's own base, already fixed.
+fn resolve_count_base(device: &wgpu::Device, queue: &wgpu::Queue, req: &ExportRequest) -> Result<Option<ExportRequest>, GpuError> {
+    if req.count_base != crate::CountBase::Auto {
+        return Ok(None);
+    }
+    let base = if req.count_base_applies() && req.max_iter >= crate::COUNT_BASE_MIN { measure_count_base(device, queue, req)? } else { 0 };
+    Ok(Some(ExportRequest { count_base: crate::CountBase::Fixed(base), ..req.clone() }))
+}
+
+/// A frame's count base from its lowest escape count ([`crate::count_base_for`]), read from the
+/// raw plane of the same view at a quarter of its size, one sample a pixel, at base 0: a sixteenth
+/// of the samples, and the base sits a whole [`crate::COUNT_BASE_STEP`] below what it found, room
+/// for the lower counts between its samples.
+fn measure_count_base(device: &wgpu::Device, queue: &wgpu::Queue, req: &ExportRequest) -> Result<u32, GpuError> {
+    let pre = ExportRequest {
+        width: (req.width / 4).max(16),
+        height: (req.height / 4).max(16),
+        ss: 1,
+        jitter: [0.0, 0.0],
+        tile_px_max: None,
+        count_base: crate::CountBase::Fixed(0),
+        ..req.clone()
+    };
+    let r = render_iter_tiled(device, queue, &pre, COUNT_BASE_PASS_BUDGET, None, None, None)?;
+    let min = r.pixels.chunks_exact(4).map(|p| p[0]).filter(|v| *v >= 0.0).fold(f32::INFINITY, f32::min);
+    Ok(crate::count_base_for(min.is_finite().then_some(f64::from(min))))
+}
+
+/// Whether a frame rendered at the base its render chose must be rendered again at 0: a pixel
+/// escaped below the base (`CTR_BELOW_BASE`), which the measuring pass's samples missed. Its colors
+/// are then the frame's as before D2, never worse.
+fn below_count_base(auto: bool, out: &ExportResult) -> bool {
+    let below = out.counters[crate::CTR_BELOW_BASE];
+    if auto && out.count_base > 0 && below > 0 {
+        eprintln!("[fd-export] count base {}: {below} samples escaped below it; rendered again at 0", out.count_base);
+        return true;
+    }
+    false
+}
+
 fn render_export_impl(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    req: &ExportRequest,
+    progress: &std::sync::atomic::AtomicU32,
+    cancel: &std::sync::atomic::AtomicBool,
+    allow_chunking: bool,
+) -> Result<ExportResult, GpuError> {
+    let auto = req.count_base == crate::CountBase::Auto;
+    let resolved = resolve_count_base(device, queue, req)?;
+    let req = resolved.as_ref().unwrap_or(req);
+    let out = render_export_at(device, queue, req, progress, cancel, allow_chunking)?;
+    if below_count_base(auto, &out) {
+        let again = ExportRequest { count_base: crate::CountBase::Fixed(0), ..req.clone() };
+        return render_export_at(device, queue, &again, progress, cancel, allow_chunking);
+    }
+    Ok(out)
+}
+
+/// [`render_export_impl`] at the request's own base (`count_base_fixed`).
+fn render_export_at(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     req: &ExportRequest,
@@ -2611,7 +2723,9 @@ cap={cap} chunks={chunk_passes} steps={}", out.wall_ms, plan.occupancy
         }
         ty0 += th;
     }
-    Ok(sum.finish(h, ss))
+    let mut out = sum.finish(h, ss);
+    out.count_base = req.count_base_fixed();
+    Ok(out)
 }
 
 /// The fixed tile grid of a multi-device render, in raster order. Step-bounded (occupancy) tiles
@@ -2710,7 +2824,21 @@ pub fn render_export_multi_with(
     lose_after: Option<(usize, u32)>,
     together: bool,
 ) -> Result<(ExportResult, Vec<DeviceShare>), GpuError> {
-    render_multi_impl(devices, adapters, req, progress, cancel, lose_after, together, false)
+    // The count base is measured once, on the first device, before the tiles are shared out
+    // (coloring plan D2), so every device stores the frame at the same base.
+    let auto = req.count_base == crate::CountBase::Auto;
+    let resolved = match devices.first() {
+        Some((d, q)) => resolve_count_base(d, q, req)?,
+        None => None,
+    };
+    let req = resolved.as_ref().unwrap_or(req);
+    let mut out = render_multi_impl(devices, adapters, req, progress, cancel, lose_after, together, false)?;
+    out.0.count_base = req.count_base_fixed();
+    if below_count_base(auto, &out.0) {
+        let again = ExportRequest { count_base: crate::CountBase::Fixed(0), ..req.clone() };
+        return render_multi_impl(devices, adapters, &again, progress, cancel, lose_after, together, false);
+    }
+    Ok(out)
 }
 
 /// The ITERATION buffer of `req` across several devices, as [`render_export_multi`] splits an
@@ -3026,7 +3154,17 @@ pub fn render_lanes(
     req: &ExportRequest,
     work_budget: u64,
 ) -> Result<ExportResult, GpuError> {
-    render_iter_tiled_impl(device, queue, req, work_budget, None, None, None, true)
+    // The count lane at the base a colored export of the request would take (coloring plan D2),
+    // which the result carries (`ExportResult::count_base`).
+    let auto = req.count_base == crate::CountBase::Auto;
+    let resolved = resolve_count_base(device, queue, req)?;
+    let req = resolved.as_ref().unwrap_or(req);
+    let out = render_iter_tiled_impl(device, queue, req, work_budget, None, None, None, true)?;
+    if below_count_base(auto, &out) {
+        let again = ExportRequest { count_base: crate::CountBase::Fixed(0), ..req.clone() };
+        return render_iter_tiled_impl(device, queue, &again, work_budget, None, None, None, true);
+    }
+    Ok(out)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3278,6 +3416,7 @@ fn render_iter_tiled_impl(
                 trap_in_row: crate::trap_in_uniform(req.trap_type, req.trap_place, req.trap_in, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)).1,
                 outline_row: req.outline_row(),
                 trap_tail: crate::trap_tail_row(req.trap_tail, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)),
+                count_row: crate::count_row(req.count_base_fixed()),
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3549,6 +3688,7 @@ chunks={chunk_passes} steps={occupancy}"
         );
     }
     Ok(ExportResult {
+        count_base: req.count_base_fixed(),
         width: w,
         height: h,
         ss: 1,
@@ -3840,6 +3980,7 @@ impl GatherPass {
                 trap_in_row: [0; 4],
                 outline_row: [0; 4],
                 trap_tail: crate::trap_tail_row(0, false),
+                count_row: crate::count_row(req.count_base_fixed()),
             };
             queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -4182,6 +4323,7 @@ fn render_iter_passes(
         trap_in_row: [0; 4],
         outline_row: [0; 4],
         trap_tail: crate::trap_tail_row(0, false),
+        count_row: crate::count_row(req.count_base_fixed()),
     };
     // The speed probe's passes (`render_iter_probe`) run the exact-repeat check OFF (bit 1).
     if live.is_some() {
@@ -4456,6 +4598,7 @@ fn render_iter_passes(
 
     let counters = read_counters(device, queue, &counters_buf, &counters_read);
     Ok(ExportResult {
+        count_base: req.count_base_fixed(),
         width: w, height: h, ss: 1, pixels, iterate_ms, color_ms: 0.0, counters,
         max_dispatch_ms: 0.0, max_dispatch_work: 0, chunk_passes: 0, tiles_total: 0, tiles_chunked: 0,
         packs: 0,
@@ -4469,10 +4612,12 @@ fn render_iter_passes(
 /// assembled from strips is colored exactly as a buffer handed to it would be.
 pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, lut_len: u32, lut_smooth: u32, iw: crate::InteriorWords) -> ColorUniforms {
     let eqw = crate::eq_words(req.equalize.as_ref(), req.palette_fade.equalize.as_ref());
+    // The map about the frame's count base (coloring plan D2; base 0: the request's words).
+    let (map_offset, map_lo, fade_offset, fade_lo) = req.count_map_words();
     ColorUniforms {
         lut_len,
         cycle: req.cycle,
-        offset: req.offset,
+        offset: map_offset,
         ss,
         light: req.light,
         light_angle: req.light_angle,
@@ -4495,13 +4640,13 @@ pub(crate) fn color_uniforms_for(req: &ExportRequest, ss: u32, w: u32, h: u32, l
         interior_col: req.interior_col,
         out_res: [w as f32, h as f32],
         norm_mode: req.norm_mode,
-        norm_lo: req.norm_lo,
+        norm_lo: map_lo,
         aa_palette: req.aa_palette.gpu_word(),
         fade_weight: req.palette_fade.weight,
         fade_mode: req.palette_fade.mode,
-        fade_lo: req.palette_fade.lo,
+        fade_lo,
         fade_cycle: req.palette_fade.cycle,
-        fade_offset: req.palette_fade.offset,
+        fade_offset,
         // The image is the texture's own base (`w·ss` samples across `w` pixels).
         display_w: 0.0,
         interior_mode: iw.mode,
@@ -4815,6 +4960,7 @@ fn color_planes(
     out_buf.unmap();
 
     Ok(ExportResult {
+        count_base: req.count_base_fixed(),
         width: w,
         height: h,
         ss,

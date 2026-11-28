@@ -295,6 +295,8 @@ fn iter_uniform_matches_the_shader() {
     for (i, wgsl) in ["outline_cells", "outline_idx", "outline_segs", "outline_on"].into_iter().enumerate() {
         assert_eq!(wgsl_field_offset(&fields, wgsl), outline + 4 * i, "IterU.{wgsl}");
     }
+    // The count base's row (coloring plan D2): the base first.
+    assert_eq!(wgsl_field_offset(&fields, "count_base"), std::mem::offset_of!(super::IterUniforms, count_row), "IterU.count_base");
 }
 
 /// The renderer module survives the pipeline-constant step wgpu runs when it builds a pipeline with

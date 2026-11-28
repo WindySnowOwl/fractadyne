@@ -1085,6 +1085,13 @@ struct IterU {
     trap_tail_inv: f32,
     trap_tail_pad0: f32,
     trap_tail_pad1: f32,
+    // THE COUNT BASE (lib.rs `CountBase`, coloring plan D2): each escape count is stored this far
+    // below its value (`smooth_count`), so a frame whose counts all lie past 2^21 keeps their fraction
+    // in the f32 texel; the color pass's map is rewritten about it on the CPU. 0: as before.
+    count_base: u32,
+    count_pad0: u32,
+    count_pad1: u32,
+    count_pad2: u32,
 };
 @group(0) @binding(0) var<uniform> iu: IterU;
 // Reference orbit as double-single: each Z_n = (re.hi, im.hi, re.lo, im.lo). When BLA is on,
@@ -1159,6 +1166,8 @@ const TRAP_HIST_BUCKETS: u32 = 1216u;
 // The same histogram over the INTERIOR pixels alone (`inside`), in the next 1216 slots (lib.rs
 // `CTR_TRAP_HIST_IN`, coloring plan C4): the window the inside's fitted palette spans.
 const CTR_TRAP_HIST_IN: u32 = 1689u;
+// Pixels that escaped below the frame's count base (lib.rs `CTR_BELOW_BASE`, `smooth_count`).
+const CTR_BELOW_BASE: u32 = 2905u;
 fn trap_hist_bucket(t: f32) -> u32 {
     let pv = -log2(max(t, 1.0e-20));
     return u32(clamp((pv - TRAP_HIST_LO) * TRAP_HIST_PER_UNIT, 0.0, f32(TRAP_HIST_BUCKETS - 1u)));
@@ -1450,6 +1459,25 @@ fn esc_range_commit(sm: f32) {
         atomicMin(&counters[CTR_ESC_MIN], b);
         atomicMax(&counters[CTR_ESC_MAX], b);
     }
+}
+
+// THE COUNT BASE (coloring plan D2; lib.rs `CountBase`): the smooth count `iter + 1 − nu`, stored
+// `count_base` below its value. Base 0 is the expression every escape site wrote before, to the bit.
+// With a base, the whole number is subtracted before the conversion, so the f32 keeps the fraction
+// that a count past 2^21 loses; a pixel that escapes below the base (a base set too high) is stored
+// as 0, still escaped, and counted (`CTR_BELOW_BASE`) for the export to render the frame again
+// without one. ⛔ONE expression for every base: with the base 0 path as a branch of its own
+// (`return f32(iter) + 1.0 - nu`), the RTX 3080's compiler rounded it differently from the same
+// expression written out, and the generated custom modules' counts (which still write it out) parted
+// from the built-ins' on up to 8,222 of 48,400 pixels (self-test custom-formula, 2026-11-27).
+fn smooth_count(iter: u32, nu: f32) -> f32 {
+    let b = iu.count_base;
+    let s = f32(select(iter - b, 0u, iter < b)) + 1.0 - nu;
+    if (b != 0u && (iter < b || s < 0.0)) {
+        atomicAdd(&counters[CTR_BELOW_BASE], 1u);
+        return 0.0;
+    }
+    return s;
 }
 
 // One escaped pixel of THIS FRAME (see CTR_ESC_COUNT). Called once per escaped fragment on the
@@ -2117,7 +2145,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
         // @@CUSTOM_SMOOTH_BEGIN — a custom formula's module clamps this line at 0 (`custom.rs`).
-        let smit = f32(iter) + 1.0 - nu;
+        let smit = smooth_count(iter, nu);
         // @@CUSTOM_SMOOTH_END
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
@@ -2646,7 +2674,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         }
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
-        let smit = f32(iter) + 1.0 - nu;
+        let smit = smooth_count(iter, nu);
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
         if (iu.formula <= 3u || iu.formula == 8u || fam_holo(iu.formula)) {
@@ -2887,7 +2915,7 @@ fn iterate_at(gx: f32, gy: f32) -> FragOut {
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
         // @@CUSTOM_SMOOTH0_BEGIN — as the direct path's: a custom module clamps this line at 0.
-        let smit = f32(iter) + 1.0 - nu;
+        let smit = smooth_count(iter, nu);
         // @@CUSTOM_SMOOTH0_END
         var nrm = vec2<f32>(0.0, 0.0);
         var de = 1.0e30;
@@ -3203,7 +3231,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             let mag2 = dot(zf, zf);
             let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
             // @@CUSTOM_CHUNK_SMOOTH_BEGIN — clamped at 0 in a custom module, as fs_iterate's.
-            smit_out = f32(iter) + 1.0 - nu;
+            smit_out = smooth_count(iter, nu);
             // @@CUSTOM_CHUNK_SMOOTH_END
             esc_range_commit(smit_out);
         } else if (iter >= iu.max_iter || cycled) {
@@ -3379,7 +3407,7 @@ fn fs_iterate_chunk(in: VsOut) -> ChunkOut {
             let mag2 = dot(zf, zf);
             let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
             // @@CUSTOM_CHUNK_SMOOTH0_BEGIN — clamped at 0 in a custom module, as fs_iterate's.
-            smit = f32(iter) + 1.0 - nu;
+            smit = smooth_count(iter, nu);
             // @@CUSTOM_CHUNK_SMOOTH0_END
             esc_range_commit(smit);
             // At escape the δ is no longer needed — store the FULL z so the resolve can shade
@@ -3908,7 +3936,7 @@ fn chunk_fe_at(pos: vec2<f32>, p: vec2<i32>) -> ChunkOut4 {
         status = ST_ESCAPED;
         let mag2 = dot(zf, zf);
         let nu = log(log(mag2) * 0.5 / log(2.0)) / log(power_f);
-        let smit = f32(iter) + 1.0 - nu;
+        let smit = smooth_count(iter, nu);
         esc_range_commit(smit);
         // At escape the δ is no longer needed: store the FULL z as df32 so the mode-agnostic
         // resolve can shade without the reference. |z| > 256 here, so fe_to_cdf's exponent range
