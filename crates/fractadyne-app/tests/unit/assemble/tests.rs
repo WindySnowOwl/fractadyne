@@ -549,3 +549,27 @@ fn a_tour_that_pans_or_dives_past_the_strips_is_refused() {
     let same = tour_file("same", "-0.750000000000000000000", "0.10000000000000000000", "1024", 6.0, "linear");
     assert!(crate::FractadyneApp::video_frames(&AssembleCli { tour: Some(same), ..Default::default() }, &dive).is_ok());
 }
+
+/// A turned view's video (design/view-rotation.md): every frame turned by the view's angle, in the
+/// assembly's clockwise turns, so -deg/360 on top of any spin; a tour's frames by its own `rotate`
+/// (and a tour that states none plays unturned, whatever `--rotate` says).
+#[test]
+fn a_turned_views_video_is_turned_and_a_tours_frames_turn_as_its_keyframes() {
+    let dive = dive_at(("-0.75", "0.1"));
+    let opts = AssembleCli { fps: Some(10.0), speed: Some(2.0), rotate: Some(0.5), view_deg: 90.0, ..Default::default() };
+    let (frames, _, _) = crate::FractadyneApp::video_frames(&opts, &dive).unwrap();
+    assert!(frames.iter().all(|&(l, t)| (t - (0.5 * l - 0.25)).abs() < 1e-12), "{:?}", &frames[..3]);
+    assert_eq!(AssembleCli::view_turns(0.0).to_bits(), 0f64.to_bits(), "unturned adds nothing");
+    // `--rotate` as the assembly reads it: degrees, wrapped.
+    let args: Vec<String> = ["--rotate", "450"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(AssembleCli::from_args(&args).view_deg, 90.0);
+    // A tour turning the view from 0 to 180 over its move (linear), at 10 fps.
+    let d = tmp("turning-tour");
+    let p = d.join("tour.toml");
+    std::fs::write(&p, "format_version = 2@name = \"t\"@[render]@fps = 10@[[keyframe]]@t = 0.0@fractal = \"Mandelbrot\"@re = \"-0.75\"@im = \"0.1\"@zoom = 1.0@hold = 1.0@[[keyframe]]@t = 6.0@zoom = \"1024\"@rotate = 180@ease = \"linear\"@".replace('@', "\n")).unwrap();
+    let opts = AssembleCli { tour: Some(p), view_deg: 30.0, ..Default::default() };
+    let (frames, _, how) = crate::FractadyneApp::video_frames(&opts, &dive).unwrap();
+    assert_eq!(frames[0].1, 0.0, "{how}: the hold, unturned (the tour's angle, not --rotate's)");
+    assert!((frames[35].1 + 0.25).abs() < 1e-9, "halfway: 90 degrees, a quarter turn clockwise in the assembly's turns: {}", frames[35].1);
+    assert!((frames[60].1 + 0.5).abs() < 1e-9);
+}

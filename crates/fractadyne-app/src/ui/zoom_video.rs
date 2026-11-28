@@ -18,6 +18,9 @@ pub(crate) struct ZoomVideoUi {
     /// viewport's text), its depth (`log2` magnification), and the fractal's name.
     pub(crate) centre: (String, String),
     pub(crate) end_log2: f64,
+    /// …its rotation, degrees counterclockwise (design/view-rotation.md): the video ends turned as
+    /// the view is (`--rotate`).
+    pub(crate) view_rotate: f64,
     pub(crate) fractal: String,
     /// Why this view cannot become a zoom video (Julia sets, fractals the strips do not render, a
     /// coloring a strip cannot carry), or `None` when it can.
@@ -75,6 +78,7 @@ impl Default for ZoomVideoUi {
             open: false,
             centre: (String::new(), String::new()),
             end_log2: 0.0,
+            view_rotate: 0.0,
             fractal: String::new(),
             unsupported: None,
             out: String::new(),
@@ -217,6 +221,10 @@ pub(crate) fn zoom_video_args(z: &ZoomVideoUi) -> Vec<String> {
     if z.rotate != 0.0 {
         a.extend(["--assemble-rotate".to_string(), format!("{}", z.rotate)]);
     }
+    // A turned view's video ends turned as the view is.
+    if z.view_rotate != 0.0 {
+        a.extend(["--rotate".to_string(), format!("{:?}", z.view_rotate)]);
+    }
     if z.ss > 1 {
         a.extend(["--expmap-oversample".to_string(), z.ss.to_string(), "--assemble-ss".to_string(), z.ss.to_string()]);
     }
@@ -258,6 +266,7 @@ impl FractadyneApp {
             fractadyne_core::to_decimal_string(&self.viewport.center_y),
         );
         z.end_log2 = self.viewport.log2_magnification();
+        z.view_rotate = self.viewport.rotation;
         z.fractal = self.fractal.name().to_string();
         z.unsupported = if self.julia_mode {
             Some(tr!(zoom_video_no_julia))

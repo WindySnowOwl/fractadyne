@@ -119,3 +119,12 @@ fn the_dialog_refuses_what_the_card_cannot_hold_before_render() {
     assert_eq!(zoom_video_fit(&relief, 0, 0), CardFit::Fits, "nothing known, nothing refused");
     assert!(matches!(zoom_video_fit(&at(7680, 4320, T::Count), 8192, 0), CardFit::Refused(_)), "a 15360x8640 grid on 8192-texel textures");
 }
+
+/// A turned view's video ends turned as the view is: the dialog says `--rotate`, and only then.
+#[test]
+fn a_turned_view_passes_its_rotation() {
+    assert!(!zoom_video_args(&dialog()).iter().any(|x| x == "--rotate"), "unturned: not said");
+    let a = zoom_video_args(&ZoomVideoUi { view_rotate: -30.5, ..dialog() });
+    let i = a.iter().position(|x| x == "--rotate").expect("said");
+    assert_eq!(a[i + 1], "-30.5");
+}
