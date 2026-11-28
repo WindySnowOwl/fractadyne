@@ -649,27 +649,6 @@ fn pow2_down(x: f32) -> f32 {
     return bitcast<f32>(0x7F800000u - (bitcast<u32>(x) & 0x7F800000u));
 }
 
-// Slope normal for distance-estimate lighting: direction of u = z / (dz/dc).
-// Only the *direction* matters (the magnitude is normalized away), so any positive
-// real scale on the derivative — e.g. a floatexp exponent — cancels and we can pass
-// just the derivative's mantissa. Returns (0,0) when the derivative is unavailable
-// (→ the color pass leaves the pixel unlit).
-// ⚠The DIRECT path's derivative is plain f32 and reaches 2^127 near the boundary: once |z|·|dz|
-// passes 2^64, `ur² + ui²` overflows, m is inf, and the normal came out (0, 0) — an unlit pixel
-// with a good derivative (a direct strip on the RX 6800 XT, 2026-10-30; `--gputest` row 18 has
-// every card return it). So the sum is formed as before and only an overflowed one (inf, or NaN
-// from an inf product: all exponent bits set, a bit test no fast-math rule can fold away) is
-// formed again from z and the derivative each scaled by the power of two that puts its larger
-// part in [2, 4), built from that part's exponent bits (`pow2_down`). Only a pixel that came out
-// with no normal takes that branch: every other keeps its bits. An infinite derivative scales by
-// 0 to NaN there and stays unlit, as before.
-// ⛔Neither `ldexp` nor a division to scale them: DX12 and OpenGL compile `ldexp(x, -e)` as
-// x·exp2(-e), and a GPU divides by multiplying with the reciprocal; 2^-127, and the reciprocal of
-// a part past 2^126, are subnormals the GPU flushes to zero, which zeroed a derivative of 2^127
-// (row 18 on the RTX 3080, 2026-10-30: both ways, on all three APIs). The test is on the sum,
-// after it, so only a pixel with no normal pays for the branch. (A first version tested every
-// pixel's operands before the sum. PLUTO's bench matrix told neither version from the old code:
-// fitted as a·old + k, a was 0.99-1.02 against a run-to-run spread of 0.03-0.05, 2026-10-30.)
 // A texel's offset from the view's center, scaled per axis, `(re, im)` in df32, into the plane:
 // turned by R(-θ) when the view is turned (`iu.view_rot`), the picture then turning by +θ on the
 // screen. After the per-axis scaling, so a frame whose x and y steps differ by rounding is not
@@ -696,6 +675,27 @@ fn view_normal(n: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(c * n.x - s * n.y, s * n.x + c * n.y);
 }
 
+// Slope normal for distance-estimate lighting: direction of u = z / (dz/dc).
+// Only the *direction* matters (the magnitude is normalized away), so any positive
+// real scale on the derivative — e.g. a floatexp exponent — cancels and we can pass
+// just the derivative's mantissa. Returns (0,0) when the derivative is unavailable
+// (→ the color pass leaves the pixel unlit).
+// ⚠The DIRECT path's derivative is plain f32 and reaches 2^127 near the boundary: once |z|·|dz|
+// passes 2^64, `ur² + ui²` overflows, m is inf, and the normal came out (0, 0) — an unlit pixel
+// with a good derivative (a direct strip on the RX 6800 XT, 2026-10-30; `--gputest` row 18 has
+// every card return it). So the sum is formed as before and only an overflowed one (inf, or NaN
+// from an inf product: all exponent bits set, a bit test no fast-math rule can fold away) is
+// formed again from z and the derivative each scaled by the power of two that puts its larger
+// part in [2, 4), built from that part's exponent bits (`pow2_down`). Only a pixel that came out
+// with no normal takes that branch: every other keeps its bits. An infinite derivative scales by
+// 0 to NaN there and stays unlit, as before.
+// ⛔Neither `ldexp` nor a division to scale them: DX12 and OpenGL compile `ldexp(x, -e)` as
+// x·exp2(-e), and a GPU divides by multiplying with the reciprocal; 2^-127, and the reciprocal of
+// a part past 2^126, are subnormals the GPU flushes to zero, which zeroed a derivative of 2^127
+// (row 18 on the RTX 3080, 2026-10-30: both ways, on all three APIs). The test is on the sum,
+// after it, so only a pixel with no normal pays for the branch. (A first version tested every
+// pixel's operands before the sum. PLUTO's bench matrix told neither version from the old code:
+// fitted as a·old + k, a was 0.99-1.02 against a run-to-run spread of 0.03-0.05, 2026-10-30.)
 fn slope_normal(z: vec2<f32>, d: vec2<f32>) -> vec2<f32> {
     // u = z · conj(d)  (same direction as z/d)
     var ur = z.x * d.x + z.y * d.y;
