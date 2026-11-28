@@ -41,9 +41,25 @@ pub(crate) struct AssembleCli {
     /// `--assemble-rotate R`: the frame turns R turns an octave of zoom (the plane turns clockwise on
     /// screen when R is positive).
     pub(crate) rotate: Option<f64>,
+    /// `--rotate DEG`: the view the video dives into is turned DEG degrees, positive
+    /// counterclockwise (design/view-rotation.md): every frame is turned by it as well
+    /// ([`AssembleCli::view_turns`]). A tour's timeline (`--assemble-tour`) turns by its own
+    /// keyframes' `rotate` instead.
+    pub(crate) view_deg: f64,
 }
 
 impl AssembleCli {
+    /// The frames' turn for a view turned `deg` degrees counterclockwise, in the assembly's turns
+    /// (clockwise, [`fractadyne_gpu::assemble::FramePlacement::turns`]): `-deg / 360`, the sign
+    /// flipped. 0 for an unturned view.
+    pub(crate) fn view_turns(deg: f64) -> f64 {
+        if deg == 0.0 {
+            0.0
+        } else {
+            -deg / 360.0
+        }
+    }
+
     /// Read the options from the command line; an unreadable one is fatal, never a default.
     pub(crate) fn from_args(args: &[String]) -> Self {
         let val = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
@@ -79,6 +95,10 @@ impl AssembleCli {
                 crate::exit(2)
             }
             o.rotate = Some(r);
+        }
+        if let Some(s) = val("--rotate") {
+            let d: f64 = crate::arg_parse("--rotate", s, "a number of degrees");
+            o.view_deg = fractadyne_core::wrap_rotation(d);
         }
         if let Some(s) = val("--assemble-crf") {
             let q: u32 = crate::arg_parse("--assemble-crf", s, "an H.264 quality, 0 (lossless) to 51");
@@ -1149,7 +1169,7 @@ impl crate::FractadyneApp {
             // EXR, as `--render-iter` writes a flat render's: the two compare sample for sample.
             let raw = self.render_cli.iter_mode;
             for &l in &opts.at {
-                let place = placement(&dive.map, l, dive.frame.1, ss, opts.rotate.unwrap_or(0.0) * (l - dive.start_log2mag));
+                let place = placement(&dive.map, l, dive.frame.1, ss, opts.rotate.unwrap_or(0.0) * (l - dive.start_log2mag) + AssembleCli::view_turns(opts.view_deg));
                 self.fill_window(&mut asm, &mut src, device, queue, &place, 0)?;
                 let ext = if raw { "exr" } else { "png" };
                 let path = if several { out.join(format!("frame_{l:.3}.{ext}")) } else { out.clone() };
@@ -1281,11 +1301,12 @@ impl crate::FractadyneApp {
     /// A tour must stay on the dive's center and inside its depths: a strip video cannot pan.
     pub(crate) fn video_frames(opts: &AssembleCli, dive: &Dive) -> Result<(Vec<(f64, f64)>, f64, String), String> {
         let spin = opts.rotate.unwrap_or(0.0);
-        let turns = |l: f64| spin * (l - dive.start_log2mag);
+        // The view's own turn: `--rotate`'s, or each frame's of a tour (its keyframes' `rotate`).
+        let turns = |l: f64, view_deg: f64| spin * (l - dive.start_log2mag) + AssembleCli::view_turns(view_deg);
         let Some(path) = &opts.tour else {
             let fps = opts.fps.unwrap_or(30.0);
             let speed = opts.speed.unwrap_or(1.0);
-            let frames = dive_frames(dive.start_log2mag, dive.end_log2mag, speed, fps).into_iter().map(|l| (l, turns(l))).collect();
+            let frames = dive_frames(dive.start_log2mag, dive.end_log2mag, speed, fps).into_iter().map(|l| (l, turns(l, opts.view_deg))).collect();
             return Ok((
                 frames,
                 fps,
@@ -1322,7 +1343,7 @@ impl crate::FractadyneApp {
                     path.display()
                 ));
             }
-            frames.push((l, turns(l)));
+            frames.push((l, turns(l, s.rotate)));
         }
         Ok((frames, fps, format!("the timeline of {} ({:.1} s)", path.display(), pb.total)))
     }

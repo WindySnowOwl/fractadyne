@@ -325,7 +325,7 @@ pub(crate) const CLI_REFERENCE: &[CliRef] = {
         Flag("--formula-params LIST", "The custom formula's parameters p1…p5 as re,im;re,im;…"),
         Flag("--center X Y", "View center (full-precision decimals or expressions: -3/4, -0.5 + 0.25*cos(pi/4))."),
         Flag("--zoom M", "Magnification, e.g. 2e7 or 1.0e23.9 (any depth; a bad value is fatal)."),
-        Flag("--rotate DEG", "Turn the view: the picture turns counterclockwise about its center by DEG degrees (-180 to 180; a value outside goes around)."),
+        Flag("--rotate DEG", "Turn the view: the picture turns counterclockwise about its center by DEG degrees (-180 to 180; a value outside goes around). A zoom video (--render-zoom-video, --assemble) is turned by it in every frame, on top of any --assemble-rotate."),
         Flag("--zoom-log2 L", "Magnification = 2^L — for depths past f64 range (>= ~1e308x)."),
         Flag("--julia", "Julia mode."),
         Flag("--julia-c RE IM", "Julia parameter c."),

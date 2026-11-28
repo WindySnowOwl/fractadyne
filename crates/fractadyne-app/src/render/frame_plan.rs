@@ -352,6 +352,18 @@ pub(crate) fn plane_spans_on_screen(off: (f64, f64), deg: f64, h_over_w: f64) ->
     (sx, sy / h_over_w)
 }
 
+/// The turn the color pass gives a held frame rendered at `held_rot` under a view at `view_rot`
+/// (the shader's `uv_turn`): `(cos, sin)` of `held_rot − view_rot`, by which a screen offset of the
+/// view is turned into the held frame's (design/view-rotation.md, R3). `[0, 0]` when the two angles
+/// are the same number: no turn, every unturned frame's bits as before.
+pub(crate) fn hold_turn(held_rot: f64, view_rot: f64) -> [f32; 2] {
+    if held_rot == view_rot {
+        return [0.0, 0.0];
+    }
+    let (c, s) = fractadyne_core::rotation_cos_sin(held_rot - view_rot);
+    [c as f32, s as f32]
+}
+
 /// A held frame's scale while a stepped Home is under way (`HomeSteps`, `stepping`): never smaller
 /// than full size. Each stop is up to thousands of octaves out from the frame on screen, and at its
 /// true scale (up to the 2^40 the hold allows) that frame shrinks to a speck and the rest of the
@@ -555,3 +567,7 @@ impl crate::FractadyneApp {
 #[cfg(test)]
 #[path = "../../tests/unit/render/frame_plan/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/render/frame_plan/hold_turn_tests.rs"]
+mod hold_turn_tests;

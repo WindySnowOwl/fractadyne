@@ -34,11 +34,13 @@ const LINK_SAMPLE: u64 = 1 << 20;
 
 /// The flags of a farm's zoom video that are its assembly's (`assemble::AssembleCli`, and
 /// `--normalize`), passed on to it as given; whether each takes a value.
-const ASSEMBLY_FLAGS: [(&str, bool); 7] = [
+const ASSEMBLY_FLAGS: [(&str, bool); 8] = [
     ("--assemble-fps", true),
     ("--assemble-speed", true),
     ("--assemble-ss", true),
     ("--assemble-rotate", true),
+    // The view's own rotation (design/view-rotation.md): the frames' constant turn.
+    ("--rotate", true),
     ("--assemble-crf", true),
     ("--assemble-tour", true),
     ("--normalize", false),

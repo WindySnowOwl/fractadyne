@@ -4354,8 +4354,10 @@ struct ColorU {
     layer_contrast: f32,
     layer_opacity: f32,
     layer_center: f32,
-    _pad_ly0: f32,
-    _pad_ly1: f32,
+    // A held frame's turn against the view, (cos, sin) of its angle less the view's
+    // (design/view-rotation.md; `ColorUniforms.uv_turn`): (0, 0) no turn.
+    uv_turn_c: f32,
+    uv_turn_s: f32,
     // The statistic bump (coloring plan E4): its lane (0 none, 1 the stripe average, 2 the triangle
     // inequality's), its height in output pixels per unit of the gray, the statistic's center.
     // Mirrors `ColorUniforms.bump_*`.
@@ -5140,6 +5142,13 @@ fn fs_color(in: VsOut) -> @location(0) vec4<f32> {
         // the frozen frame matches the current size (pan / zoom reprojection) this is the identity.
         let fit = cu.out_res / max(vec2<f32>(screen_dim), vec2<f32>(1.0));
         suv = (in.uv - vec2<f32>(0.5)) * fit + vec2<f32>(0.5);
+        // A held frame at another angle than the view (design/view-rotation.md): the view's offset
+        // from the center turned into the held frame's, in its pixels (square), y down.
+        if (cu.uv_turn_c != 0.0 || cu.uv_turn_s != 0.0) {
+            let dim = max(vec2<f32>(screen_dim), vec2<f32>(1.0));
+            let d = (suv - vec2<f32>(0.5)) * dim;
+            suv = vec2<f32>(cu.uv_turn_c * d.x + cu.uv_turn_s * d.y, cu.uv_turn_c * d.y - cu.uv_turn_s * d.x) / dim + vec2<f32>(0.5);
+        }
         // Then scale about the center + translate: follows both the zoom and pan since the frozen
         // frame was rendered (uv_scale == 1 → pure pan, the original behavior).
         suv = (suv - vec2<f32>(0.5)) * cu.uv_scale + vec2<f32>(0.5) - cu.uv_off;

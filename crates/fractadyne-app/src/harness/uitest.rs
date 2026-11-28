@@ -264,6 +264,16 @@ enum Screen {
     /// second, not seconds.
     PanDragBase,
     PanDrag,
+    /// A turned view in the window (design/view-rotation.md, R3), five steps on one shallow view:
+    /// the live picture against an export of the view unturned (the CONTROL: how far the two
+    /// differ anyway) and turned 30 degrees (no further off, and the wrong angle far more); a drag
+    /// through egui's input carrying the plane point under the press to the release; a click-to-zoom
+    /// landing on the point clicked; the minimap's frame drawn turned (for the eye).
+    TurnedLiveBase,
+    TurnedLive,
+    TurnedDrag,
+    TurnedClick,
+    TurnedMinimap,
     /// Coloring plan A4: turning on Stripe's "Tail only" over a settled view must re-iterate it.
     /// The tail changes what the iteration accumulates, but the GPU's `IterKey` did not carry it,
     /// so the view kept the statistics of the setting before the toggle: the toggled frame
@@ -548,6 +558,14 @@ const UITEST_ASKED_CELL: crate::ui::method_sheet::SheetCell =
 /// click near the track's left end puts it.
 const UITEST_SLIDER_FROM: f32 = 0.6;
 
+/// The turned steps' angle, degrees (design/view-rotation.md, R3).
+const TURNED_DEG: f64 = 30.0;
+/// The turned drag, from and to, as fractions of the view's rect.
+const TURNED_DRAG: ((f32, f32), (f32, f32)) = ((0.40, 0.40), (0.55, 0.52));
+/// The turned click-to-zoom's point, as fractions of the view's rect, and its factor.
+const TURNED_CLICK: (f32, f32) = (0.30, 0.65);
+const TURNED_CLICK_FACTOR: f32 = 4.0;
+
 /// The `julia-linked*` steps' c: outside the set, its critical orbit escaping after 17 iterations
 /// (`--render-iter`: the set's count at c 16.90, the Julia count at z = c 15.90).
 const UITEST_JULIA_LINK_C: (f64, f64) = (-0.75, 0.2);
@@ -748,6 +766,8 @@ struct StepResult {
     /// for the classic map) and the map's cycle, offset and curve, so two steps whose pictures
     /// differ in color alone can be told apart from a stale frame (minimap-pan-verify, 2026-11-23).
     palette_map: (Option<(f32, f32)>, f32, f32, u32),
+    /// The turned steps (R3): the live picture's mean luma difference from an export of its view.
+    live_export_diff: Option<f64>,
 }
 
 /// A 16x16 luma thumbnail of the left ~45% of the frame, vertically inset past the toolbar and
@@ -882,6 +902,8 @@ pub(crate) struct UiTest {
     /// The frame record's next sequence number when the pan-drag step queued its drag: the check
     /// reads the records from here (`frame_record::since`).
     pan_rec_from: u64,
+    /// The view before a turned step's gesture (its drag or click), for its check.
+    turned_before: Option<crate::Viewport>,
 }
 
 /// Where a walk records that it started, and then that it finished.
@@ -963,6 +985,7 @@ impl UiTest {
             restore_language: None,
             restore_palette: None,
             pan_rec_from: 0,
+            turned_before: None,
         }
     }
 }
@@ -1556,6 +1579,12 @@ fn build_steps() -> Vec<Step> {
         screen("color-hook-fringe", Screen::ColorHookFringe),
         screen("color-hook-error", Screen::ColorHookError),
         screen("color-hook-turned-off", Screen::ColorHookTurnedOff),
+        // Last: they leave the view turned and click-to-zoom on, which nothing after should inherit.
+        screen("turned-live-base", Screen::TurnedLiveBase),
+        screen("turned-live", Screen::TurnedLive),
+        screen("turned-drag", Screen::TurnedDrag),
+        screen("turned-click", Screen::TurnedClick),
+        screen("turned-minimap", Screen::TurnedMinimap),
     ]
 }
 
@@ -1589,6 +1618,9 @@ impl FractadyneApp {
                 self.uitest_apply(ctx, &step);
                 if matches!(step.kind, StepKind::Screen(Screen::PanDrag)) {
                     ut.pan_rec_from = crate::diag::frame_record::since(0).1;
+                }
+                if matches!(step.kind, StepKind::Screen(Screen::TurnedDrag | Screen::TurnedClick)) {
+                    ut.turned_before = Some(self.viewport.clone());
                 }
                 if matches!(
                     step.kind,
@@ -1624,7 +1656,12 @@ impl FractadyneApp {
                         | Screen::MinimapPan
                         | Screen::MinimapPanVerify
                         | Screen::PanDragBase
-                        | Screen::PanDrag,
+                        | Screen::PanDrag
+                        | Screen::TurnedLiveBase
+                        | Screen::TurnedLive
+                        | Screen::TurnedDrag
+                        | Screen::TurnedClick
+                        | Screen::TurnedMinimap,
                     ) => (500u64, 30_000u64),
                     // The explorer generates its gallery (a threaded Newton sweep) and then
                     // renders one thumbnail per frame; the capture waits for the populated
@@ -1973,6 +2010,124 @@ impl FractadyneApp {
         let (progress, cancel) = (std::sync::atomic::AtomicU32::new(0), std::sync::atomic::AtomicBool::new(false));
         let r = fractadyne_gpu::render_export(&rs.device, &rs.queue, &req, &progress, &cancel).ok()?;
         Some(fractadyne_export::to_srgb8(&r.pixels))
+    }
+
+    /// The turned steps' checks (design/view-rotation.md, R3), on the view the step leaves:
+    /// - `turned-live-base`: the live picture's mean luma difference (12-pixel blocks) from an export
+    ///   of the same view at the canvas's size (the CONTROL: how far the two differ anyway), returned
+    ///   for the next;
+    /// - `turned-live`: at 30 degrees, no more than twice that (plus 3 levels), and an export at 0
+    ///   degrees at least four times as far (so the comparison can tell the angle at all);
+    /// - `turned-drag`: the plane point under the press is under the release, within 2 pixels;
+    /// - `turned-click`: the clicked plane point is the new center, within 0.75 of the old view's
+    ///   pixels, the view `TURNED_CLICK_FACTOR` times deeper.
+    fn uitest_turned_checks(&self, sc: Screen, ut: &UiTest, image: &egui::ColorImage, checks: &mut Vec<Check>) -> Option<f64> {
+        let step = |n: &str| ut.results.iter().rev().find(|r| r.name == n);
+        let vp = &self.viewport;
+        let at = |f: (f32, f32)| (f64::from(f.0) * vp.width_px, f64::from(f.1) * vp.height_px);
+        let verdict = |ok: bool| if ok { Verdict::Pass } else { Verdict::Fail };
+        match sc {
+            Screen::TurnedLiveBase | Screen::TurnedLive => {
+                let [cx, cy, cw, ch] = self.central_rect_px.map(|v| v as usize);
+                let iw = image.size[0];
+                // Mean |difference| of the luma averaged over 12-pixel blocks, across the canvas's
+                // middle 60%, the screenshot against an export. Blocks, not pixels: at this depth the
+                // view is mostly sub-pixel dust, where the two drawings' sampling alone differs by
+                // tens of levels a pixel (25 measured, unturned), while a turn moves whole blocks.
+                let against = |e: &[u8]| -> Option<f64> {
+                    const B: usize = 12;
+                    if cw < 10 * B || ch < 10 * B || e.len() < cw * ch * 4 {
+                        return None;
+                    }
+                    let luma = |r: u8, g: u8, b: u8| 0.299 * f64::from(r) + 0.587 * f64::from(g) + 0.114 * f64::from(b);
+                    let (mut sum, mut n) = (0.0, 0usize);
+                    for by in (ch / 5..ch * 4 / 5 - B).step_by(B) {
+                        for bx in (cw / 5..cw * 4 / 5 - B).step_by(B) {
+                            let (mut a, mut b) = (0.0, 0.0);
+                            for y in by..by + B {
+                                for x in bx..bx + B {
+                                    let p = *image.pixels.get((cy + y) * iw + cx + x)?;
+                                    let q = &e[(y * cw + x) * 4..][..4];
+                                    a += luma(p.r(), p.g(), p.b());
+                                    b += luma(q[0], q[1], q[2]);
+                                }
+                            }
+                            sum += (a - b).abs() / (B * B) as f64;
+                            n += 1;
+                        }
+                    }
+                    Some(sum / n.max(1) as f64)
+                };
+                let size = [cw as u32, ch as u32];
+                let at_angle = self.uitest_export_view(size).and_then(|e| against(&e));
+                if matches!(sc, Screen::TurnedLiveBase) {
+                    checks.push(Check {
+                        name: "turned-live-control".into(),
+                        verdict: verdict(at_angle.is_some_and(|d| d.is_finite())),
+                        detail: format!("unturned, the live picture against an export of it: {at_angle:?} levels (the control)"),
+                    });
+                    return at_angle;
+                }
+                let wrong = self.uitest_export_view_with(size, |r| r.rotation = 0.0).and_then(|e| against(&e));
+                let base = step("turned-live-base").and_then(|r| r.live_export_diff);
+                let ok = match (at_angle, wrong, base) {
+                    (Some(a), Some(w), Some(b)) => a <= 2.0 * b + 3.0 && w >= 4.0 * a.max(1.0),
+                    _ => false,
+                };
+                checks.push(Check {
+                    name: "turned-live-matches-its-export".into(),
+                    verdict: verdict(ok),
+                    detail: format!(
+                        "turned {TURNED_DEG}: the live picture against an export at its angle {at_angle:?} levels, at 0 {wrong:?}; unturned the two differ by {base:?}"
+                    ),
+                });
+                at_angle
+            }
+            Screen::TurnedDrag => {
+                let Some(before) = ut.turned_before.as_ref() else {
+                    checks.push(Check { name: "turned-drag-follows-the-pointer".into(), verdict: Verdict::Fail, detail: "no view recorded before the drag".into() });
+                    return None;
+                };
+                let (p0, p1) = (at(TURNED_DRAG.0), at(TURNED_DRAG.1));
+                let c = before.pixel_to_complex(p0.0, p0.1);
+                let (x, y) = vp.complex_to_pixel(&c.0, &c.1);
+                let off = (x - p1.0).hypot(y - p1.1);
+                let moved = {
+                    let (bx, by) = before.complex_to_pixel(&vp.center_x, &vp.center_y);
+                    (bx - before.width_px * 0.5).hypot(by - before.height_px * 0.5)
+                };
+                checks.push(Check {
+                    name: "turned-drag-follows-the-pointer".into(),
+                    verdict: verdict(off < 2.0 && moved > 50.0),
+                    detail: format!(
+                        "turned {}: the point under the press at ({:.1}, {:.1}) is now at ({x:.1}, {y:.1}), the release at ({:.1}, {:.1}): {off:.2} px off; the view moved {moved:.0} px",
+                        vp.rotation, p0.0, p0.1, p1.0, p1.1
+                    ),
+                });
+                None
+            }
+            Screen::TurnedClick => {
+                let Some(before) = ut.turned_before.as_ref() else {
+                    checks.push(Check { name: "turned-click-lands-on-the-point".into(), verdict: Verdict::Fail, detail: "no view recorded before the click".into() });
+                    return None;
+                };
+                let p = at(TURNED_CLICK);
+                let (x, y) = before.complex_to_pixel(&vp.center_x, &vp.center_y);
+                let off = (x - p.0).hypot(y - p.1);
+                let deeper = vp.log2_magnification() - before.log2_magnification();
+                let want = f64::from(TURNED_CLICK_FACTOR).log2();
+                checks.push(Check {
+                    name: "turned-click-lands-on-the-point".into(),
+                    verdict: verdict(off < 0.75 && (deeper - want).abs() < 0.01 && vp.rotation == before.rotation),
+                    detail: format!(
+                        "turned {}: the new center is at ({x:.2}, {y:.2}) of the view before, the click at ({:.2}, {:.2}): {off:.3} px off; {deeper:.3} octaves deeper (want {want:.3})",
+                        vp.rotation, p.0, p.1
+                    ),
+                });
+                None
+            }
+            _ => None,
+        }
     }
 
     /// The `palette-aa` step's checks (C8), against `palette-aa-base`: ticking the box recolors the
@@ -3427,6 +3582,59 @@ impl FractadyneApp {
                 let (x, y) = at(30);
                 q.push_back(ViewRelease(x, y));
                 self.harness.uitest_pointer = q;
+            }
+            Screen::TurnedLiveBase | Screen::TurnedLive => {
+                self.set_show_mode(crate::ShowMode::Set);
+                self.set_fractal(crate::FractalKind::Mandelbrot);
+                // One sample a pixel, a fixed count, Smooth on the fixed map, no light: the live
+                // frame and an export of it then differ only by how each is drawn.
+                self.render_cfg.aa = 1;
+                self.render_cfg.auto_iter = false;
+                self.render_cfg.max_iter = 2_000;
+                self.coloring.color_method = crate::ColorMethod::Smooth;
+                self.coloring.normalize_live = false;
+                self.effects.light = false;
+                self.dialogs.minimap = false;
+                self.click_zoom = false;
+                self.viewport.set_center_mag(
+                    fractadyne_core::BigFloat::from_f64(-0.743_643_887_037_158_7, 64),
+                    fractadyne_core::BigFloat::from_f64(0.131_825_904_205_311_9, 64),
+                    300.0,
+                );
+                self.viewport.rotation = if matches!(s, Screen::TurnedLive) { TURNED_DEG } else { 0.0 };
+                self.invalidate_refs();
+                self.pointer.settle_t = [-1.0e9, -1.0e9];
+            }
+            Screen::TurnedDrag => {
+                use crate::UiPointer::{ViewMove, ViewPress, ViewRelease};
+                let ((x0, y0), (x1, y1)) = TURNED_DRAG;
+                let mut q = std::collections::VecDeque::new();
+                q.push_back(ViewMove(x0, y0));
+                q.push_back(ViewPress(x0, y0));
+                for k in 1..=15 {
+                    let f = k as f32 / 15.0;
+                    q.push_back(ViewMove(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f));
+                }
+                q.push_back(ViewRelease(x1, y1));
+                self.harness.uitest_pointer = q;
+            }
+            Screen::TurnedClick => {
+                use crate::UiPointer::{ViewMove, ViewPress, ViewRelease};
+                self.click_zoom = true;
+                self.click_zoom_snap = false;
+                self.render_cfg.snap_zoom = false;
+                self.render_cfg.click_zoom_factor = TURNED_CLICK_FACTOR;
+                let (x, y) = TURNED_CLICK;
+                self.harness.uitest_pointer = [ViewMove(x, y), ViewPress(x, y), ViewRelease(x, y)].into_iter().collect();
+            }
+            Screen::TurnedMinimap => {
+                self.click_zoom = false;
+                self.dialogs.minimap = true;
+                // Shallow enough that the minimap draws the view's frame (a turned quad), not the
+                // deep view's crosshair.
+                self.viewport.set_center_mag(fractadyne_core::BigFloat::from_f64(-0.75, 64), fractadyne_core::BigFloat::from_f64(0.1, 64), 4.0);
+                self.invalidate_refs();
+                self.pointer.settle_t = [-1.0e9, -1.0e9];
             }
             Screen::StripeTailOff => {
                 self.set_show_mode(crate::ShowMode::Set);
@@ -5737,6 +5945,14 @@ impl FractadyneApp {
         }
 
         // ---- equipotential lines (coloring plan C10) ----
+        // ---- a turned view in the window (design/view-rotation.md, R3) ----
+        let live_export_diff = match step.kind {
+            StepKind::Screen(sc @ (Screen::TurnedLiveBase | Screen::TurnedLive | Screen::TurnedDrag | Screen::TurnedClick)) => {
+                self.uitest_turned_checks(sc, ut, image, &mut checks)
+            }
+            _ => None,
+        };
+
         if let StepKind::Screen(Screen::Equipotentials) = step.kind {
             self.uitest_equipotential_checks(ut, inside_view.as_ref(), ran_why, &mut checks);
         }
@@ -6058,6 +6274,7 @@ impl FractadyneApp {
             ran_why,
             iter_at_capture,
             palette_map,
+            live_export_diff,
         }
     }
 
@@ -6169,6 +6386,7 @@ impl FractadyneApp {
             ran_why: [0; 7],
             iter_at_capture: 0,
             palette_map: (None, 0.0, 0.0, 0),
+            live_export_diff: None,
         }
     }
 
@@ -6328,6 +6546,7 @@ fn timeout_result(step: &Step) -> StepResult {
         ran_why: [0; 7],
         iter_at_capture: 0,
         palette_map: (None, 0.0, 0.0, 0),
+        live_export_diff: None,
     }
 }
 

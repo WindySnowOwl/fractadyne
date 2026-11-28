@@ -11,6 +11,7 @@ fn pin() -> PinnedRefresh {
         ),
         magnification: 1.0e31,
         log2mag: 103.0,
+        rotation: 0.0,
         upp_l2: -110.0,
         eff_iter: 1_000_000,
         gpu_iter: 1_000_000,
@@ -46,6 +47,7 @@ fn inputs() -> PinInputs {
         reading_final: true,
         converged: false,
         past_range_top: false,
+        turned: false,
     }
 }
 
@@ -268,4 +270,23 @@ fn a_pin_past_halfway_finishes_rather_than_drift_away() {
     j.drift_oct = 2.1;
     assert_eq!(pin_verdict(&split_pin(4, 1), &j), PinVerdict::Stop(PinStop::Drift));
     assert_eq!(pin_verdict(&split_pin(4, 3), &j), PinVerdict::Continue);
+}
+
+/// A turn stops a walk that has passes to go: they would resume its pixels at another angle
+/// (design/view-rotation.md). A finished walk still adopts, its frame held turned; a split pin
+/// stops too, its sets would show two angles.
+#[test]
+fn a_turn_stops_a_walk_in_progress_but_not_a_finished_one() {
+    let mut i = inputs();
+    i.cursor = 400_000;
+    i.detail = None;
+    i.turned = true;
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Stop(PinStop::Turn));
+    i.cursor = 1_000_000;
+    i.detail = Some(true);
+    assert_eq!(pin_verdict(&pin(), &i), PinVerdict::Adopt);
+    let mut s = inputs();
+    s.turned = true;
+    assert_eq!(pin_verdict(&split_pin(3, 1), &s), PinVerdict::Stop(PinStop::Turn));
+    assert_eq!(pin_verdict(&split_pin(3, 3), &s), PinVerdict::Adopt);
 }

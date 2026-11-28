@@ -1988,6 +1988,8 @@ struct Perf {
     /// but `frozen_center` is overwritten by the very first compose iterate — so the transform
     /// must be pinned here or later gate frames would mis-place the hold at identity).
     hold_uv: [[f32; 3]; 2],
+    /// The hold snapshot's turn against the view (`frame_plan::hold_turn`; `[0, 0]`: none).
+    hold_turn: [[f32; 2]; 2],
     /// True while a view's settle grid has tiles left — holds the AA ramp and keeps repaints coming.
     tile_pending: [bool; 2],
     /// Progressive on-settle supersampling (deep-zoom despeckle): samples folded so far, whether the
@@ -2934,6 +2936,7 @@ impl Default for Perf {
             probe_nonce: [0, 0],
             hold_active: [false, false],
             hold_uv: [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]],
+            hold_turn: [[0.0; 2]; 2],
             tile_turn: u64::MAX,
             interact_frame: [0, 0],
             fe_iter_frame: [0, 0],
@@ -6173,6 +6176,9 @@ struct RefCache {
     /// fresh reference lands (see `build_params`). `None` until the first real render.
     frozen_center: Option<[fractadyne_core::BigFloat; 2]>,
     frozen_l2: f64,
+    /// …and its rotation (design/view-rotation.md): a held frame at another angle than the view is
+    /// shown turned by the difference (`frame_plan::hold_turn`).
+    frozen_rot: f64,
     /// When the frozen frame was rendered — ages the reuse-hold so a SLOW dive still refreshes
     /// real detail on a time floor (`REFRESH_MAX_SECS`), not just every `REFRESH_OCTAVES` of zoom.
     frozen_at: Option<Instant>,
@@ -6232,6 +6238,7 @@ impl Default for RefCache {
             bla_trap: None,
             frozen_center: None,
             frozen_l2: 0.0,
+            frozen_rot: 0.0,
             frozen_at: None,
             frozen_upp_l2: 0.0,
             frozen_frame: 0,
