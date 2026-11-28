@@ -4,7 +4,7 @@ use super::parse_tour_text;
 
 fn tour(render: &str) -> Result<super::Playback, String> {
     parse_tour_text(&format!(
-        "format_version = 2\nname = \"t\"\n{render}\n[[keyframe]]\nt = 0.0\nzoom = 1.0\nhold = 1.0\n[[keyframe]]\nt = 2.0\nzoom = 4.0\n"
+        "format_version = 3\nname = \"t\"\n{render}\n[[keyframe]]\nt = 0.0\nzoom = 1.0\nhold = 1.0\n[[keyframe]]\nt = 2.0\nzoom = 4.0\n"
     ))
 }
 
@@ -32,6 +32,21 @@ fn each_key_reads_in_its_own_toml_shape() {
     .collect();
     want.sort();
     assert_eq!(got, want);
+}
+
+/// A format-2 tour states the light's angle in radians: it is kept in degrees, as format 3 states it
+/// (user, 2026-11-28), so the same script draws the same light.
+#[test]
+fn a_format_2_tour_states_the_light_angle_in_radians() {
+    let v2 = parse_tour_text(
+        "format_version = 2\nname = \"t\"\n[render.coloring]\nlight = true\nlight_angle = 0.5\n[[keyframe]]\nt = 0.0\nzoom = 1.0\n",
+    )
+    .expect("a v2 tour parses");
+    let angle = v2.render.coloring.iter().find(|(k, _)| k == "light_angle").map(|(_, v)| v.clone());
+    assert_eq!(angle.as_deref(), Some("28.64789"), "0.5 radians");
+    let v3 = tour("[render.coloring]\nlight = true\nlight_angle = 0.5\n").expect("a v3 tour parses");
+    let angle = v3.render.coloring.iter().find(|(k, _)| k == "light_angle").map(|(_, v)| v.clone());
+    assert_eq!(angle.as_deref(), Some("0.5"), "0.5 degrees");
 }
 
 #[test]

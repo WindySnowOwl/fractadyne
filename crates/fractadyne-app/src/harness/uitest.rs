@@ -5653,15 +5653,16 @@ impl FractadyneApp {
         if let StepKind::Screen(sc @ (Screen::LightDialDrag | Screen::LightDialDoubleClick)) = step.kind {
             let a = self.effects.light_angle;
             let (name, want) = if matches!(sc, Screen::LightDialDrag) {
-                ("a press on the light's dial and a drag to its top light the picture from the top (pi/2)", std::f32::consts::FRAC_PI_2)
+                ("a press on the light's dial and a drag to its top light the picture from the top (90 degrees)", 90.0)
             } else {
                 ("a double-click on the light's dial resets the light angle", fractadyne_state::ColoringSpec::default().light_angle)
             };
             checks.push(Check {
                 name: name.into(),
-                verdict: if (a - want).abs() < 1.0e-3 { Verdict::Pass } else { Verdict::Fail },
+                // Degrees since 2026-11-28 (the panel's unit), within the 1e-3 rad the check had.
+                verdict: if (a - want).abs() < 0.06 { Verdict::Pass } else { Verdict::Fail },
                 detail: format!(
-                    "light angle {a:.4} rad (want {want:.4}); the dial at {:?}; {} pointer events left; {} frames waited for the dial to stay put",
+                    "light angle {a:.3} degrees (want {want:.3}); the dial at {:?}; {} pointer events left; {} frames waited for the dial to stay put",
                     self.perf.layout.light_dial,
                     self.harness.uitest_pointer.len(),
                     self.harness.uitest_dial_waits

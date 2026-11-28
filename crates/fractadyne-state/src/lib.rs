@@ -14,7 +14,10 @@ pub mod durable;
 /// otherwise additive — new fields use `#[serde(default)]`, so a newer file still loads
 /// best-effort on an older build; the version only drives the "saved by a newer Fractadyne"
 /// warning. A file with no `state_version` (written before versioning) is treated as v1.
-pub const STATE_FORMAT_VERSION: u32 = 1;
+///
+/// 2 — the relief light's angle (`ColoringSpec::light_angle`) in degrees; v1 kept it in radians,
+/// which [`parse_with_status`] converts (2026-11-28).
+pub const STATE_FORMAT_VERSION: u32 = 2;
 
 fn default_state_version() -> u32 {
     1
@@ -170,7 +173,8 @@ pub struct ColoringSpec {
     /// own switch.
     #[serde(default)]
     pub normalize_fit: bool,
-    /// Distance-estimate relief lighting: enabled, light angle (rad), relief strength.
+    /// Distance-estimate relief lighting: enabled, the light's angle (degrees, counterclockwise
+    /// from the right, where the light comes from; radians in a v1 session), relief strength.
     #[serde(default)]
     pub light: bool,
     #[serde(default = "default_light_angle")]
@@ -893,7 +897,7 @@ fn default_palette_anim_speed() -> f32 {
 }
 
 fn default_light_angle() -> f32 {
-    2.2 // radians (~126°), light from upper-left
+    126.0 // degrees, light from the upper left (2.2 radians until state v2)
 }
 
 fn default_light_height() -> f32 {
@@ -1336,6 +1340,22 @@ pub fn parse_with_status(text: &str) -> (SessionState, StateLoad) {
     let probed = toml::from_str::<Probe>(text)
         .map(|p| p.state_version)
         .unwrap_or(STATE_FORMAT_VERSION);
+    let (s, load) = parse_versions(text, probed);
+    (upgraded(s), load)
+}
+
+/// A session read from an older version in this version's units: v1 kept the relief light's
+/// angle in radians (STATE_FORMAT_VERSION 2). A session from this version or a newer one is as
+/// read.
+fn upgraded(mut s: SessionState) -> SessionState {
+    if s.state_version < 2 {
+        s.coloring.light_angle = s.coloring.light_angle.to_degrees();
+    }
+    s
+}
+
+/// [`parse_with_status`]'s session and status, before [`upgraded`].
+fn parse_versions(text: &str, probed: u32) -> (SessionState, StateLoad) {
     match toml::from_str::<SessionState>(text) {
         Ok(s) if s.state_version <= STATE_FORMAT_VERSION => (s, StateLoad::Ok),
         Ok(s) => {
@@ -1348,7 +1368,12 @@ pub fn parse_with_status(text: &str) -> (SessionState, StateLoad) {
                 let v = s.state_version.max(probed);
                 (s, StateLoad::Newer(v))
             }
-            Some((s, dropped)) => (s, StateLoad::Partial(dropped)),
+            // Built from the defaults, so it says this version unless the file's version read: the
+            // file's own (1 when it has none), which says what units its values are in.
+            Some((mut s, dropped)) => {
+                s.state_version = s.state_version.min(probed);
+                (s, StateLoad::Partial(dropped))
+            }
             // Not TOML at all: if the version says it's from the future, warn; otherwise defaults.
             None if probed > STATE_FORMAT_VERSION => (SessionState::default(), StateLoad::Newer(probed)),
             None => (SessionState::default(), StateLoad::Unreadable),

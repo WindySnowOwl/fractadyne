@@ -75,6 +75,12 @@ detail is in the git history.
   now fitted to its own values, as the live view fits the screen, so the video looks like the
   view. Fitting a frame costs about a quarter more time at 2x2 supersampling. A frame depends on
   nothing but its own view, so one full turn of the trap's phase rendered once loops seamlessly.
+- **The relief light's angle is in degrees.** It was the one angle Fractadyne showed in radians.
+  The Light angle row now reads 0° to 360°, counterclockwise from the right (126°, the light from
+  the upper left, by default), like the trap's rotation and phase, the L-system angle and the
+  Misiurewicz twist. `--light-angle` takes degrees too, and so does the `light_angle` key of a view
+  file (format 6) and of a tour's `[render.coloring]` (format 3). Older view files, tours and saved
+  sessions keep their light where it was: their radians are read as such and converted.
 - **Smooth colors stay smooth at millions of iterations in saved pictures.** Each pixel's escape
   count is kept as a 32-bit number, which past about two million iterations can no longer hold the
   count's fraction finely, and past eight million holds whole iterations only. Where the colors

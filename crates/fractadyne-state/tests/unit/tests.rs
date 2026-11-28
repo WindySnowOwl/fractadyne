@@ -154,6 +154,27 @@ fn missing_version_is_ok_not_a_warning() {
     assert_eq!(status, StateLoad::Ok);
 }
 
+/// The relief light's angle is in degrees from state v2; a v1 session (radians), with its version or
+/// without one, reads as the same direction in degrees, and a salvaged one too. A v2 session and
+/// the defaults are as they are.
+#[test]
+fn a_v1_session_light_angle_reads_in_degrees() {
+    let body = "center_x = -0.5\ncenter_y = 0.0\nunits_per_pixel = 0.004\nmax_iter = 256\nauto_iter = true\n\
+                palette_idx = 0\ncycle = 0.27\noffset = 0.1\nlight = true\nlight_angle = 2.2\n";
+    for text in [body.to_string(), format!("state_version = 1\n{body}")] {
+        let (s, status) = parse_with_status(&text);
+        assert_eq!(status, StateLoad::Ok);
+        assert!((s.coloring.light_angle - 126.050_72).abs() < 1e-3, "{}", s.coloring.light_angle);
+    }
+    // A value that does not read (aa) is dropped; the angle still converts.
+    let (s, status) = parse_with_status(&format!("state_version = 1\naa = \"three\"\n{body}"));
+    assert!(matches!(status, StateLoad::Partial(_)), "{status:?}");
+    assert!((s.coloring.light_angle - 126.050_72).abs() < 1e-3, "{}", s.coloring.light_angle);
+    let (s, _) = parse_with_status(&format!("state_version = 2\n{body}"));
+    assert_eq!(s.coloring.light_angle, 2.2);
+    assert_eq!(SessionState::default().coloring.light_angle, 126.0);
+}
+
 // A file from a FUTURE build (higher state_version) still loads best-effort, but flags Newer
 // so the app can warn — even when unknown extra keys are present.
 #[test]

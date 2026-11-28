@@ -13,7 +13,12 @@ use serde::Deserialize;
 /// would land at t=0, zoom 1). Purely additive new keys don't need a bump (unknown keys are
 /// ignored, missing ones default). A script whose `format_version` exceeds this is from a newer
 /// build: we still play the parts we understand but warn that newer features may not apply.
-pub(crate) const SCRIPT_FORMAT_VERSION: u32 = 2;
+///
+/// 3 — `[render.coloring] light_angle` in degrees, counterclockwise from the right (user,
+/// 2026-11-28; radians in v2, which still plays: `resolve_coloring` converts its value).
+pub(crate) const SCRIPT_FORMAT_VERSION: u32 = 3;
+/// The oldest format this build plays: v2 (v1 is refused with a migration message).
+pub(crate) const SCRIPT_FORMAT_MIN: u32 = 2;
 
 /// On-disk script format v2 (TOML). Keyframe `t` is the ABSOLUTE second the camera arrives (so
 /// inserting a keyframe can't desync downstream narration), every element takes a stable `id`,
@@ -784,7 +789,7 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
         repeatable: false,
         summary: "Script-wide settings.",
         fields: &[
-            SchemaField { name: "format_version", ty: "int", default: "(required)", doc: "Schema version the script targets. Must be 2 — v1 scripts (cumulative `secs`, `mag`, separate caption/callout/spotlight arrays) are rejected with a migration message rather than mis-played. A version newer than this build warns that some annotations may not render." },
+            SchemaField { name: "format_version", ty: "int", default: "(required)", doc: "Schema version the script targets: 3 (2 still plays, its `[render.coloring] light_angle` read in radians). v1 scripts (cumulative `secs`, `mag`, separate caption/callout/spotlight arrays) are rejected with a migration message rather than mis-played. A version newer than this build warns that some annotations may not render." },
             SchemaField { name: "name", ty: "string", default: "\"\"", doc: "Display name (shown in render progress and the end-of-script toast)." },
             SchemaField { name: "loop", ty: "bool", default: "false", doc: "Loop the tour during live playback (Tools -> Play tour)." },
             SchemaField { name: "render", ty: "[render]", default: "{}", doc: "How the tour is meant to be rendered — see below." },
@@ -1001,7 +1006,7 @@ pub(crate) fn tour_schema_markdown() -> String {
     s.push_str(
         "## Example\n\n\
          ```toml\n\
-         format_version = 2\n\
+         format_version = 3\n\
          name = \"Mini tour\"\n\n\
          [render]\n\
          size = \"1920x1080\"\n\
@@ -1728,7 +1733,7 @@ pub(crate) fn parse_tour_text(text: &str) -> Result<Playback, String> {
 fn check_format_version(text: &str) -> Result<(), String> {
     let doc: toml::Value = toml::from_str(text).map_err(|e| format!("parse script: {e}"))?;
     let ver = doc.get("format_version").and_then(|v| v.as_integer()).unwrap_or(0);
-    if ver < SCRIPT_FORMAT_VERSION as i64 {
+    if ver < SCRIPT_FORMAT_MIN as i64 {
         return Err(format!(
             "this script is format v{ver}, which this build no longer reads (current: v{}).\n\
              v2 changed the timeline to ABSOLUTE keyframe times and reorganized the file:\n  \
@@ -3159,7 +3164,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
         speed: 1.0,
         paused: false,
         finished: false,
-        render: resolve_render(&sf.render)?,
+        render: resolve_render(&sf.render, sf.format_version.unwrap_or(SCRIPT_FORMAT_MIN))?,
         paced_hold: 0.0,
         pace: Pace::parse(sf.playback.pace.as_deref())?,
         settle_timeout: sf.playback.settle_timeout.unwrap_or(20.0).max(0.0),
@@ -3175,8 +3180,8 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
 }
 
 /// Resolve the `[render]` table (size string, mp4 spec) into the form the renderer merges with
-/// the CLI flags.
-fn resolve_render(r: &RenderFile) -> Result<TourRender, String> {
+/// the CLI flags. `version`: the script's `format_version`.
+fn resolve_render(r: &RenderFile, version: u32) -> Result<TourRender, String> {
     let (width, height) = match &r.size {
         Some(s) => {
             let (w, h) = crate::parse_size(s);
@@ -3206,14 +3211,15 @@ fn resolve_render(r: &RenderFile) -> Result<TourRender, String> {
         auto_iter: r.auto_iter,
         show_location: r.show_location.unwrap_or(false),
         normalize: r.normalize.unwrap_or(false),
-        coloring: resolve_coloring(r.coloring.as_ref())?,
+        coloring: resolve_coloring(r.coloring.as_ref(), version)?,
     })
 }
 
 /// `[render.coloring]` checked against the field table (`coloring_fields`): a key it does not
 /// have, a value of the wrong shape, one it cannot read or one out of range is an error naming the
-/// key, so a misspelled coloring stops the tour instead of rendering in the viewer's.
-fn resolve_coloring(t: Option<&toml::Table>) -> Result<Vec<(String, String)>, String> {
+/// key, so a misspelled coloring stops the tour instead of rendering in the viewer's. A script of
+/// format 2 states `light_angle` in radians; its value is kept in degrees, as format 3 states it.
+fn resolve_coloring(t: Option<&toml::Table>, version: u32) -> Result<Vec<(String, String)>, String> {
     let Some(t) = t else { return Ok(Vec::new()) };
     let mut out = Vec::new();
     for (k, v) in t {
@@ -3224,7 +3230,11 @@ fn resolve_coloring(t: Option<&toml::Table>) -> Result<Vec<(String, String)>, St
             ));
         };
         let bad = || format!("[render.coloring] {k} = {v}: expected {}", f.tour_type());
-        let text = crate::coloring_fields::toml_text(v).ok_or_else(bad)?;
+        let mut text = crate::coloring_fields::toml_text(v).ok_or_else(bad)?;
+        if version < 3 && k == "light_angle" {
+            let rad = text.trim().parse::<f32>().map_err(|_| bad())?;
+            text = format!("{}", rad.to_degrees().rem_euclid(360.0));
+        }
         let mut scratch = fractadyne_state::ColoringSpec::default();
         let mut clamped = Vec::new();
         if crate::coloring_fields::read_key(&mut scratch, k, &text, &mut clamped) != Some(true) || !clamped.is_empty() {

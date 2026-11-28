@@ -55,17 +55,18 @@ fn a_press_and_a_drag_point_the_light_and_a_double_click_resets_it() {
     // A press at the bottom left: the light comes from there.
     frame(&ctx, 0.1, vec![egui::Event::PointerMoved(bottom_left)], &mut angle);
     frame(&ctx, 0.2, vec![button(bottom_left, true)], &mut angle);
-    assert!((angle - 1.25 * PI).abs() < 1.0e-4, "a press at the bottom left: {angle}");
+    // Degrees, as the panel shows them (user, 2026-11-28).
+    assert!((angle - 225.0).abs() < 1.0e-2, "a press at the bottom left: {angle}");
     // Dragged to the top, then past the dial's edge to its left: the light follows the pointer.
     frame(&ctx, 0.3, vec![egui::Event::PointerMoved(top)], &mut angle);
-    assert!((angle - FRAC_PI_2).abs() < 1.0e-4, "dragged to the top: {angle}");
+    assert!((angle - 90.0).abs() < 1.0e-2, "dragged to the top: {angle}");
     let outside = c - egui::vec2(60.0, 0.0);
     frame(&ctx, 0.4, vec![egui::Event::PointerMoved(outside)], &mut angle);
-    assert!((angle - PI).abs() < 1.0e-4, "dragged out past the left edge: {angle}");
+    assert!((angle - 180.0).abs() < 1.0e-2, "dragged out past the left edge: {angle}");
     frame(&ctx, 0.5, vec![button(outside, false)], &mut angle);
     // A pointer that only passes over it changes nothing.
     frame(&ctx, 2.0, vec![egui::Event::PointerMoved(top)], &mut angle);
-    assert!((angle - PI).abs() < 1.0e-4, "a hover moved it: {angle}");
+    assert!((angle - 180.0).abs() < 1.0e-2, "a hover moved it: {angle}");
 
     // A double-click: the reset, though each press points the light too.
     let right = c + egui::vec2(rect.width() * 0.4, 0.0);

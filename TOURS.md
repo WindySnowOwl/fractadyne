@@ -20,7 +20,7 @@ Script-wide settings.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `format_version` | int | (required) | Schema version the script targets. Must be 2 — v1 scripts (cumulative `secs`, `mag`, separate caption/callout/spotlight arrays) are rejected with a migration message rather than mis-played. A version newer than this build warns that some annotations may not render. |
+| `format_version` | int | (required) | Schema version the script targets: 3 (2 still plays, its `[render.coloring] light_angle` read in radians). v1 scripts (cumulative `secs`, `mag`, separate caption/callout/spotlight arrays) are rejected with a migration message rather than mis-played. A version newer than this build warns that some annotations may not render. |
 | `name` | string | "" | Display name (shown in render progress and the end-of-script toast). |
 | `loop` | bool | false | Loop the tour during live playback (Tools -> Play tour). |
 | `render` | [render] | {} | How the tour is meant to be rendered — see below. |
@@ -92,7 +92,7 @@ The tour's coloring, by the keys a saved view (`.fdn`) carries. Each key it name
 | `interior_trap_harmonics` | int, 1 to 32 | 5 | The inside's own trap's harmonics, as `trap_harmonics`. |
 | `interior_trap_sine_harmonics` | int, 1 to 32 | 1 | The inside's own sine wave's overlaid harmonics, as `trap_sine_harmonics`. |
 | `light` | bool | false | Relief lighting from the distance estimate. |
-| `light_angle` | float | 2.2 | The light's direction in radians (with `light`). |
+| `light_angle` | float | 126 | Where the light comes from, in degrees counterclockwise from the right (with `light`). Radians in a view file before format 6 and a tour before format 3, read as such. |
 | `light_height` | float, 0.2 to 4 | 1.2 | Relief strength: smaller is sharper (with `light`). |
 | `light_steep` | bool | false | The relief's slope from the distance: steeper near the set and flat far from it, 45 degrees `light_steep_px` pixels from the set, instead of 45 degrees everywhere (with `light`). |
 | `light_steep_px` | float, 1 to 256 | 8 | How many output pixels from the set the relief's surface is at 45 degrees, 1 to 256 (with `light_steep`). |
@@ -245,7 +245,7 @@ For deep dives, give the descent generous time, use `ease = "in"` / `"out"` at t
 ## Example
 
 ```toml
-format_version = 2
+format_version = 3
 name = "Mini tour"
 
 [render]
