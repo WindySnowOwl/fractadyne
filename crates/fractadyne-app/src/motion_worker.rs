@@ -302,6 +302,8 @@ impl FractadyneApp {
                 let de = params.delta_exp;
                 let dx = fractadyne_core::ref_offset_mantissa(&a.center_bf[0], &center_bf[0], de, a.precision);
                 let dy = fractadyne_core::ref_offset_mantissa(&a.center_bf[1], &center_bf[1], de, a.precision);
+                // The spans are along the screen's axes: so must the offset be, on a turned view.
+                let (dx, dy) = fractadyne_core::plane_in_screen_axes(params.rotation, (dx, dy));
                 let k = ((a.delta_exp - de) as f64).exp2();
                 if !view_inside(dx, dy, a.span.x * k, a.span.y * k, params.span_mantissa.x, params.span_mantissa.y) {
                     self.perf.live_stats[v].outside += 1;

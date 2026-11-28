@@ -1007,6 +1007,11 @@ pub struct KfrView {
     /// import at all.
     pub zoom_log2: f64,
     pub iterations: Option<u32>,
+    /// The view's rotation, degrees (`.kfr` `RotateAngle`), wrapped into (−180, 180]; 0 without
+    /// one. ⚠Taken in Fractadyne's sense, positive turning the picture counterclockwise: Kalles
+    /// Fraktaler's own sense is not yet checked (design/view-rotation.md), and
+    /// `kfr_rotate_angle_is_taken_counterclockwise` names the assumption.
+    pub rotate_deg: f64,
 }
 
 /// `log2` of a positive number written as text (`800`, `1.6E1012`, `2e-30000`), from its full
@@ -1056,6 +1061,7 @@ pub fn parse_kfr(text: &str) -> Option<KfrView> {
         return None; // refuse absurdly large inputs
     }
     let (mut re, mut im, mut zoom, mut iters) = (None, None, None, None);
+    let mut rotate_deg = 0.0;
     for line in text.lines().take(20_000) {
         let Some((key, val)) = line.split_once(':') else {
             continue;
@@ -1073,6 +1079,9 @@ pub fn parse_kfr(text: &str) -> Option<KfrView> {
             zoom = parse_kfr_zoom(val).map(|z| (z, log2_of_positive_text(val).unwrap_or(z.log2())));
         } else if key.eq_ignore_ascii_case("Iterations") {
             iters = val.parse::<u64>().ok().map(|v| v.min(u64::from(LOCATION_MAX_ITERATIONS)) as u32);
+        } else if key.eq_ignore_ascii_case("RotateAngle") {
+            // Degrees; a value that does not read leaves the view unturned.
+            rotate_deg = val.parse::<f64>().ok().map_or(0.0, crate::wrap_rotation);
         }
         // every other key is ignored by design
     }
@@ -1083,6 +1092,7 @@ pub fn parse_kfr(text: &str) -> Option<KfrView> {
         zoom,
         zoom_log2,
         iterations: iters,
+        rotate_deg,
     })
 }
 
@@ -1149,7 +1159,7 @@ pub fn parse_imagina_text(text: &str) -> Option<KfrView> {
     // Magnification 2/Size, at least 1 (as before): log2 = 1 - log2(Size).
     let zoom_log2 = (1.0 - size?).max(0.0);
     let zoom = zoom_log2.exp2().min(1.0e300);
-    Some(KfrView { cx: parse_bf(re?)?, cy: parse_bf(im?)?, zoom, zoom_log2, iterations: iters })
+    Some(KfrView { cx: parse_bf(re?)?, cy: parse_bf(im?)?, zoom, zoom_log2, iterations: iters, rotate_deg: 0.0 })
 }
 
 /// The Imagina BINARY signature, so callers can refuse a `.im` file with a useful message instead

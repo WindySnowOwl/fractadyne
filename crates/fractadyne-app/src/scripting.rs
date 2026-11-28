@@ -713,6 +713,12 @@ struct KeyframeFile {
     /// The inside's own trap's phase, as `trap_phase`.
     #[serde(default)]
     interior_trap_phase: Option<f64>,
+    // --- the view's rotation (design/view-rotation.md) ---
+    /// The view's rotation here, degrees, positive turning the picture counterclockwise:
+    /// INTERPOLATED along a glide and never wrapped, so 0 here and 360 at the next keyframe turn the
+    /// picture once around. Inherited forward from 0 (unturned).
+    #[serde(default)]
+    rotate: Option<f64>,
 }
 
 /// The wave traps' phases a keyframe states, inherited forward, in degrees and unwrapped (`None`:
@@ -748,6 +754,9 @@ impl TrapPhases {
 
 /// The largest phase a keyframe may state, in degrees either way: a thousand turns.
 const TRAP_PHASE_MAX: f64 = 360_000.0;
+
+/// The largest rotation a keyframe may state, in degrees either way: a thousand turns.
+const ROTATE_MAX: f64 = 360_000.0;
 
 /// A keyframe's L-system state, inherited forward: the system (`None`: the one shown), its order
 /// (`None`: it follows the zoom), its angle (`None`: the system's), how much of it is drawn.
@@ -897,6 +906,7 @@ const TOUR_SCHEMA: &[SchemaTable] = &[
             SchemaField { name: "draw", ty: "float", default: "(inherit, else 1)", doc: "How much of an L-system is drawn, 0 to 1, in the order the turtle draws it; interpolated, so the curve draws itself on." },
             SchemaField { name: "trap_phase", ty: "float, degrees", default: "(inherit, else the coloring's)", doc: "The wave trap's phase here (the sine wave's or the square wave's; `[render.coloring]` `trap_phase`), in degrees and never wrapped: interpolated along the glide, so 0 here and 360 at the next keyframe turn the wave once through, 720 twice. Two keyframes at the same place with `ease = \"linear\"` turn it evenly while the camera stays still (a hold keeps its keyframe's phase). Up to a thousand turns either way." },
             SchemaField { name: "interior_trap_phase", ty: "float, degrees", default: "(inherit, else the coloring's)", doc: "The inside's own trap's phase, as `trap_phase`." },
+            SchemaField { name: "rotate", ty: "float, degrees", default: "(inherit, else 0)", doc: "The view's rotation here, in degrees, positive turning the picture counterclockwise, and never wrapped: interpolated along the glide, so 0 here and 360 at the next keyframe turn the picture once around. A tour that never states it plays unturned. Up to a thousand turns either way." },
         ],
     },
     SchemaTable {
@@ -1678,6 +1688,8 @@ struct Kf {
     ls: LsTour,
     /// The wave traps' phases (interpolated along a glide).
     phases: TrapPhases,
+    /// The view's rotation, degrees, unwrapped (interpolated along a glide; 0 until stated).
+    rotate: f64,
 }
 
 /// The fully-resolved tour state at a moment in time: interpolated camera + the active keyframe's
@@ -1865,6 +1877,17 @@ pub(crate) struct Sampled {
     pub(crate) ls: LsTour,
     /// The wave traps' phases this frame, where the script states them.
     pub(crate) phases: TrapPhases,
+    /// The view's rotation this frame, degrees, unwrapped (0: unturned); a viewport takes it
+    /// wrapped ([`Sampled::turn`]).
+    pub(crate) rotate: f64,
+}
+
+impl Sampled {
+    /// Turn `vp` as this frame is turned (design/view-rotation.md): the angle wrapped, in f64, so
+    /// a glide of many turns keeps its fraction. A tour that never states `rotate` leaves it 0.
+    pub(crate) fn turn(&self, vp: &mut fractadyne_core::Viewport) {
+        vp.rotation = fractadyne_core::wrap_rotation(self.rotate);
+    }
 }
 
 /// Aggregates sampled while a benchmark tour plays.
@@ -2065,7 +2088,7 @@ impl Playback {
             }
         }
         let a = &self.kfs[i];
-        let mk = |cx, cy, lm, julia_c, orbit, max_iter, palette, dual_split, ls, phases| Sampled {
+        let mk = |cx, cy, lm, julia_c, orbit, max_iter, palette, dual_split, ls, phases, rotate| Sampled {
             cx,
             cy,
             logmag: lm,
@@ -2082,6 +2105,7 @@ impl Playback {
             palette,
             ls,
             phases,
+            rotate,
         };
         // Holding at `a` (or past the final keyframe): return its state unchanged.
         if e <= a.at + a.hold || i + 1 >= n {
@@ -2090,7 +2114,7 @@ impl Playback {
                 TourPalette::Stops(s) => PaletteApply::Stops(s.clone()),
             });
             return mk(a.cx.clone(), a.cy.clone(), a.logmag, a.julia_c, a.orbit, a.max_iter, pal,
-                      a.dual_split, a.ls.clone(), a.phases);
+                      a.dual_split, a.ls.clone(), a.phases, a.rotate);
         }
         // Gliding a → b over its move window, with b's easing.
         let b = &self.kfs[i + 1];
@@ -2183,7 +2207,9 @@ impl Playback {
         // The wave traps' phases turn with the glide (user 2026-11-25), unwrapped, so a keyframe at
         // 360 after one at 0 is one full turn.
         let phases = a.phases.lerp(b.phases, ease);
-        mk(cx, cy, lm, julia_c, orbit, max_iter, palette, dual_split, ls, phases)
+        // The view turns with the glide too, unwrapped: 0 then 360 is one full turn.
+        let rotate = a.rotate + (b.rotate - a.rotate) * ease;
+        mk(cx, cy, lm, julia_c, orbit, max_iter, palette, dual_split, ls, phases, rotate)
     }
 
     /// Is the camera stationary at time `e` — inside a keyframe's hold, or past the final one?
@@ -2787,6 +2813,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
     let (mut max_iter, mut palette): (Option<u32>, Option<usize>) = (None, None);
     let mut ls = LsTour::default();
     let mut phases = TrapPhases::default();
+    let mut rotate = 0.0f64;
     for (i, k) in sf.keyframe.iter().enumerate() {
         let id = k.id.clone().unwrap_or_else(|| format!("#{}", i + 1));
         let at = match k.t {
@@ -2965,6 +2992,12 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
                 *slot = Some(d);
             }
         }
+        if let Some(d) = k.rotate {
+            if !(d.is_finite() && d.abs() <= ROTATE_MAX) {
+                return Err(format!("keyframe {id}: rotate = {d} — degrees, unwrapped, up to a thousand turns (±{ROTATE_MAX})"));
+            }
+            rotate = d;
+        }
         if let Some(j) = k.julia {
             julia = j;
         }
@@ -3035,6 +3068,7 @@ fn resolve_script(sf: ScriptFile, bench: Option<Bench>) -> Result<Playback, Stri
             palette,
             ls: ls.clone(),
             phases,
+            rotate,
         });
     }
     let total = kfs.last().map(|k| k.at + k.hold).unwrap_or(0.0);
@@ -3697,6 +3731,7 @@ impl FractadyneApp {
         // The span comes from the viewport, not the 480×270 measuring size, so the region measured
         // is the frame's own whatever the output size.
         self.viewport = fractadyne_core::Viewport::new(self.viewport.width_px, self.viewport.height_px);
+        s.turn(&mut self.viewport);
         self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
         self.render_export_normalized(
             device,
@@ -3738,6 +3773,7 @@ impl FractadyneApp {
         }
         let budget = Self::sampled_iter_budget(&s, base_iter, base_auto);
         let mut vp = fractadyne_core::Viewport::new(width as f64, height as f64);
+        s.turn(&mut vp);
         vp.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
         let inputs = self.export_reference_inputs_for(&vp, self.julia_mode, budget);
         // Watched: in a farm's run, the same orbit shared by another machine (or the controller's
@@ -4260,6 +4296,7 @@ impl FractadyneApp {
             if deep_state.is_none() {
                 let shows = deep_target.as_ref().is_some_and(|(key, dcx, dcy)| {
                     let mut vp = fractadyne_core::Viewport::new(width as f64, height as f64);
+                    s.turn(&mut vp);
                     vp.set_center_log2mag(s.cx.clone(), s.cy.clone(), s.logmag / std::f64::consts::LN_2);
                     let (x, y) = vp.complex_to_pixel(dcx, dcy);
                     DeepReference::key(&s) == *key && x >= 0.0 && y >= 0.0 && x < width as f64 && y < height as f64
@@ -4284,6 +4321,7 @@ impl FractadyneApp {
                 cands.extend(deep.filter(|d| d.serves(&s)).map(|d| &d.reuse));
                 if chained || !cands.is_empty() {
                     let mut vp = fractadyne_core::Viewport::new(width as f64, height as f64);
+                    s.turn(&mut vp);
                     vp.set_center_log2mag(s.cx.clone(), s.cy.clone(), s.logmag / std::f64::consts::LN_2);
                     if let Some(inp) = self.export_reference_inputs_for(&vp, self.julia_mode, frame_budget) {
                         let inp = match crate::render::pick_reuse(&inp, &cands) {
@@ -4327,6 +4365,7 @@ impl FractadyneApp {
                     let mut cands2 = chain.candidates(&s2);
                     cands2.extend(deep.filter(|d| d.serves(&s2)).map(|d| &d.reuse));
                     let mut vp2 = fractadyne_core::Viewport::new(width as f64, height as f64);
+                    s2.turn(&mut vp2);
                     vp2.set_center_log2mag(s2.cx, s2.cy, s2.logmag / std::f64::consts::LN_2);
                     // Only prefetch the NEXT reference if it will fit alongside the one still
                     // resident for THIS frame — otherwise two big bignum references at once OOM the
@@ -4391,6 +4430,7 @@ impl FractadyneApp {
                 // loses or gains a column against the requested frame size.
                 let (lw, rw_panel) = crate::dual_panel_widths(width, s.dual_split.unwrap_or(0.5));
                 self.viewport = fractadyne_core::Viewport::new(lw as f64, height as f64);
+                s.turn(&mut self.viewport);
                 self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
                 let mut jvp = fractadyne_core::Viewport::new(rw_panel as f64, height as f64);
                 jvp.center_x = fractadyne_core::BigFloat::from_f64(0.0, 64);
@@ -4403,6 +4443,7 @@ impl FractadyneApp {
                 (p, w, h)
             } else {
                 self.viewport = fractadyne_core::Viewport::new(width as f64, height as f64);
+                s.turn(&mut self.viewport);
                 self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
                 let vg = vignette_for(&pb.spotlights, &self.viewport, t);
                 let ss = self.export.ss;
@@ -4811,6 +4852,7 @@ impl FractadyneApp {
         // Per-keyframe iteration budget + palette (restored when the tour ends).
         self.apply_sampled_settings(&s);
         // log2 path so playback stays exact past f64's 1e308× ceiling.
+        s.turn(&mut self.viewport);
         self.viewport.set_center_log2mag(s.cx, s.cy, s.logmag / std::f64::consts::LN_2);
         // Only a MOVING camera counts as interaction. Stamping every playback tick kept the view
         // permanently "interacting", which is right for a glide (cheap moving path, reprojection)
@@ -5573,6 +5615,10 @@ mod lsystem_tests;
 #[cfg(test)]
 #[path = "../tests/unit/scripting/trap_phase_tests.rs"]
 mod trap_phase_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/scripting/rotate_tests.rs"]
+mod rotate_tests;
 
 #[cfg(test)]
 #[path = "../tests/unit/scripting/schema_tests.rs"]

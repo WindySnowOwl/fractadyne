@@ -432,6 +432,10 @@ pub struct SessionState {
     pub units_per_pixel: f64,
     #[serde(default)]
     pub units_per_pixel_e: i32,
+    /// The view's rotation, degrees, positive turning the picture counterclockwise
+    /// (design/view-rotation.md). Missing: 0, unturned (a session from before rotation existed).
+    #[serde(default)]
+    pub rotation: f64,
     pub max_iter: u32,
     pub auto_iter: bool,
     /// How the picture is colored ([`ColoringSpec`]), flattened: its fields are this file's
@@ -695,6 +699,9 @@ pub struct SessionState {
     pub julia_view_center_im: String,
     #[serde(default)]
     pub julia_view_upp_log2: Option<f64>,
+    /// The Julia pane's own rotation, degrees, as [`Self::rotation`]. Missing: 0.
+    #[serde(default)]
+    pub julia_view_rotation: f64,
     /// Series approximation (iteration-skipping) preference. Default on.
     #[serde(default = "default_true")]
     pub series_approx: bool,
@@ -1135,6 +1142,7 @@ impl Default for SessionState {
             center_expr: String::new(),
             units_per_pixel: 3.0 / 720.0,
             units_per_pixel_e: 0,
+            rotation: 0.0,
             max_iter: 256,
             auto_iter: true,
             coloring: ColoringSpec::default(),
@@ -1202,6 +1210,7 @@ impl Default for SessionState {
             julia_view_center_re: String::new(),
             julia_view_center_im: String::new(),
             julia_view_upp_log2: None,
+            julia_view_rotation: 0.0,
             series_approx: true,
             glitch_correct: true,
             use_bla: true,

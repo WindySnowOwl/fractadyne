@@ -1337,8 +1337,10 @@ fn chunk_fe_entry() -> String {
     let gy = iu.px_offset.y + pos.y;
     let coord_re = gx - iu.res.x * 0.5;
     let coord_im = iu.res.y * 0.5 - gy;
-    let off_re = df_mul_f32(step_re, coord_re);
-    let off_im = df_mul_f32(step_im, coord_im);
+    // Turned into the plane on a turned view, as the fixed module's prologue (`view_offset`).
+    let off_v = view_offset(df_mul_f32(step_re, coord_re), df_mul_f32(step_im, coord_im));
+    let off_re = off_v.xy;
+    let off_im = off_v.zw;
     let bail2 = 256.0 * 256.0;
     let stop = min(iu.end_iter, iu.max_iter);
     var sz = vec4<f32>(0.0);

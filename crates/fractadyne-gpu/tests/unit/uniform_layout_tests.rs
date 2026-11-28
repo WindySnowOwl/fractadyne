@@ -298,6 +298,8 @@ fn iter_uniform_matches_the_shader() {
     }
     // The count base's row (coloring plan D2): the base first.
     assert_eq!(wgsl_field_offset(&fields, "count_base"), std::mem::offset_of!(super::IterUniforms, count_row), "IterU.count_base");
+    // The view's rotation row (design/view-rotation.md).
+    assert_eq!(wgsl_field_offset(&fields, "view_rot"), std::mem::offset_of!(super::IterUniforms, view_rot), "IterU.view_rot");
 }
 
 /// The renderer module survives the pipeline-constant step wgpu runs when it builds a pipeline with

@@ -444,6 +444,10 @@ impl crate::FractadyneApp {
         fractadyne_core::to_decimal_string(&self.viewport.center_x).hash(&mut h);
         fractadyne_core::to_decimal_string(&self.viewport.center_y).hash(&mut h);
         self.viewport.units_per_pixel.log2().to_bits().hash(&mut h);
+        let rot = fractadyne_core::rotation_bits(self.viewport.rotation);
+        if rot != 0 {
+            rot.hash(&mut h);
+        }
         self.fractal.name().hash(&mut h);
         self.custom_formula_metadata().hash(&mut h);
         julia.hash(&mut h);

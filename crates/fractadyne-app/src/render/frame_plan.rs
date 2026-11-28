@@ -340,6 +340,18 @@ pub(crate) fn hold_transform(gap_oct: f64, jumped: bool, stepping: bool, off: (f
     ([(-off.0 as f32) * shift, (off.1 as f32) * shift, home_step_hold_scale(scale, stepping)], code)
 }
 
+/// A held frame's center offset `off` in the view's spans along the PLANE's axes (x along Re, y
+/// along Im), as spans along the SCREEN's axes (x right, y up) on a view turned `deg`, `h_over_w`
+/// its aspect (design/view-rotation.md): what [`hold_transform`] takes. Unturned, `off` itself.
+pub(crate) fn plane_spans_on_screen(off: (f64, f64), deg: f64, h_over_w: f64) -> (f64, f64) {
+    if deg == 0.0 {
+        return off;
+    }
+    // In widths, where the axes share a unit, turned, and back to spans.
+    let (sx, sy) = fractadyne_core::plane_in_screen_axes(deg, (off.0, off.1 * h_over_w));
+    (sx, sy / h_over_w)
+}
+
 /// A held frame's scale while a stepped Home is under way (`HomeSteps`, `stepping`): never smaller
 /// than full size. Each stop is up to thousands of octaves out from the frame on screen, and at its
 /// true scale (up to the 2^40 the hold allows) that frame shrinks to a speck and the rest of the

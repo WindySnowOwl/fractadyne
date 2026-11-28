@@ -137,3 +137,40 @@ Each stage is its own branch and merge; each leaves the unrotated view bit for b
 6. Sign conventions meeting: the video's clockwise turns, the screen's y down, `RotateAngle`.
 7. Fresh viewports built without the angle: tours and previews silently unturned.
 8. The shared prologue's speed (measured, not assumed).
+
+## 6. Decided while building R1 + R2 (2026-11-28)
+
+R1 and R2 went in as one stage: the shader was cheap to turn once the view model had the angle,
+and the quarter-turn oracle tests both together.
+
+- **The reference's region stays the plane-axis box** of the view's spans about its center: the
+  pick's candidate grid, `nucleus_in_view`, the drift and the reuse tests all keep it. The series
+  and BLA bounds are radii (`|r| + half diagonal`, `2.5·diagonal`), so they hold on a turned view.
+  Turning only the drift tests would make a plane-grid pick read as off screen on a turned
+  non-square view, which is the per-frame recompute loop the drift site warns about. A turned
+  view also keeps the unturned view's reference, so a turn alone does not rebuild it.
+- **The screen's own questions are asked in screen axes**: the held frame's offset
+  (`frame_plan::plane_spans_on_screen`, inside `hold_transform_for`), the pin frame's
+  inside-check (`view_inside`), the status bar's precision reach (the turned box's bounding box),
+  the zoom snap's axis anchor (the cursor's foot on a slanted axis), the minimap's turned quad,
+  the Julia pin and the orbit overlay (`Viewport::pixel_of_f64`).
+- **Identity keys fold `rotation_bits`** (0 for an unturned view, so every key of an unturned view
+  is the number it was): `pos_sig`, `settings_hash` (with it `view_key`, the onset key and the
+  walk's `view_bits`), the GPU `IterKey`, the normalization signature, the fold tripwire, the
+  orbit overlay's key, the click snap's key and the method sheet's key.
+- **`settle_t`** is stamped by gestures only; a turn gets its stamp with the control (R4).
+- **Home** keeps the angle while it glides and unturns at its end (`reset_view`); turning back
+  along the glide is R4. A family switch, toggling the dual view (its pane), a random location
+  and every file without the key unturn.
+- **The glitch seed** goes through `pixel_to_complex`: exact at quarter turns, and elsewhere the
+  GPU's f32 `(cos, sin)` leave it a δc under 1e-7 px, far too small to glitch.
+- **Tours**: `rotate` is inherited forward from 0, so a tour that never states it plays unturned;
+  the dual view's Julia pane in a tour is unturned. Kept, not restored, when a tour ends (it is
+  part of where the tour left the view).
+- **The CPU oracle runs on the overview**: at the seahorse at 2e3x a fifth of the pixels miss the
+  CPU unturned too (84 of 400; the direct path's f32 orbit near the boundary), which would hide a
+  turn's error. The quarter-turn oracle covers `iterate_at`, `fs_iterate_chunk` (500,000
+  iterations, every tile chunked), `chunk_fe_at` and the custom module's copy, each row with its
+  tile and chunk counts as the control that the path ran.
+- **Until R3** a held frame and the view share an angle: a jump to a file at another angle shows
+  the old frame unturned against the new one until the new picture lands.

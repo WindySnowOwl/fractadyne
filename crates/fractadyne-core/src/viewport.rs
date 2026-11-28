@@ -43,6 +43,55 @@ pub fn ref_offset_mantissa(center: &BigFloat, reference: &BigFloat, delta_exp: i
     to_f64(&d)
 }
 
+/// `(cos θ, sin θ)` of a view's rotation in degrees (design/view-rotation.md §1), exact at whole
+/// quarter turns (0, ±1), so a view turned 90° maps every pixel to the same numbers as the unturned
+/// view's, permuted: what the shader's oracle relies on.
+pub fn rotation_cos_sin(deg: f64) -> (f64, f64) {
+    let q = deg / 90.0;
+    if q.is_finite() && q == q.round() {
+        return match (q.round() as i64).rem_euclid(4) {
+            0 => (1.0, 0.0),
+            1 => (0.0, 1.0),
+            2 => (-1.0, 0.0),
+            _ => (0.0, -1.0),
+        };
+    }
+    let r = deg.to_radians();
+    (r.cos(), r.sin())
+}
+
+/// A plane offset `u` (+y up) in the axes of a screen turned `deg` (+y up): `R(θ)·u`, the inverse
+/// of the view's `R(−θ)` (design/view-rotation.md §1). Unturned, `u` itself, to the bit.
+pub fn plane_in_screen_axes(deg: f64, u: (f64, f64)) -> (f64, f64) {
+    if deg == 0.0 {
+        return u;
+    }
+    let (c, s) = rotation_cos_sin(deg);
+    (c * u.0 - s * u.1, s * u.0 + c * u.1)
+}
+
+/// A rotation as a view keeps one a person set, in (−180°, 180°]; 0 for a value that is not a
+/// number.
+pub fn wrap_rotation(deg: f64) -> f64 {
+    if !deg.is_finite() {
+        return 0.0;
+    }
+    let w = deg.rem_euclid(360.0);
+    // `+ 0.0`: a −0 comes back +0, one unturned value.
+    (if w > 180.0 { w - 360.0 } else { w }) + 0.0
+}
+
+/// What an identity key folds in for a view's rotation: 0 for an unturned view (either zero), so
+/// every key of an unturned view is the number it was before rotation existed, else the angle's
+/// bits.
+pub fn rotation_bits(deg: f64) -> u64 {
+    if deg == 0.0 {
+        0
+    } else {
+        deg.to_bits()
+    }
+}
+
 /// A rectangular view into the complex plane.
 #[derive(Clone, Debug)]
 pub struct Viewport {
@@ -55,6 +104,10 @@ pub struct Viewport {
     pub height_px: f64,
     /// Mantissa bits for the center (grows with zoom).
     pub precision: usize,
+    /// The view's rotation, degrees: positive turns the picture counterclockwise on the screen
+    /// (design/view-rotation.md §1). A screen offset maps to the plane through
+    /// [`Self::screen_to_plane`]; 0 is the axis-aligned view, mapped exactly as before.
+    pub rotation: f64,
 }
 
 impl Viewport {
@@ -74,6 +127,7 @@ impl Viewport {
             width_px: width_px.max(1.0),
             height_px,
             precision,
+            rotation: 0.0,
         }
     }
 
@@ -82,9 +136,10 @@ impl Viewport {
         self.height_px = height_px.max(1.0);
     }
 
-    /// Restore the default view (center and zoom), keeping the current size.
+    /// Restore the default view (center, zoom and an unturned picture), keeping the current size.
     pub fn reset(&mut self) {
         self.precision = 64;
+        self.rotation = 0.0;
         self.center_x = bf(-0.5, self.precision);
         self.center_y = bf(0.0, self.precision);
         self.units_per_pixel = FloatExp::from_f64(Self::REFERENCE_HEIGHT / self.height_px);
@@ -118,12 +173,31 @@ impl Viewport {
         self.units_per_pixel.mul_f64(dpx).to_bf(self.precision)
     }
 
+    /// A screen offset `(dx, dy)` in pixels (+y DOWN, as on the screen) as an offset in the plane,
+    /// still in pixels (+y UP, the imaginary axis): `R(-θ)·(dx, -dy)` (design/view-rotation.md §1).
+    /// Unturned, `(dx, -dy)`: every mapping below gives the numbers it gave before rotation
+    /// existed, to the bit.
+    pub fn screen_to_plane(&self, dx: f64, dy: f64) -> (f64, f64) {
+        if self.rotation == 0.0 {
+            return (dx, -dy);
+        }
+        let (c, s) = rotation_cos_sin(self.rotation);
+        let (x, y) = (dx, -dy);
+        (c * x + s * y, c * y - s * x)
+    }
+
+    /// The inverse of [`Self::screen_to_plane`]: a plane offset in pixels (+y up) as a screen
+    /// offset in pixels (+y down).
+    pub fn plane_to_screen(&self, ux: f64, uy: f64) -> (f64, f64) {
+        let (x, y) = plane_in_screen_axes(self.rotation, (ux, uy));
+        (x, -y)
+    }
+
     /// Complex coordinate under a pixel (origin top-left, +y down on screen).
     pub fn pixel_to_complex(&self, px: f64, py: f64) -> (BigFloat, BigFloat) {
         let p = self.precision;
-        let ox = self.pixel_offset(px - self.width_px * 0.5);
-        let oy = self.pixel_offset(py - self.height_px * 0.5);
-        (self.center_x.add(&ox, p, RM), self.center_y.sub(&oy, p, RM))
+        let (ux, uy) = self.screen_to_plane(px - self.width_px * 0.5, py - self.height_px * 0.5);
+        (self.center_x.add(&self.pixel_offset(ux), p, RM), self.center_y.add(&self.pixel_offset(uy), p, RM))
     }
 
     /// Screen pixel a complex coordinate maps to (inverse of `pixel_to_complex`; origin top-left,
@@ -133,17 +207,19 @@ impl Viewport {
     pub fn complex_to_pixel(&self, cx: &BigFloat, cy: &BigFloat) -> (f64, f64) {
         let (m, e) = (self.units_per_pixel.m, self.units_per_pixel.e);
         // ref_offset_mantissa(a, b, e) = (a − b)·2^−e; dividing by the mantissa `m` gives (a−b)/upp.
-        let dx = ref_offset_mantissa(cx, &self.center_x, e, self.precision) / m;
-        let dy = ref_offset_mantissa(cy, &self.center_y, e, self.precision) / m;
-        (self.width_px * 0.5 + dx, self.height_px * 0.5 - dy)
+        let ux = ref_offset_mantissa(cx, &self.center_x, e, self.precision) / m;
+        let uy = ref_offset_mantissa(cy, &self.center_y, e, self.precision) / m;
+        let (sx, sy) = self.plane_to_screen(ux, uy);
+        (self.width_px * 0.5 + sx, self.height_px * 0.5 + sy)
     }
 
+    /// Move the picture by `(dx, dy)` screen pixels (+y down): the plane point that was under a
+    /// pixel is then under that pixel plus the move, whatever the rotation.
     pub fn pan_pixels(&mut self, dx: f64, dy: f64) {
         let p = self.precision;
-        let ox = self.pixel_offset(dx);
-        let oy = self.pixel_offset(dy);
-        self.center_x = self.center_x.sub(&ox, p, RM);
-        self.center_y = self.center_y.add(&oy, p, RM);
+        let (ux, uy) = self.screen_to_plane(dx, dy);
+        self.center_x = self.center_x.sub(&self.pixel_offset(ux), p, RM);
+        self.center_y = self.center_y.sub(&self.pixel_offset(uy), p, RM);
     }
 
     /// Pan by a delta in COMPLEX units rather than view pixels, for the overview map,
@@ -174,18 +250,13 @@ impl Viewport {
     pub fn zoom_at(&mut self, px: f64, py: f64, factor: f64) {
         let keep = self.center_x.precision().unwrap_or(0).max(self.center_y.precision().unwrap_or(0));
         let p_in = self.precision.max(keep);
-        let (cx, cy) = {
-            let ox = self.pixel_offset(px - self.width_px * 0.5);
-            let oy = self.pixel_offset(py - self.height_px * 0.5);
-            (self.center_x.add(&ox, p_in, RM), self.center_y.sub(&oy, p_in, RM))
-        };
+        let (ux, uy) = self.screen_to_plane(px - self.width_px * 0.5, py - self.height_px * 0.5);
+        let (cx, cy) = (self.center_x.add(&self.pixel_offset(ux), p_in, RM), self.center_y.add(&self.pixel_offset(uy), p_in, RM));
         self.units_per_pixel = self.units_per_pixel.mul_f64(factor);
         self.refresh_precision();
         let p = self.precision.max(keep);
-        let ox = self.pixel_offset(px - self.width_px * 0.5);
-        let oy = self.pixel_offset(py - self.height_px * 0.5);
-        self.center_x = cx.sub(&ox, p, RM);
-        self.center_y = cy.add(&oy, p, RM);
+        self.center_x = cx.sub(&self.pixel_offset(ux), p, RM);
+        self.center_y = cy.sub(&self.pixel_offset(uy), p, RM);
     }
 
     /// Zoom about the view CENTER, which stays put. Delegates to [`zoom_at`](Self::zoom_at)
@@ -338,10 +409,18 @@ impl Viewport {
     pub fn complex_at_pixel_f64(&self, px: f64, py: f64) -> (f64, f64) {
         let (cx, cy) = self.center_f64();
         let upp = self.units_per_pixel.to_f64();
-        (
-            cx + (px - self.width_px * 0.5) * upp,
-            cy - (py - self.height_px * 0.5) * upp,
-        )
+        let (ux, uy) = self.screen_to_plane(px - self.width_px * 0.5, py - self.height_px * 0.5);
+        (cx + ux * upp, cy + uy * upp)
+    }
+
+    /// The pixel (origin top-left, +y down) a plane point given in `f64` maps to: the inverse of
+    /// [`Self::complex_at_pixel_f64`], for overlays drawn at shallow depth (the orbit, the Julia
+    /// pin, the minimap's marker).
+    pub fn pixel_of_f64(&self, c: (f64, f64)) -> (f64, f64) {
+        let (cx, cy) = self.center_f64();
+        let upp = self.units_per_pixel.to_f64();
+        let (sx, sy) = self.plane_to_screen((c.0 - cx) / upp, (c.1 - cy) / upp);
+        (self.width_px * 0.5 + sx, self.height_px * 0.5 + sy)
     }
 }
 
@@ -360,6 +439,10 @@ mod precision_guard_tests;
 #[cfg(test)]
 #[path = "../tests/unit/viewport/usable_tests.rs"]
 mod usable_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/viewport/rotation_tests.rs"]
+mod rotation_tests;
 
 /// The iteration count auto-iterations ask at `log2mag` from a `base`: the base plus about 220 an
 /// octave of depth bonus, the BONUS (not the total) capped at 2,000,000 — see

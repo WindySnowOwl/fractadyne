@@ -2,16 +2,17 @@ use super::*;
 
 /// The signature is what makes "the same view" mean the same thing to the frame that SUBMITS a
 /// reading and the frame that drains it, so it must key on everything that changes the escape
-/// range: where you are, how deep, and how many iterations were asked for.
+/// range: where you are, how deep, how many iterations were asked for, and how the view is turned.
 #[test]
 fn the_signature_keys_on_view_and_ask() {
-    let base = norm_signature(-0.75, 0.1, 20.0, 4096);
-    assert_eq!(base, norm_signature(-0.75, 0.1, 20.0, 4096), "must be a pure function");
+    let base = norm_signature(-0.75, 0.1, 20.0, 4096, 0);
+    assert_eq!(base, norm_signature(-0.75, 0.1, 20.0, 4096, 0), "must be a pure function");
     for (what, other) in [
-        ("center x", norm_signature(-0.7500001, 0.1, 20.0, 4096)),
-        ("center y", norm_signature(-0.75, 0.1000001, 20.0, 4096)),
-        ("depth", norm_signature(-0.75, 0.1, 20.5, 4096)),
-        ("iteration ask", norm_signature(-0.75, 0.1, 20.0, 8192)),
+        ("center x", norm_signature(-0.7500001, 0.1, 20.0, 4096, 0)),
+        ("center y", norm_signature(-0.75, 0.1000001, 20.0, 4096, 0)),
+        ("depth", norm_signature(-0.75, 0.1, 20.5, 4096, 0)),
+        ("iteration ask", norm_signature(-0.75, 0.1, 20.0, 8192, 0)),
+        ("rotation", norm_signature(-0.75, 0.1, 20.0, 4096, 30f64.to_bits())),
     ] {
         assert_ne!(base, other, "{what} did not change the signature");
     }
@@ -22,8 +23,8 @@ fn the_signature_keys_on_view_and_ask() {
 #[test]
 fn the_signature_is_never_the_no_reading_sentinel() {
     // The XOR of four zero-bit inputs is 0, which is exactly the case that must be remapped.
-    assert_eq!(norm_signature(0.0, 0.0, 0.0, 0), 1);
-    assert_ne!(norm_signature(0.0, 0.0, 0.0, 0), 0);
+    assert_eq!(norm_signature(0.0, 0.0, 0.0, 0, 0), 1);
+    assert_ne!(norm_signature(0.0, 0.0, 0.0, 0, 0), 0);
 }
 
 /// ⭐⭐**The field case, 2026-09-04.** An e10000 Misiurewicz jump: a reading measured at the OLD
@@ -32,8 +33,8 @@ fn the_signature_is_never_the_no_reading_sentinel() {
 /// real escapes sit at `[181573, 182297]` — one flat color under the log mapping.
 #[test]
 fn a_reading_from_the_view_before_a_jump_is_not_current() {
-    let before = norm_signature(-0.75, 0.1, 20.0, 4096);
-    let after = norm_signature(-1.25, 0.05, 33_000.0, 1_000_000);
+    let before = norm_signature(-0.75, 0.1, 20.0, 4096, 0);
+    let after = norm_signature(-1.25, 0.05, 33_000.0, 1_000_000, 0);
     assert_ne!(before, after);
     // Settled at the new view, a reading carrying the OLD signature is not ours.
     assert!(!norm_reading_is_current(before, after, false), "the stale reading was accepted");
@@ -46,8 +47,8 @@ fn a_reading_from_the_view_before_a_jump_is_not_current() {
 /// Motion already uses an EMA because its readings are approximate by nature.
 #[test]
 fn interaction_accepts_every_reading() {
-    let a = norm_signature(-0.75, 0.1, 20.0, 4096);
-    let b = norm_signature(-1.25, 0.05, 33_000.0, 1_000_000);
+    let a = norm_signature(-0.75, 0.1, 20.0, 4096, 0);
+    let b = norm_signature(-1.25, 0.05, 33_000.0, 1_000_000, 0);
     assert!(norm_reading_is_current(a, b, true), "motion must not starve the normalization");
     assert!(norm_reading_is_current(0, b, true));
 }
@@ -58,7 +59,7 @@ fn interaction_accepts_every_reading() {
 /// it replaces.
 #[test]
 fn nothing_echoed_falls_back_to_accepting() {
-    let live = norm_signature(-0.75, 0.1, 20.0, 4096);
+    let live = norm_signature(-0.75, 0.1, 20.0, 4096, 0);
     assert!(norm_reading_is_current(0, live, false));
 }
 

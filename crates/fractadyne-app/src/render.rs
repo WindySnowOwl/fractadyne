@@ -4830,6 +4830,8 @@ impl FractadyneApp {
             work_budget: None, // default export tile budget; the tour path overrides per frame
             pass_ms: None,
             tile_px_max: None,
+            // The view's rotation (design/view-rotation.md).
+            rotation: vp.rotation,
             // Measured by the render when the counts can run that high (coloring plan D2).
             count_base: fractadyne_gpu::CountBase::Auto,
             jitter: [0.0, 0.0],
@@ -4920,6 +4922,7 @@ pub(crate) fn params_to_request(p: &fractadyne_gpu::MandelbrotParams) -> fractad
         work_budget: None,
         pass_ms: None,
         tile_px_max: None,
+        rotation: p.rotation,
         // The live view stores its counts as they are (coloring plan D2, stage 1), and so does a
         // render of its frame.
         count_base: fractadyne_gpu::CountBase::Fixed(0),
@@ -6250,7 +6253,8 @@ impl FractadyneApp {
             // the signature is the view + the iteration ask. Computed here, applied to BOTH
             // drains below, and the lock is taken when the RANGE adopts (the gradient may
             // arrive on its own; it must not lock a mapping whose range is still the old view's).
-            let nsig = norm_signature(center.0, center.1, log2mag, budget_now);
+            let rot = if vb == 1 { self.julia_viewport.rotation } else { self.viewport.rotation };
+            let nsig = norm_signature(center.0, center.1, log2mag, budget_now, fractadyne_core::rotation_bits(rot));
             // This frame's signature travels WITH the render it is about to submit and comes back
             // attached to that render's reading — see `MandelbrotParams::norm_sig`. Stashed here
             // because `bp_finish_params` (which builds the params) runs later in this same frame.
@@ -7989,6 +7993,8 @@ impl FractadyneApp {
                 Default::default()
             },
             view_id,
+            // The pane's own rotation (design/view-rotation.md): the dual view's Julia pane is view 1.
+            rotation: if view_id == 1 { self.julia_viewport.rotation } else { self.viewport.rotation },
             // Progressive on-settle supersampling command for this view (computed in
             // `drive_accumulation`). All-off on a moving/shallow/harness frame → a classic frame.
             jitter: self.perf.accum_cmd[vsub].jitter,
@@ -8239,12 +8245,16 @@ impl FractadyneApp {
 
     /// The held frame's display transform on view `v` (`frame_plan::hold_transform`):
     /// `[uv_off.x, uv_off.y, uv_scale]` for `gap_oct` octaves of zoom since it was rendered
-    /// (`frozen − now`) and the view's center `off` from the held frame's, in spans of the view now.
+    /// (`frozen − now`) and the view's center `off` from the held frame's, in spans of the view now
+    /// along the plane's axes (turned here into the screen's on a turned view).
     /// ⭐The ONE site the four hold transforms (the freeze, a worker frame, the two snapshots) take
     /// it from, so the bound they apply cannot differ — and the bound that applied goes into the
     /// frame record (`hold_floor`, U39: whether a jump clamp put the held frame on screen at a
     /// smaller magnification than the view's).
     fn hold_transform_for(&mut self, v: usize, gap_oct: f64, off: (f64, f64)) -> [f32; 3] {
+        // `off` is along the plane's axes: on a turned view, along the screen's.
+        let vp = if v == 1 { &self.julia_viewport } else { &self.viewport };
+        let off = crate::render::frame_plan::plane_spans_on_screen(off, vp.rotation, vp.height_px / vp.width_px);
         // U39: the jump floor only where a jump stands between the held frame and the view
         // (`frame_plan::hold_jump_next`), never inferred from a zoom velocity only Space writes.
         let jumped = self.perf.hold_jump[v.min(1)];
@@ -8311,6 +8321,8 @@ impl FractadyneApp {
         // The pin's verdict runs FIRST, on the live inputs: `Adopt` must land before `reuse_hold`
         // reads `frozen_l2`, and only `Continue` licenses the shadowing.
         let vsub = (view_id as usize).min(1);
+        // The pane's rotation, in the view's identity (`pos_sig`): 0 bits unturned.
+        let rot_bits = fractadyne_core::rotation_bits(if view_id == 1 { self.julia_viewport.rotation } else { self.viewport.rotation });
         // The panel-size PARAM, saved before `resolution` is rebound downstream: the pin captures
         // it, and any change abandons (a resize re-scales everything derived from it).
         let panel_res = resolution;
@@ -9404,6 +9416,10 @@ impl FractadyneApp {
                 self.julia_c.0.to_bits().hash(&mut h);
                 self.julia_c.1.to_bits().hash(&mut h);
             }
+            // The rotation, an `IterKey` field (design/view-rotation.md); unturned, nothing.
+            if rot_bits != 0 {
+                rot_bits.hash(&mut h);
+            }
             h.finish()
         };
         // `resolution` here is still the raw panel size: the motion res_scale doesn't apply to
@@ -9825,6 +9841,10 @@ impl FractadyneApp {
             delta_exp.hash(&mut h);
             span_mantissa.x.to_bits().hash(&mut h);
             span_mantissa.y.to_bits().hash(&mut h);
+            // A turned view is another position (design/view-rotation.md); unturned, the hash it was.
+            if rot_bits != 0 {
+                rot_bits.hash(&mut h);
+            }
             h.finish()
         };
         let ChunkPlan { chunk_range, chunk_idx, probe_fired, pass: chunk_pass } = self.bp_chunk_tiling(
@@ -12539,7 +12559,8 @@ pub(crate) enum NormFeed {
 /// refreshes — shares the signature and is held. Pure, so the state machine is testable
 /// without a GPU. Rhymes with the offline sequence fix: decide from the VIEW, never from
 /// render history.
-/// The live-normalization view signature: center, depth and the iteration ask.
+/// The live-normalization view signature: center, depth, the iteration ask and the rotation's
+/// bits (`fractadyne_core::rotation_bits`: 0 unturned, which leaves the signature as it was).
 ///
 /// ⭐**ONE definition, used by BOTH the frame that submits a reading and the frame that drains it.**
 /// Two hand-rolled copies of this expression is how a producer and a consumer come to disagree
@@ -12548,11 +12569,12 @@ pub(crate) enum NormFeed {
 /// ⚠Never returns 0, because `0` is the "nothing echoed back yet" sentinel on the readback sink.
 /// The cost is that one signature value in 2^64 collides with another; the benefit is that a real
 /// signature can never be mistaken for "no reading".
-pub(crate) fn norm_signature(cx: f64, cy: f64, log2mag: f64, budget: u32) -> u64 {
+pub(crate) fn norm_signature(cx: f64, cy: f64, log2mag: f64, budget: u32, rot_bits: u64) -> u64 {
     let sig = cx.to_bits()
         ^ cy.to_bits().rotate_left(17)
         ^ log2mag.to_bits().rotate_left(34)
-        ^ (budget as u64).rotate_left(51);
+        ^ (budget as u64).rotate_left(51)
+        ^ rot_bits.rotate_left(7);
     if sig == 0 { 1 } else { sig }
 }
 

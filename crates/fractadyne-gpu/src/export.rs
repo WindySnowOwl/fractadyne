@@ -351,6 +351,9 @@ pub struct ExportRequest {
     /// rendered here on another device lands where the live view would place it. Honored by
     /// [`render_export`] (each tile's `px_offset` = its origin + `jitter · ss`, in texels).
     pub jitter: [f32; 2],
+    /// The view's rotation, degrees, positive turning the picture counterclockwise
+    /// ([`crate::MandelbrotParams::rotation`]). 0: unturned.
+    pub rotation: f64,
     /// Test hook: the largest tile side, output px, the tiled loops may use. `None` in production.
     /// The selftest's tile-loop cases pin the pre-occupancy tile with it, so a 220-px frame still
     /// runs several tiles — a single tile cannot exercise cross-tile state or mix entry points.
@@ -2228,6 +2231,7 @@ impl<'a> TileRenderer<'a> {
             outline_row: req.outline_row(),
             trap_tail: crate::trap_tail_row(req.trap_tail, req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)),
             count_row: crate::count_row(req.count_base_fixed()),
+            view_rot: crate::view_rot_row(req.rotation),
         };
         queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3417,6 +3421,7 @@ fn render_iter_tiled_impl(
                 outline_row: req.outline_row(),
                 trap_tail: crate::trap_tail_row(req.trap_tail, accum && req.iter_stats().has(fractadyne_core::coloring::Stat::Trap)),
                 count_row: crate::count_row(req.count_base_fixed()),
+                view_rot: crate::view_rot_row(req.rotation),
             };
             queue.write_buffer(&iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -3981,6 +3986,7 @@ impl GatherPass {
                 outline_row: [0; 4],
                 trap_tail: crate::trap_tail_row(0, false),
                 count_row: crate::count_row(req.count_base_fixed()),
+                view_rot: crate::view_rot_row(req.rotation),
             };
             queue.write_buffer(&self.iter_uniform, 0, bytemuck::bytes_of(&iu));
 
@@ -4324,6 +4330,7 @@ fn render_iter_passes(
         outline_row: [0; 4],
         trap_tail: crate::trap_tail_row(0, false),
         count_row: crate::count_row(req.count_base_fixed()),
+        view_rot: crate::view_rot_row(req.rotation),
     };
     // The speed probe's passes (`render_iter_probe`) run the exact-repeat check OFF (bit 1).
     if live.is_some() {
